@@ -398,8 +398,8 @@ impl Participant {
 }
 
 fn compute_qos_hash(topic: &str, qos: &crate::dds::QoS) -> u64 {
-    const FNV_OFFSET: u64 = 0xcbf29ce484222325;
-    const FNV_PRIME: u64 = 0x100000001b3;
+    const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
     let mut hash = FNV_OFFSET;
 
@@ -418,6 +418,7 @@ fn compute_qos_hash(topic: &str, qos: &crate::dds::QoS) -> u64 {
     let durability_byte = match qos.durability {
         crate::dds::qos::Durability::Volatile => 0u8,
         crate::dds::qos::Durability::TransientLocal => 1u8,
+        crate::dds::qos::Durability::Transient => 2u8,
         crate::dds::qos::Durability::Persistent => 3u8,
     };
     hash ^= u64::from(durability_byte);

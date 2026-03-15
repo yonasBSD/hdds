@@ -108,10 +108,7 @@ impl DialectEncoder for RtiEncoder {
         //
         // Publications Writer (0x000003c2): Final=1
         // Subscriptions Writer (0x000004c2): Final=1
-        matches!(
-            writer_entity_id,
-            [0x00, 0x00, 0x03, 0xC2] | [0x00, 0x00, 0x04, 0xC2]
-        )
+        matches!(writer_entity_id, [0x00, 0x00, 0x03 | 0x04, 0xC2])
     }
 
     fn build_acknack(

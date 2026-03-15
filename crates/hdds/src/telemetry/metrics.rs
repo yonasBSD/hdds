@@ -260,6 +260,7 @@ fn snapshot_counter_fields(frame: &mut Frame, collector: &MetricsCollector) {
 }
 
 /// Compute and add latency percentiles to Frame
+#[allow(clippy::similar_names)] // p99_idx / p999_idx are intentionally parallel percentile indices
 fn snapshot_latency_percentiles(frame: &mut Frame, samples: &VecDeque<u64>) {
     let mut sorted: Vec<u64> = samples.iter().copied().collect();
     sorted.sort_unstable();

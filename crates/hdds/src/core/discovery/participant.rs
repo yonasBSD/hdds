@@ -11,7 +11,7 @@ use std::net::Ipv4Addr;
 
 /// Bitmask to extract lower 32 bits from 128-bit timestamp
 /// Used for generating participant IDs from nanosecond timestamps
-const LOWER_32_BITS_MASK: u128 = 0xFFFFFFFF;
+const LOWER_32_BITS_MASK: u128 = 0xFFFF_FFFF;
 
 /// Network peer address + port (IPv4-mapped IPv6)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

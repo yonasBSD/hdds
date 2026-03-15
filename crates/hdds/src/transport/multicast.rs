@@ -249,12 +249,11 @@ pub fn get_unicast_locators(primary_iface: Ipv4Addr, port: u16) -> Vec<std::net:
             let sock = std::net::SocketAddr::new(IpAddr::V4(ipv4), port);
             log::debug!("[UDP] Using HDDS_UNICAST_IF={} -> locator {}", ipv4, sock);
             return vec![sock];
-        } else {
-            log::debug!(
-                "[UDP] [!]  Invalid HDDS_UNICAST_IF='{}' -- falling back to auto-detect",
-                addr_str
-            );
         }
+        log::debug!(
+            "[UDP] [!]  Invalid HDDS_UNICAST_IF='{}' -- falling back to auto-detect",
+            addr_str
+        );
     }
 
     // v98: FIX - Use primary interface only (not all interfaces)

@@ -61,7 +61,9 @@ fn derive_history_and_limits(
 
     let durability_enabled = matches!(
         qos.durability,
-        super::super::qos::Durability::TransientLocal | super::super::qos::Durability::Persistent
+        super::super::qos::Durability::TransientLocal
+            | super::super::qos::Durability::Transient
+            | super::super::qos::Durability::Persistent
     );
 
     let history_policy;
@@ -197,6 +199,7 @@ pub struct WriterBuilder<T: DDS> {
     pub(super) transport: Option<Arc<UdpTransport>>,
     pub(super) registry: Option<Arc<crate::engine::TopicRegistry>>,
     pub(super) endpoint_registry: Option<crate::core::discovery::EndpointRegistry>,
+    pub(super) discovery_fsm: Option<Arc<crate::core::discovery::multicast::DiscoveryFsm>>,
     pub(super) participant: Option<Arc<crate::Participant>>,
     pub(super) domain_state: Option<Arc<DomainState>>,
     pub(super) type_name_override: Option<String>,
@@ -218,6 +221,7 @@ impl<T: DDS> WriterBuilder<T> {
             transport: None,
             registry: None,
             endpoint_registry: None,
+            discovery_fsm: None,
             participant: None,
             domain_state: None,
             type_name_override: None,
@@ -266,6 +270,14 @@ impl<T: DDS> WriterBuilder<T> {
         endpoint_registry: crate::core::discovery::EndpointRegistry,
     ) -> Self {
         self.endpoint_registry = Some(endpoint_registry);
+        self
+    }
+
+    pub fn with_discovery_fsm(
+        mut self,
+        fsm: Arc<crate::core::discovery::multicast::DiscoveryFsm>,
+    ) -> Self {
+        self.discovery_fsm = Some(fsm);
         self
     }
 
@@ -336,6 +348,11 @@ impl<T: DDS> WriterBuilder<T> {
                     self.endpoint_registry = Some(fsm.endpoint_registry());
                 }
             }
+            if self.discovery_fsm.is_none() {
+                if let Some(ref fsm) = participant.discovery_fsm {
+                    self.discovery_fsm = Some(fsm.clone());
+                }
+            }
             if self.replay_registry.is_none() {
                 if let Some(ref fsm) = participant.discovery_fsm {
                     self.replay_registry = Some(fsm.replay_registry());
@@ -362,7 +379,8 @@ impl<T: DDS> WriterBuilder<T> {
                     history: history_policy,
                     durability: match self.qos.durability {
                         super::super::qos::Durability::Volatile => crate::qos::Durability::Volatile,
-                        super::super::qos::Durability::TransientLocal => {
+                        super::super::qos::Durability::TransientLocal
+                        | super::super::qos::Durability::Transient => {
                             crate::qos::Durability::TransientLocal
                         }
                         super::super::qos::Durability::Persistent => {
@@ -382,6 +400,7 @@ impl<T: DDS> WriterBuilder<T> {
             (
                 super::super::qos::Reliability::BestEffort,
                 super::super::qos::Durability::TransientLocal
+                | super::super::qos::Durability::Transient
                 | super::super::qos::Durability::Persistent,
             ) => {
                 let durability = match self.qos.durability {
@@ -481,6 +500,7 @@ impl<T: DDS> WriterBuilder<T> {
             let needs_late_joiner = matches!(
                 self.qos.durability,
                 super::super::qos::Durability::TransientLocal
+                    | super::super::qos::Durability::Transient
                     | super::super::qos::Durability::Persistent
             );
 
@@ -525,6 +545,7 @@ impl<T: DDS> WriterBuilder<T> {
         let replay_token = if matches!(
             self.qos.durability,
             super::super::qos::Durability::TransientLocal
+                | super::super::qos::Durability::Transient
                 | super::super::qos::Durability::Persistent
         ) {
             if let (Some(ref cache), Some(ref transport), Some(ref registry)) =
@@ -597,6 +618,7 @@ impl<T: DDS> WriterBuilder<T> {
             heartbeat_tx,
             _heartbeat_scheduler: heartbeat_scheduler,
             endpoint_registry: self.endpoint_registry,
+            discovery_fsm: self.discovery_fsm,
             _bind_token: bind_token,
             _replay_token: replay_token,
             listener: self.listener,

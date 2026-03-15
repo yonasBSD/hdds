@@ -175,9 +175,13 @@ impl Partition {
         }
 
         // Check intersection (at least one common partition)
-        self.names
-            .iter()
-            .any(|writer_partition| requested.names.contains(writer_partition))
+        // Supports fnmatch-style wildcards ('*', '?') per DDS spec
+        self.names.iter().any(|w| {
+            requested
+                .names
+                .iter()
+                .any(|r| w == r || fnmatch_simple(w, r) || fnmatch_simple(r, w))
+        })
     }
 
     /// Add a partition name to the list
@@ -222,6 +226,40 @@ impl Partition {
     pub fn is_empty(&self) -> bool {
         self.names.is_empty()
     }
+}
+
+/// Simple fnmatch-style glob matching for partition names.
+/// `*` matches any sequence of characters, `?` matches exactly one character.
+fn fnmatch_simple(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let text_bytes = text.as_bytes();
+    let mut px = 0usize;
+    let mut tx = 0usize;
+    let mut star_px: Option<usize> = None;
+    let mut star_ti: usize = 0;
+
+    while tx < text_bytes.len() {
+        if px < pat.len() && (pat[px] == b'?' || pat[px] == text_bytes[tx]) {
+            px += 1;
+            tx += 1;
+        } else if px < pat.len() && pat[px] == b'*' {
+            star_px = Some(px);
+            star_ti = tx;
+            px += 1;
+        } else if let Some(spx) = star_px {
+            px = spx + 1;
+            star_ti += 1;
+            tx = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while px < pat.len() && pat[px] == b'*' {
+        px += 1;
+    }
+
+    px == pat.len()
 }
 
 #[cfg(test)]

@@ -13,6 +13,7 @@
 [![Security](https://img.shields.io/badge/DDS--Security-v1.1-green.svg)](https://www.omg.org/spec/DDS-SECURITY/)
 [![no_std](https://img.shields.io/badge/no__std-hdds--micro-purple.svg)](#embedded-support-hdds-micro)
 [![Tests](https://img.shields.io/badge/tests-2900+_passing-brightgreen)](#test)
+[![Interop](https://img.shields.io/badge/OMG_Interop-48%2F48_(100%25)-brightgreen)](#omg-dds-rtps-interoperability-test-suite)
 
 High-performance Data Distribution Service implementation in pure Rust, with native SDKs for **C**, **C++**, **Python**, and **TypeScript**.
 
@@ -678,6 +679,34 @@ hddsgen gen <target> input.idl [--example] [--out-dir ./project]
 ---
 
 ## Vendor Interoperability
+
+### OMG DDS-RTPS Interoperability Test Suite
+
+HDDS achieves **48/48 (100%)** on the [OMG DDS-RTPS interoperability test suite](https://github.com/omg-dds/dds-rtps), the official compliance test used by the OMG to validate DDS implementations.
+
+| Category | Tests | Result |
+|---|---|---|
+| Domain | 3 | 3/3 |
+| DataRepresentation (XCDR1/XCDR2) | 4 | 4/4 |
+| Reliability | 5 | 5/5 |
+| Ownership | 7 | 7/7 |
+| Deadline | 4 | 4/4 |
+| Topic | 2 | 2/2 |
+| Content-Filtered Topics | 2 | 2/2 |
+| Partition | 3 | 3/3 |
+| Durability | 18 | 18/18 |
+| **Total** | **48** | **48/48** |
+
+```bash
+# Reproduce locally
+cargo build --example shape_main --release
+cd /path/to/dds-rtps
+python3 interoperability_report.py \
+  -P /path/to/hdds/target/release/examples/shape_main \
+  -S /path/to/hdds/target/release/examples/shape_main
+```
+
+### Tested Vendors
 
 Tested compatibility with:
 

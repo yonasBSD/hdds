@@ -524,11 +524,10 @@ impl ConnectionManager {
                 // Close the new connection
                 let _ = self.io_handle.close(conn_id);
                 return;
-            } else {
-                // Close the existing connection
-                let _ = self.io_handle.close(existing.conn_id);
-                self.conn_id_to_guid.remove(&existing.conn_id);
             }
+            // Close the existing connection
+            let _ = self.io_handle.close(existing.conn_id);
+            self.conn_id_to_guid.remove(&existing.conn_id);
         }
 
         let managed = ManagedConnection {

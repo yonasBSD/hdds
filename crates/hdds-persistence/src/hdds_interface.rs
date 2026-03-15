@@ -251,7 +251,7 @@ fn qos_for_durability(durability: DurabilityKind) -> QoS {
 fn durability_kind_from_qos(durability: Durability) -> DurabilityKind {
     match durability {
         Durability::Volatile => DurabilityKind::Volatile,
-        Durability::TransientLocal => DurabilityKind::TransientLocal,
+        Durability::TransientLocal | Durability::Transient => DurabilityKind::TransientLocal,
         Durability::Persistent => DurabilityKind::Persistent,
     }
 }
@@ -259,7 +259,7 @@ fn durability_kind_from_qos(durability: Durability) -> DurabilityKind {
 fn retention_hint_from_qos(qos: &hdds::dds::qos::QoS) -> Option<RetentionPolicy> {
     if !matches!(
         qos.durability,
-        Durability::TransientLocal | Durability::Persistent
+        Durability::TransientLocal | Durability::Transient | Durability::Persistent
     ) {
         return None;
     }

@@ -215,7 +215,7 @@ pub fn write_data_representation(buf: &mut [u8], offset: &mut usize) -> Result<(
     let data_rep_id: u16 = 0x0000; // XCDR1
     buf[*offset + 8..*offset + 10].copy_from_slice(&data_rep_id.to_le_bytes());
     buf[*offset + 10..*offset + 12].copy_from_slice(&0u16.to_le_bytes()); // padding
-    buf[*offset + 12..*offset + 16].copy_from_slice(&0x00000007u32.to_le_bytes());
+    buf[*offset + 12..*offset + 16].copy_from_slice(&0x0000_0007u32.to_le_bytes());
     *offset += 16;
     Ok(())
 }
@@ -280,6 +280,37 @@ pub fn write_data_representation_both(
     Ok(())
 }
 
+/// Write PID_DATA_REPRESENTATION (0x0073) from a list of representation IDs.
+/// Encodes exactly the representations specified in the QoS.
+pub fn write_data_representation_list(
+    reprs: &[u16],
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), ParseError> {
+    let seq_len = reprs.len() as u32;
+    let payload_len = 4 + reprs.len() * 2; // seq_len(4) + N * u16
+                                           // Pad to 4-byte alignment
+    let padded_len = (payload_len + 3) & !3;
+    if *offset + 4 + padded_len > buf.len() {
+        return Err(ParseError::BufferTooSmall);
+    }
+    buf[*offset..*offset + 2].copy_from_slice(&PID_DATA_REPRESENTATION.to_le_bytes());
+    buf[*offset + 2..*offset + 4].copy_from_slice(&(padded_len as u16).to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&seq_len.to_le_bytes());
+    let mut pos = *offset + 8;
+    for &r in reprs {
+        buf[pos..pos + 2].copy_from_slice(&r.to_le_bytes());
+        pos += 2;
+    }
+    // Zero-fill padding
+    while pos < *offset + 4 + padded_len {
+        buf[pos] = 0;
+        pos += 1;
+    }
+    *offset = pos;
+    Ok(())
+}
+
 /// Write PID_RECV_QUEUE_SIZE (0x0018) - 4 bytes.
 /// Value: 0xffffffff (deprecated marker).
 #[allow(dead_code)] // Public API for SEDP encoding
@@ -289,7 +320,7 @@ pub fn write_recv_queue_size(buf: &mut [u8], offset: &mut usize) -> Result<(), P
     }
     buf[*offset..*offset + 2].copy_from_slice(&PID_RECV_QUEUE_SIZE.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
     *offset += 8;
     Ok(())
 }
@@ -304,7 +335,7 @@ pub fn write_group_entity_id(buf: &mut [u8], offset: &mut usize) -> Result<(), P
     }
     buf[*offset..*offset + 2].copy_from_slice(&PID_GROUP_ENTITY_ID.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0x80000009u32.to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&0x8000_0009u32.to_le_bytes());
     *offset += 8;
     Ok(())
 }

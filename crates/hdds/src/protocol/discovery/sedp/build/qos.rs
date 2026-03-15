@@ -17,8 +17,8 @@
 
 use super::super::super::constants::{
     PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE, PID_HISTORY, PID_LIVELINESS,
-    PID_OWNERSHIP, PID_PARTITION, PID_PRESENTATION, PID_RELIABILITY, PID_RESOURCE_LIMITS,
-    PID_TIME_BASED_FILTER,
+    PID_OWNERSHIP, PID_OWNERSHIP_STRENGTH, PID_PARTITION, PID_PRESENTATION, PID_RELIABILITY,
+    PID_RESOURCE_LIMITS, PID_TIME_BASED_FILTER,
 };
 use super::super::super::types::ParseError;
 use crate::dds::qos::{Durability, History, PresentationAccessScope, QoS, Reliability};
@@ -70,6 +70,7 @@ pub fn write_durability(
         match qos.durability {
             Durability::Volatile => 0u32,
             Durability::TransientLocal => 1u32,
+            Durability::Transient => 2u32,
             Durability::Persistent => 3u32,
         }
     } else {
@@ -117,18 +118,31 @@ pub fn write_history(
 /// Write PID_DEADLINE (0x0023) - 8 bytes.
 /// Format: period (Duration_t = 2xu32).
 /// Default: INFINITE (DDS spec: seconds=0x7FFFFFFF, nanosec=0xFFFFFFFF).
-pub fn write_deadline(buf: &mut [u8], offset: &mut usize) -> Result<(), ParseError> {
+pub fn write_deadline(
+    qos: Option<&QoS>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), ParseError> {
     if *offset + 12 > buf.len() {
         return Err(ParseError::BufferTooSmall);
     }
 
-    // DDS Duration_t INFINITE = { 0x7FFFFFFF, 0xFFFFFFFF }
-    // FastDDS interprets u32::MAX (0xFFFFFFFF) for seconds as a concrete value (~136 years),
-    // not INFINITE. Using 0x7FFFFFFF (i32::MAX) for seconds is the standard representation.
+    let (seconds, fraction) = if let Some(qos) = qos {
+        if qos.deadline.is_infinite() {
+            (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
+        } else {
+            let secs = qos.deadline.period.as_secs();
+            let nanos = qos.deadline.period.subsec_nanos();
+            (u32::try_from(secs).unwrap_or(u32::MAX), nanos)
+        }
+    } else {
+        (0x7FFF_FFFFu32, 0xFFFF_FFFFu32) // INFINITE
+    };
+
     buf[*offset..*offset + 2].copy_from_slice(&PID_DEADLINE.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0x7FFFFFFFu32.to_le_bytes()); // period.sec = INFINITE
-    buf[*offset + 8..*offset + 12].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // period.nanosec = INFINITE
+    buf[*offset + 4..*offset + 8].copy_from_slice(&seconds.to_le_bytes());
+    buf[*offset + 8..*offset + 12].copy_from_slice(&fraction.to_le_bytes());
     *offset += 12;
 
     Ok(())
@@ -137,14 +151,50 @@ pub fn write_deadline(buf: &mut [u8], offset: &mut usize) -> Result<(), ParseErr
 /// Write PID_OWNERSHIP (0x001f) - 4 bytes.
 /// Format: kind (u32).
 /// Default: SHARED (kind=0).
-pub fn write_ownership(buf: &mut [u8], offset: &mut usize) -> Result<(), ParseError> {
+pub fn write_ownership(
+    qos: Option<&QoS>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), ParseError> {
     if *offset + 8 > buf.len() {
         return Err(ParseError::BufferTooSmall);
     }
 
+    use crate::dds::qos::OwnershipKind;
+    let kind = if let Some(qos) = qos {
+        match qos.ownership.kind {
+            OwnershipKind::Shared => 0u32,
+            OwnershipKind::Exclusive => 1u32,
+        }
+    } else {
+        0u32 // SHARED
+    };
+
     buf[*offset..*offset + 2].copy_from_slice(&PID_OWNERSHIP.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0u32.to_le_bytes()); // SHARED (0)
+    buf[*offset + 4..*offset + 8].copy_from_slice(&kind.to_le_bytes());
+    *offset += 8;
+
+    Ok(())
+}
+
+/// Write PID_OWNERSHIP_STRENGTH (0x0006) - 4 bytes.
+/// Format: value (i32).
+/// Default: 0. Only meaningful when ownership kind is EXCLUSIVE.
+pub fn write_ownership_strength(
+    qos: Option<&QoS>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), ParseError> {
+    if *offset + 8 > buf.len() {
+        return Err(ParseError::BufferTooSmall);
+    }
+
+    let strength = qos.map(|q| q.ownership_strength.value).unwrap_or(0);
+
+    buf[*offset..*offset + 2].copy_from_slice(&PID_OWNERSHIP_STRENGTH.to_le_bytes());
+    buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&strength.to_le_bytes());
     *offset += 8;
 
     Ok(())
@@ -164,8 +214,8 @@ pub fn write_liveliness(buf: &mut [u8], offset: &mut usize) -> Result<(), ParseE
     buf[*offset..*offset + 2].copy_from_slice(&PID_LIVELINESS.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&12u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&0u32.to_le_bytes()); // AUTOMATIC (0)
-    buf[*offset + 8..*offset + 12].copy_from_slice(&0x7FFFFFFFu32.to_le_bytes()); // lease_duration.sec = INFINITE
-    buf[*offset + 12..*offset + 16].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // lease_duration.nanosec = INFINITE
+    buf[*offset + 8..*offset + 12].copy_from_slice(&0x7FFF_FFFFu32.to_le_bytes()); // lease_duration.sec = INFINITE
+    buf[*offset + 12..*offset + 16].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // lease_duration.nanosec = INFINITE
     *offset += 16;
 
     Ok(())
@@ -188,18 +238,66 @@ pub fn write_time_based_filter(buf: &mut [u8], offset: &mut usize) -> Result<(),
     Ok(())
 }
 
-/// Write PID_PARTITION (0x0029) - empty sequence.
-/// Format: sequence_length (u32).
-/// Default: empty (no partitions).
-pub fn write_partition(buf: &mut [u8], offset: &mut usize) -> Result<(), ParseError> {
-    if *offset + 8 > buf.len() {
+/// Write PID_PARTITION (0x0029) - sequence of partition name strings.
+/// Format: sequence_length (u32) + for each: string_length (u32) + string + NUL + padding.
+/// Default: empty sequence (no partitions).
+pub fn write_partition(
+    qos: Option<&QoS>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), ParseError> {
+    let names = qos.map(|q| q.partition.names.as_slice()).unwrap_or(&[]);
+
+    if names.is_empty() {
+        // Empty sequence: PID (2) + length (2) + seq_len=0 (4) = 8 bytes
+        if *offset + 8 > buf.len() {
+            return Err(ParseError::BufferTooSmall);
+        }
+        buf[*offset..*offset + 2].copy_from_slice(&PID_PARTITION.to_le_bytes());
+        buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
+        buf[*offset + 4..*offset + 8].copy_from_slice(&0u32.to_le_bytes());
+        *offset += 8;
+        return Ok(());
+    }
+
+    // Calculate total payload size: seq_len (4) + for each string: str_len (4) + chars + NUL + pad
+    let mut payload_size: usize = 4; // sequence_length field
+    for name in names {
+        let str_len = name.len() + 1; // include NUL terminator
+        let padded = (str_len + 3) & !3; // align to 4 bytes
+        payload_size += 4 + padded; // string_length (u32) + padded string
+    }
+
+    if *offset + 4 + payload_size > buf.len() {
         return Err(ParseError::BufferTooSmall);
     }
 
     buf[*offset..*offset + 2].copy_from_slice(&PID_PARTITION.to_le_bytes());
-    buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0u32.to_le_bytes()); // sequence_length = 0 (empty)
-    *offset += 8;
+    buf[*offset + 2..*offset + 4].copy_from_slice(&(payload_size as u16).to_le_bytes());
+    *offset += 4;
+
+    // Sequence length (number of strings)
+    buf[*offset..*offset + 4].copy_from_slice(&(names.len() as u32).to_le_bytes());
+    *offset += 4;
+
+    // Each string: length (u32) + chars + NUL + padding
+    for name in names {
+        let str_len = (name.len() + 1) as u32; // include NUL
+        buf[*offset..*offset + 4].copy_from_slice(&str_len.to_le_bytes());
+        *offset += 4;
+
+        buf[*offset..*offset + name.len()].copy_from_slice(name.as_bytes());
+        *offset += name.len();
+        buf[*offset] = 0; // NUL terminator
+        *offset += 1;
+
+        // Pad to 4-byte alignment
+        let pad = (4 - (name.len() + 1) % 4) % 4;
+        for i in 0..pad {
+            buf[*offset + i] = 0;
+        }
+        *offset += pad;
+    }
 
     Ok(())
 }
@@ -258,7 +356,7 @@ pub fn write_durability_service(
     // Convert cleanup delay from microseconds to Duration_t (seconds + nanoseconds)
     let cleanup_secs = (ds.service_cleanup_delay_us / 1_000_000).min(u32::MAX as u64) as u32;
     // Modulo guarantees < 1_000_000, multiply by 1000 guarantees < 1_000_000_000 (fits in u32)
-    let cleanup_nsecs =
+    let cleanup_ns =
         ((ds.service_cleanup_delay_us % 1_000_000) * 1_000).min(u32::MAX as u64) as u32;
 
     // History kind: KEEP_LAST=0 (DurabilityService always uses KEEP_LAST)
@@ -267,7 +365,7 @@ pub fn write_durability_service(
     buf[*offset..*offset + 2].copy_from_slice(&PID_DURABILITY_SERVICE.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&28u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&cleanup_secs.to_le_bytes());
-    buf[*offset + 8..*offset + 12].copy_from_slice(&cleanup_nsecs.to_le_bytes());
+    buf[*offset + 8..*offset + 12].copy_from_slice(&cleanup_ns.to_le_bytes());
     buf[*offset + 12..*offset + 16].copy_from_slice(&history_kind.to_le_bytes());
     buf[*offset + 16..*offset + 20].copy_from_slice(&ds.history_depth.to_le_bytes());
     buf[*offset + 20..*offset + 24].copy_from_slice(&ds.max_samples.to_le_bytes());

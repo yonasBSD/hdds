@@ -51,6 +51,12 @@ pub struct SpdpAnnouncer {
     handle: Option<JoinHandle<()>>,
     /// Shutdown signal (set to true to stop announcer)
     shutdown: Arc<AtomicBool>,
+    /// Transport for sending dispose packet on shutdown
+    transport: Arc<UdpTransport>,
+    /// Participant GUID for dispose message
+    participant_guid: GUID,
+    /// Runtime config for port computation
+    config: Arc<RuntimeConfig>,
 }
 
 impl SpdpAnnouncer {
@@ -111,6 +117,9 @@ impl SpdpAnnouncer {
         let shutdown = Arc::new(AtomicBool::new(false));
         let shutdown_clone = Arc::clone(&shutdown);
 
+        let transport_for_dispose = Arc::clone(&transport);
+        let config_for_dispose = Arc::clone(&config);
+
         let handle = thread::spawn(move || {
             announcer_loop(
                 participant_guid,
@@ -125,14 +134,19 @@ impl SpdpAnnouncer {
         Self {
             handle: Some(handle),
             shutdown,
+            transport: transport_for_dispose,
+            participant_guid,
+            config: config_for_dispose,
         }
     }
 
     /// Signal announcer thread to stop and wait for completion.
     ///
     /// This is automatically called on Drop, but can be explicitly invoked
-    /// if synchronous shutdown is required.
+    /// if synchronous shutdown is required. Sends SPDP dispose (lease=0)
+    /// to notify peers before stopping.
     pub fn shutdown(mut self) {
+        self.send_dispose();
         self.shutdown.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
@@ -142,9 +156,53 @@ impl SpdpAnnouncer {
 
 impl Drop for SpdpAnnouncer {
     fn drop(&mut self) {
+        // Send SPDP dispose (lease=0) to notify peers we're leaving
+        self.send_dispose();
+
         self.shutdown.store(true, Ordering::Relaxed);
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
+        }
+    }
+}
+
+impl SpdpAnnouncer {
+    /// Send SPDP dispose message (lease_duration=0) to notify peers.
+    fn send_dispose(&self) {
+        let port_mapping = self.config.get_port_mapping();
+        let spdp_multicast_port = port_mapping
+            .map(|m| m.metatraffic_multicast)
+            .unwrap_or(SPDP_MULTICAST_PORT_DOMAIN0);
+        let domain_id = (spdp_multicast_port.saturating_sub(PORT_BASE)) / DOMAIN_ID_GAIN;
+        let domain_id = u32::from(domain_id).min(crate::config::MAX_DOMAIN_ID);
+
+        let metatraffic_unicast_locators = self.transport.get_unicast_locators();
+
+        let spdp_data = SpdpData {
+            participant_guid: self.participant_guid,
+            lease_duration_ms: 0, // Dispose signal
+            domain_id,
+            metatraffic_unicast_locators,
+            default_unicast_locators: vec![],
+            default_multicast_locators: vec![],
+            metatraffic_multicast_locators: vec![],
+            identity_token: None,
+        };
+
+        match build_spdp_rtps_packet(&spdp_data, u64::MAX, None) {
+            Ok(packet) => {
+                if let Err(err) = self.transport.send(&packet) {
+                    log::debug!("[spdp_announcer] Failed to send SPDP dispose: {}", err);
+                } else {
+                    log::debug!(
+                        "[spdp_announcer] Sent SPDP dispose (lease=0) for {:?}",
+                        self.participant_guid
+                    );
+                }
+            }
+            Err(err) => {
+                log::debug!("[spdp_announcer] Failed to build SPDP dispose: {:?}", err);
+            }
         }
     }
 }

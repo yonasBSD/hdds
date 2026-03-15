@@ -25,6 +25,55 @@ use std::time::Duration;
 const USER_FRAG_MAX_PENDING: usize = 256;
 const USER_FRAG_TIMEOUT_MS: u64 = 1000;
 
+/// Compute a hash of the CDR payload's key fields for per-instance ownership arbitration.
+///
+/// Uses the first CDR string (key field for types like ShapeType where color is the key).
+/// For types with numeric keys, the first 16 bytes provide sufficient discrimination.
+/// This is a best-effort hash — worst case, different instances collide and share
+/// ownership arbitration, which is safe (just slightly less optimal).
+fn compute_instance_hash(cdr_payload: &[u8]) -> u64 {
+    // Extract the first CDR string value for instance key hashing.
+    // CDR payload may start with a DHEADER (u32 size) from D_CDR2 encoding.
+    // We detect it by checking if the first u32 equals (payload_len - 4),
+    // which is the DHEADER pattern. Then read the actual string length + bytes.
+    let data = if cdr_payload.len() >= 8 {
+        let first_u32 = u32::from_le_bytes([
+            cdr_payload[0],
+            cdr_payload[1],
+            cdr_payload[2],
+            cdr_payload[3],
+        ]) as usize;
+        // DHEADER: value == remaining payload size
+        if first_u32 == cdr_payload.len() - 4 {
+            &cdr_payload[4..]
+        } else {
+            cdr_payload
+        }
+    } else {
+        cdr_payload
+    };
+
+    // Now data starts with the first CDR field: u32 string_len + string_bytes
+    let key_bytes = if data.len() >= 4 {
+        let str_len = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        // Hash only the string length + string content (the key field)
+        let end = (4 + str_len).min(data.len()).min(68);
+        &data[..end]
+    } else {
+        data
+    };
+
+    // FNV-1a hash (IETF draft-eastlake-fnv-17)
+    const FNV1A_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV1A_PRIME: u64 = 0x0100_0000_01b3;
+    let mut h: u64 = FNV1A_OFFSET_BASIS;
+    for &b in key_bytes {
+        h ^= b as u64;
+        h = h.wrapping_mul(FNV1A_PRIME);
+    }
+    h
+}
+
 // ============================================================================
 // Metrics
 // ============================================================================
@@ -287,6 +336,36 @@ pub fn route_data_packet(
             }
         }
     };
+
+    // v249: QoS compatibility filter — drop data from writers whose QoS
+    // is incompatible with local readers (e.g., DATA_REPRESENTATION mismatch).
+    // This is the library-level enforcement that prevents data delivery
+    // before SEDP completes the incompatibility check.
+    if let Some(ref writer_guid) = builder::extract_writer_guid(payload) {
+        if registry.is_writer_blocked(writer_guid) {
+            log::debug!(
+                "[ROUTER] v249: dropping DATA from blocked writer {:02x?} (QoS incompatible)",
+                &writer_guid[..4]
+            );
+            return RouteStatus::Dropped;
+        }
+    }
+
+    // Exclusive ownership filter: check if this writer is allowed to deliver.
+    // Ownership is per-instance (DDS spec). Hash the CDR payload key bytes
+    // to distinguish different instances.
+    if let Some(writer_guid) = builder::extract_writer_guid(payload) {
+        let instance_hash = compute_instance_hash(cdr2_payload);
+        if !registry.check_ownership(&topic_name, &writer_guid, instance_hash) {
+            log::debug!(
+                "[ROUTER] ownership filter: dropping DATA from writer {:02x?} for topic '{}' instance={}",
+                &writer_guid[..4],
+                topic_name,
+                instance_hash
+            );
+            return RouteStatus::Dropped;
+        }
+    }
 
     let subscriber_count = topic.subscriber_count();
     log::debug!(
@@ -595,6 +674,18 @@ fn route_reassembled_data(
     } else {
         payload
     };
+
+    // Exclusive ownership filter (per-instance)
+    let instance_hash = compute_instance_hash(payload_to_deliver);
+    if !registry.check_ownership(&topic_name, &guid_bytes, instance_hash) {
+        log::debug!(
+            "[ROUTER] ownership filter: dropping reassembled DATA from writer {:02x?} for topic '{}' instance={}",
+            &guid_bytes[..4],
+            topic_name,
+            instance_hash
+        );
+        return RouteStatus::Dropped;
+    }
 
     let errors = topic.deliver(seq, payload_to_deliver);
 

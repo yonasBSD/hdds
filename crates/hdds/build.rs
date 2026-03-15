@@ -60,10 +60,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Generate a stub for interop_types.rs so --all-targets compiles
-/// even when hdds_gen hasn't been run yet.
-/// Real file is created by: scripts/test-sdk-typed.sh
-fn generate_interop_stub() -> &'static str {
+/// Generate a stub for `interop_types.rs` so `--all-targets` compiles
+/// even when `hdds_gen` hasn't been run yet.
+/// Real file is created by: `scripts/test-sdk-typed.sh`
+const fn generate_interop_stub() -> &'static str {
     "\
 // Auto-generated stub -- real types created by scripts/test-sdk-typed.sh
 // This stub allows cargo check/clippy --all-targets to pass.

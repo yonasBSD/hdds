@@ -168,6 +168,17 @@ pub struct TopicRegistry {
     pub(crate) nack_frag_handlers: RwLock<Vec<Arc<dyn NackFragHandler>>>,
     /// Writer GUID -> topic name mapping for DATA routing (RTI interop)
     writer_guid_to_topic: RwLock<HashMap<[u8; 16], String>>,
+    /// Writer GUID -> ownership strength (for EXCLUSIVE ownership filtering)
+    writer_ownership_strengths: RwLock<HashMap<[u8; 16], i32>>,
+    /// Per-instance ownership tracking: (topic_name, instance_hash) -> (current owner GUID, strength)
+    #[allow(clippy::type_complexity)]
+    exclusive_ownership: RwLock<HashMap<(String, u64), ([u8; 16], i32)>>,
+    /// Set of topic names where exclusive ownership is enabled
+    exclusive_ownership_topics: RwLock<std::collections::HashSet<String>>,
+    /// v249: Writer GUIDs blocked due to QoS incompatibility with local readers.
+    /// Data from these writers is dropped by the router even if the topic matches.
+    /// Populated by the SEDP handler when incompatible writers are discovered.
+    blocked_writers: RwLock<std::collections::HashSet<[u8; 16]>>,
 }
 
 #[inline]
@@ -200,6 +211,10 @@ impl TopicRegistry {
             nack_handlers: RwLock::new(Vec::new()),
             nack_frag_handlers: RwLock::new(Vec::new()),
             writer_guid_to_topic: RwLock::new(HashMap::new()),
+            writer_ownership_strengths: RwLock::new(HashMap::new()),
+            exclusive_ownership: RwLock::new(HashMap::new()),
+            exclusive_ownership_topics: RwLock::new(std::collections::HashSet::new()),
+            blocked_writers: RwLock::new(std::collections::HashSet::new()),
         }
     }
 
@@ -329,6 +344,120 @@ impl TopicRegistry {
             "TopicRegistry::writer_guid_to_topic.read()",
         );
         mapping.get(guid).cloned()
+    }
+
+    /// Register a writer's ownership strength for exclusive ownership filtering.
+    pub fn register_writer_ownership_strength(&self, guid: [u8; 16], strength: i32) {
+        log::debug!(
+            "[OWNERSHIP] register_strength writer={:02x}{:02x}{:02x}{:02x} strength={}",
+            guid[12],
+            guid[13],
+            guid[14],
+            guid[15],
+            strength
+        );
+        let mut strengths = recover_write(
+            &self.writer_ownership_strengths,
+            "TopicRegistry::writer_ownership_strengths.write()",
+        );
+        strengths.insert(guid, strength);
+    }
+
+    /// v249: Block a writer GUID due to QoS incompatibility with local readers.
+    ///
+    /// Data from blocked writers is dropped by the router regardless of
+    /// routing method (inline QoS or GUID-based).
+    pub fn block_writer(&self, guid: [u8; 16]) {
+        let mut blocked = recover_write(
+            &self.blocked_writers,
+            "TopicRegistry::blocked_writers.write()",
+        );
+        blocked.insert(guid);
+        log::debug!(
+            "[REGISTRY] v249: Blocked writer {:02x?} (QoS incompatible)",
+            &guid[..]
+        );
+    }
+
+    /// v249: Check if a writer GUID is blocked (QoS incompatible).
+    #[must_use]
+    #[inline]
+    pub fn is_writer_blocked(&self, guid: &[u8; 16]) -> bool {
+        let blocked = recover_read(
+            &self.blocked_writers,
+            "TopicRegistry::blocked_writers.read()",
+        );
+        blocked.contains(guid)
+    }
+
+    /// Enable exclusive ownership filtering for a topic.
+    pub fn enable_exclusive_ownership(&self, topic_name: &str) {
+        log::debug!("[OWNERSHIP] enable_exclusive topic='{}'", topic_name);
+        let mut topics = recover_write(
+            &self.exclusive_ownership_topics,
+            "TopicRegistry::exclusive_ownership_topics.write()",
+        );
+        topics.insert(topic_name.to_string());
+    }
+
+    /// Check if a writer is allowed to deliver data for a topic instance under exclusive ownership.
+    ///
+    /// Ownership is per-instance (DDS spec 2.2.3.11). Different instances (different keys)
+    /// can have different owners. The `instance_hash` is a hash of the serialized key fields.
+    ///
+    /// Returns `true` if delivery is allowed (no exclusive ownership, or writer is current owner
+    /// or has higher strength). Returns `false` if a higher-strength writer owns this instance.
+    pub fn check_ownership(
+        &self,
+        topic_name: &str,
+        writer_guid: &[u8; 16],
+        instance_hash: u64,
+    ) -> bool {
+        // Fast path: check if topic has exclusive ownership enabled
+        {
+            let topics = recover_read(
+                &self.exclusive_ownership_topics,
+                "TopicRegistry::exclusive_ownership_topics.read()",
+            );
+            if !topics.contains(topic_name) {
+                return true; // SHARED ownership, always deliver
+            }
+        }
+
+        // Get writer's ownership strength
+        let writer_strength = {
+            let strengths = recover_read(
+                &self.writer_ownership_strengths,
+                "TopicRegistry::writer_ownership_strengths.read()",
+            );
+            strengths.get(writer_guid).copied().unwrap_or(0)
+        };
+
+        // Check current owner for this (topic, instance) pair
+        let key = (topic_name.to_string(), instance_hash);
+        let mut owners = recover_write(
+            &self.exclusive_ownership,
+            "TopicRegistry::exclusive_ownership.write()",
+        );
+
+        match owners.get(&key) {
+            Some(&(ref owner_guid, owner_strength)) => {
+                if writer_guid == owner_guid {
+                    true // Current owner
+                } else if writer_strength > owner_strength {
+                    // Higher strength writer takes ownership
+                    owners.insert(key, (*writer_guid, writer_strength));
+                    true
+                } else {
+                    false // Lower strength, reject
+                }
+            }
+            None => {
+                // No owner yet, this writer becomes owner
+                owners.insert(key, (*writer_guid, writer_strength));
+                true
+            }
+        }
     }
 
     /// Fallback GUID->topic mapping for interop scenarios where remote writers

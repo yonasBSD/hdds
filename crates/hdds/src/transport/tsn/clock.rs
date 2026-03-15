@@ -17,19 +17,19 @@ mod linux_consts {
 /// Get current time from a clock in nanoseconds.
 #[cfg(target_os = "linux")]
 pub fn clock_gettime_ns(clock_id: &TsnClockId) -> io::Result<u64> {
-    let clockid = match clock_id {
+    let raw_cid = match clock_id {
         TsnClockId::Monotonic => libc::CLOCK_MONOTONIC,
         TsnClockId::Tai => linux_consts::CLOCK_TAI,
         TsnClockId::Realtime => libc::CLOCK_REALTIME,
         TsnClockId::Phc(path) => {
             let fd = open_phc(path)?;
-            let clockid = fd_to_clockid(fd);
+            let raw_cid = fd_to_clockid(fd);
             // Note: fd is leaked here for simplicity; in production,
             // PHC fds should be cached
-            return clock_gettime_raw(clockid);
+            return clock_gettime_raw(raw_cid);
         }
     };
-    clock_gettime_raw(clockid)
+    clock_gettime_raw(raw_cid)
 }
 
 #[cfg(not(target_os = "linux"))]

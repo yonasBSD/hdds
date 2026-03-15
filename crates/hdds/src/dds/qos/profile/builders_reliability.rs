@@ -31,6 +31,12 @@ impl QoS {
         self
     }
 
+    /// Set transient durability (requires durability service).
+    pub fn transient(mut self) -> Self {
+        self.durability = Durability::Transient;
+        self
+    }
+
     /// Set persistent durability.
     pub fn persistent(mut self) -> Self {
         self.durability = Durability::Persistent;

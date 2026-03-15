@@ -91,6 +91,10 @@ pub struct DataWriter<T: DDS> {
     /// Sends HEARTBEAT messages independently of write() calls for reliable recovery.
     pub(super) _heartbeat_scheduler: Option<HeartbeatSchedulerHandle>,
     pub(super) endpoint_registry: Option<crate::core::discovery::EndpointRegistry>,
+    /// Discovery FSM for partition-aware data routing.
+    /// When set, `send_packet_to_endpoints()` filters destinations by QoS compatibility
+    /// (including partition matching) instead of broadcasting to all participants.
+    pub(super) discovery_fsm: Option<Arc<crate::core::discovery::multicast::DiscoveryFsm>>,
     /// BindToken for intra-process auto-binding (unregisters on drop)
     pub(super) _bind_token: Option<BindToken>,
     /// Transient-local replay registration token (removes hook on drop).
@@ -668,6 +672,10 @@ impl<T: DDS> DataWriter<T> {
     }
 
     /// Send a single RTPS packet to discovered endpoints or multicast fallback.
+    ///
+    /// When `discovery_fsm` is set, filters destinations by QoS compatibility
+    /// (partition, reliability, durability, etc.) so data only flows to
+    /// participants that have matching readers for this writer's topic.
     fn send_packet_to_endpoints(
         &self,
         transport: &UdpTransport,
@@ -683,11 +691,20 @@ impl<T: DDS> DataWriter<T> {
             let local_guid = self
                 .rtps_endpoint
                 .map(|ctx| GUID::new(ctx.guid_prefix, RTPS_ENTITYID_PARTICIPANT));
+
+            // Build set of participant GUIDs that have QoS-compatible readers
+            let allowed_participants = self.compute_allowed_participants();
+
             let mut delivered = false;
 
             for (guid, endpoint) in endpoints {
                 if Some(guid) == local_guid {
                     continue;
+                }
+                if let Some(ref allowed) = allowed_participants {
+                    if !allowed.contains(&guid) {
+                        continue;
+                    }
                 }
                 log::debug!(
                     "[writer] Sending unicast USER DATA to endpoint={} guid={}",
@@ -699,7 +716,7 @@ impl<T: DDS> DataWriter<T> {
                 }
             }
 
-            if delivered {
+            if delivered || allowed_participants.is_some() {
                 Ok(())
             } else {
                 log::debug!("[writer] No remote endpoints (self-only); falling back to multicast");
@@ -709,6 +726,48 @@ impl<T: DDS> DataWriter<T> {
             log::debug!("[writer] No endpoint_registry, falling back to multicast");
             transport.send(packet)
         }
+    }
+
+    /// Compute set of participant GUIDs that have QoS-compatible readers.
+    ///
+    /// Returns `None` if no filtering is needed (no discovery FSM, or no QoS
+    /// policies that require filtering). Returns `Some(set)` when the writer
+    /// has partition QoS or other policies that restrict which readers match.
+    fn compute_allowed_participants(&self) -> Option<Vec<GUID>> {
+        let fsm = self.discovery_fsm.as_ref()?;
+
+        // Only filter if the writer has non-default partition QoS.
+        // Default partition (empty) matches everything, so no filtering needed.
+        // This keeps the common case (no partitions) zero-cost.
+        if self.qos.partition.is_default() {
+            return None;
+        }
+
+        let readers = fsm.find_readers_for_topic(&self.topic);
+
+        // When the writer has non-default partition and no readers are discovered yet,
+        // return empty set (send to nobody). This is correct DDS behavior: a writer
+        // with partition QoS only communicates with readers whose partition matches.
+        // If no readers are known, there are no matches.
+        if readers.is_empty() {
+            return Some(Vec::new());
+        }
+
+        let mut allowed = Vec::new();
+        for reader in &readers {
+            if crate::core::discovery::Matcher::is_compatible(&reader.qos, &self.qos) {
+                // EndpointInfo stores participant_guid with zeroed entity_id,
+                // but endpoint_registry keys use RTPS_ENTITYID_PARTICIPANT.
+                // Reconstruct the proper participant GUID for matching.
+                let mut pguid_bytes = [0u8; 16];
+                pguid_bytes[..12].copy_from_slice(&reader.participant_guid.as_bytes()[..12]);
+                pguid_bytes[12..16]
+                    .copy_from_slice(&crate::protocol::constants::RTPS_ENTITYID_PARTICIPANT);
+                allowed.push(GUID::from_bytes(pguid_bytes));
+            }
+        }
+
+        Some(allowed)
     }
 
     /// Send multiple RTPS packets (DATA_FRAG) to discovered endpoints or multicast fallback.
@@ -733,11 +792,17 @@ impl<T: DDS> DataWriter<T> {
             let local_guid = self
                 .rtps_endpoint
                 .map(|ctx| GUID::new(ctx.guid_prefix, RTPS_ENTITYID_PARTICIPANT));
+            let allowed_participants = self.compute_allowed_participants();
             let mut delivered = false;
 
             for (guid, endpoint) in endpoints {
                 if Some(guid) == local_guid {
                     continue;
+                }
+                if let Some(ref allowed) = allowed_participants {
+                    if !allowed.contains(&guid) {
+                        continue;
+                    }
                 }
                 log::debug!(
                     "[writer] Sending {} DATA_FRAG unicast to endpoint={} guid={}",
@@ -756,7 +821,7 @@ impl<T: DDS> DataWriter<T> {
                 }
             }
 
-            if delivered {
+            if delivered || allowed_participants.is_some() {
                 Ok(())
             } else {
                 log::debug!(

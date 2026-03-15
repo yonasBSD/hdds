@@ -71,6 +71,12 @@ use log;
 /// # Returns
 ///
 /// `true` if all policies are compatible
+///
+/// # Partition Matching
+///
+/// DDS spec allows fnmatch-style wildcards (`*`, `?`) in partition names.
+/// Matching is symmetric: if either name contains wildcards, it matches
+/// the other name using glob patterns.
 pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
     crate::trace_fn!("qos::is_compatible");
     // 1. Reliability compatibility
@@ -94,6 +100,7 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
     let durability_rank = |durability: Durability| match durability {
         Durability::Volatile => 0u8,
         Durability::TransientLocal => 1u8,
+        Durability::Transient => 2u8,
         Durability::Persistent => 3u8,
     };
     let durability_ok =
@@ -180,12 +187,15 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
         );
         return false;
     } else {
-        // Both non-empty -> check intersection
-        let has_intersection = writer_qos
-            .partition
-            .names
-            .iter()
-            .any(|w_name| reader_qos.partition.names.contains(w_name));
+        // Both non-empty -> check intersection with fnmatch-style glob support
+        // DDS spec: partition names may contain '*' and '?' wildcards
+        let has_intersection = writer_qos.partition.names.iter().any(|w_name| {
+            reader_qos
+                .partition
+                .names
+                .iter()
+                .any(|r_name| partition_matches(w_name, r_name))
+        });
         if !has_intersection {
             log::debug!(
                 "[MATCH-QOS] Partition mismatch (no intersection) writer={:?}, reader={:?})",
@@ -196,10 +206,72 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
         }
     }
 
-    // 8. TimeBasedFilter - reader-side filtering only, no compatibility check
-    // 9. ResourceLimits - local configuration, no compatibility check
+    // 8. DataRepresentation compatibility (DDS-RTPS v2.5)
+    // If both writer and reader advertise data_representation, they must share
+    // at least one common representation. Empty means "default" (XCDR1),
+    // which is always compatible with XCDR1.
+    if !writer_qos.data_representation.is_empty() && !reader_qos.data_representation.is_empty() {
+        let has_common = writer_qos
+            .data_representation
+            .iter()
+            .any(|w| reader_qos.data_representation.contains(w));
+        if !has_common {
+            log::debug!(
+                "[MATCH-QOS] DataRepresentation mismatch (writer={:?}, reader={:?})",
+                writer_qos.data_representation,
+                reader_qos.data_representation
+            );
+            return false;
+        }
+    }
+
+    // 9. TimeBasedFilter - reader-side filtering only, no compatibility check
+    // 10. ResourceLimits - local configuration, no compatibility check
 
     true
+}
+
+/// Check if two partition names match, supporting fnmatch-style wildcards.
+/// Matching is symmetric: `partition_matches("p*", "p1")` == `partition_matches("p1", "p*")`.
+fn partition_matches(a: &str, b: &str) -> bool {
+    if a == b {
+        return true;
+    }
+    // Try both directions (glob pattern could be on either side)
+    fnmatch(a, b) || fnmatch(b, a)
+}
+
+/// Simple fnmatch-style glob matching: `*` matches any sequence, `?` matches one char.
+fn fnmatch(pattern: &str, text: &str) -> bool {
+    let pat = pattern.as_bytes();
+    let text_bytes = text.as_bytes();
+    let mut px = 0usize;
+    let mut tx = 0usize;
+    let mut star_px: Option<usize> = None;
+    let mut star_ti: usize = 0;
+
+    while tx < text_bytes.len() {
+        if px < pat.len() && (pat[px] == b'?' || pat[px] == text_bytes[tx]) {
+            px += 1;
+            tx += 1;
+        } else if px < pat.len() && pat[px] == b'*' {
+            star_px = Some(px);
+            star_ti = tx;
+            px += 1;
+        } else if let Some(spx) = star_px {
+            px = spx + 1;
+            star_ti += 1;
+            tx = star_ti;
+        } else {
+            return false;
+        }
+    }
+
+    while px < pat.len() && pat[px] == b'*' {
+        px += 1;
+    }
+
+    px == pat.len()
 }
 
 #[cfg(test)]

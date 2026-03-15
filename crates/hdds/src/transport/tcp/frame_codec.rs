@@ -198,13 +198,12 @@ impl FrameCodec {
                                     io::ErrorKind::UnexpectedEof,
                                     "connection closed",
                                 ));
-                            } else {
-                                // Partial header read
-                                return Err(io::Error::new(
-                                    io::ErrorKind::UnexpectedEof,
-                                    "incomplete frame header",
-                                ));
                             }
+                            // Partial header read
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "incomplete frame header",
+                            ));
                         }
                         Ok(n) => {
                             let total = bytes_read + n;

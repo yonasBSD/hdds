@@ -125,13 +125,39 @@ impl DialectEncoder for HddsEncoder {
             };
             let with_durability = match q.durability_kind {
                 0 => base.volatile(),
+                2 => base.transient(),
                 3 => base.persistent(),
                 _ => base.transient_local(),
             };
-            match q.history_kind {
+            let with_history = match q.history_kind {
                 1 => with_durability.keep_all(),
                 _ => with_durability.keep_last(q.history_depth),
+            };
+            // Ownership
+            let with_ownership = match q.ownership_kind {
+                1 => with_history
+                    .ownership_exclusive()
+                    .ownership_strength(q.ownership_strength),
+                _ => with_history.ownership_shared(),
+            };
+            // Deadline
+            let mut result =
+                if q.deadline_period_sec == 0x7FFF_FFFF && q.deadline_period_nsec == 0xFFFF_FFFF {
+                    with_ownership // infinite deadline (default)
+                } else {
+                    let millis = (q.deadline_period_sec as u64) * 1000
+                        + (q.deadline_period_nsec as u64) / 1_000_000;
+                    with_ownership.deadline_millis(millis)
+                };
+            // Partition
+            if !q.partition_names.is_empty() {
+                result.partition = crate::qos::partition::Partition::new(q.partition_names.clone());
             }
+            // Data representation
+            if !q.data_representation.is_empty() {
+                result.data_representation = q.data_representation.clone();
+            }
+            result
         });
 
         #[cfg(feature = "xtypes")]

@@ -91,11 +91,16 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
     // NOTE: Removed PID_PRODUCT_VERSION (0x8000) - RTI rejects vendor PIDs from non-RTI vendors
     // metadata::write_product_version(buf, &mut offset)?;
 
-    // Data representation - advertise BOTH XCDR1 and XCDR2 for maximum compatibility.
-    // - CycloneDDS uses XCDR1 by default and requires XCDR1 in data_representation
-    // - OpenDDS uses XCDR2 and requires XCDR2 in data_representation
-    // By advertising both, HDDS can interop with all major DDS vendors.
-    metadata::write_data_representation_both(buf, &mut offset)?;
+    // Data representation - write from QoS if specified, otherwise advertise BOTH.
+    if let Some(ref qos) = sedp_data.qos {
+        if !qos.data_representation.is_empty() {
+            metadata::write_data_representation_list(&qos.data_representation, buf, &mut offset)?;
+        } else {
+            metadata::write_data_representation_both(buf, &mut offset)?;
+        }
+    } else {
+        metadata::write_data_representation_both(buf, &mut offset)?;
+    }
 
     // Additional metadata (commented out for minimal profile)
     // NOTE: Removed vendor PIDs (0x8002, 0x8009) - RTI rejects these from non-RTI vendors
@@ -135,11 +140,12 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
     qos::write_history(sedp_data.qos.as_ref(), buf, &mut offset)?;
 
     // Additional QoS policies
-    qos::write_deadline(buf, &mut offset)?;
-    qos::write_ownership(buf, &mut offset)?;
+    qos::write_deadline(sedp_data.qos.as_ref(), buf, &mut offset)?;
+    qos::write_ownership(sedp_data.qos.as_ref(), buf, &mut offset)?;
+    qos::write_ownership_strength(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_liveliness(buf, &mut offset)?;
     qos::write_time_based_filter(buf, &mut offset)?;
-    qos::write_partition(buf, &mut offset)?;
+    qos::write_partition(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_resource_limits(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_presentation(sedp_data.qos.as_ref(), buf, &mut offset)?;
 

@@ -134,6 +134,18 @@ impl QoS {
         self
     }
 
+    /// Set DATA_REPRESENTATION to XCDR1 only.
+    pub fn data_representation_xcdr1(mut self) -> Self {
+        self.data_representation = vec![0x0000];
+        self
+    }
+
+    /// Set DATA_REPRESENTATION to XCDR2 only.
+    pub fn data_representation_xcdr2(mut self) -> Self {
+        self.data_representation = vec![0x0002];
+        self
+    }
+
     /// Set USER_DATA policy (v0.7.0+).
     ///
     /// Opaque data attached to DomainParticipant or Entity.

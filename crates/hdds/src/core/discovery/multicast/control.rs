@@ -333,6 +333,7 @@ impl ControlHandler {
 
     /// Main control loop
     #[allow(clippy::too_many_arguments)] // RTPS control loop - parameters are protocol-mandated
+    #[allow(clippy::similar_names)] // effective_pub_first / effective_sub_first are intentionally parallel
     fn run_loop(
         receiver: Receiver<ControlMessage>,
         transport: Arc<UdpTransport>,

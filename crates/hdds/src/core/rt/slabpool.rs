@@ -41,20 +41,20 @@ impl SlabHandle {
 /// Larger slot counts for bigger sizes support pipelining of fragmented messages
 /// and buffering when application read rate is slower than network receive rate.
 const SIZE_CLASSES: &[(usize, usize)] = &[
-    (16, 64),     // 16B x 64 slots = 1 KB
-    (32, 64),     // 32B x 64 slots = 2 KB
-    (64, 64),     // 64B x 64 slots = 4 KB
-    (128, 64),    // 128B x 64 slots = 8 KB
-    (256, 64),    // 256B x 64 slots = 16 KB
-    (512, 64),    // 512B x 64 slots = 32 KB
-    (1024, 64),   // 1KB x 64 slots = 64 KB
-    (2048, 32),   // 2KB x 32 slots = 64 KB
-    (4096, 32),   // 4KB x 32 slots = 128 KB
-    (8192, 32),   // 8KB x 32 slots = 256 KB
-    (16384, 32),  // 16KB x 32 slots = 512 KB
-    (32768, 32),  // 32KB x 32 slots = 1 MB
-    (65536, 32),  // 64KB x 32 slots = 2 MB
-    (131072, 16), // 128KB x 16 slots = 2 MB
+    (16, 64),      // 16B x 64 slots = 1 KB
+    (32, 64),      // 32B x 64 slots = 2 KB
+    (64, 64),      // 64B x 64 slots = 4 KB
+    (128, 64),     // 128B x 64 slots = 8 KB
+    (256, 64),     // 256B x 64 slots = 16 KB
+    (512, 64),     // 512B x 64 slots = 32 KB
+    (1024, 64),    // 1KB x 64 slots = 64 KB
+    (2048, 32),    // 2KB x 32 slots = 64 KB
+    (4096, 32),    // 4KB x 32 slots = 128 KB
+    (8192, 32),    // 8KB x 32 slots = 256 KB
+    (16384, 32),   // 16KB x 32 slots = 512 KB
+    (32768, 32),   // 32KB x 32 slots = 1 MB
+    (65536, 32),   // 64KB x 32 slots = 2 MB
+    (131_072, 16), // 128KB x 16 slots = 2 MB
 ];
 
 /// Per-pool state with atomic bitmap for free slot tracking

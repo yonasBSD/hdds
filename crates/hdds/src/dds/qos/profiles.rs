@@ -391,6 +391,7 @@ impl QosProfileRegistry {
             qos.durability = match dur.to_lowercase().as_str() {
                 "volatile" => Durability::Volatile,
                 "transient_local" => Durability::TransientLocal,
+                "transient" => Durability::Transient,
                 "persistent" => Durability::Persistent,
                 other => return Err(format!("Invalid durability: {}", other)),
             };

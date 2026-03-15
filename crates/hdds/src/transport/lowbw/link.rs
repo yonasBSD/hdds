@@ -359,7 +359,7 @@ impl SimLink {
         Self {
             config,
             queue: Mutex::new(Vec::new()),
-            rng_state: AtomicU64::new(0x12345678_9ABCDEF0),
+            rng_state: AtomicU64::new(0x1234_5678_9ABC_DEF0),
             stats: Mutex::new(SimLinkStats::default()),
             last_send: Mutex::new(Instant::now()),
         }

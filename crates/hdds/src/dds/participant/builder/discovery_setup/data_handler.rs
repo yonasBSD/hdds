@@ -115,6 +115,14 @@ pub(super) fn handle_data_packet(
                     sedp_data.topic_name
                 );
                 registry.register_writer_guid(endpoint_guid_bytes, sedp_data.topic_name.clone());
+                if let Some(ref qos) = sedp_data.qos {
+                    if qos.ownership.kind == crate::qos::ownership::OwnershipKind::Exclusive {
+                        registry.register_writer_ownership_strength(
+                            endpoint_guid_bytes,
+                            qos.ownership_strength.value,
+                        );
+                    }
+                }
             } else {
                 log::debug!("[callback] >>  Reader endpoint - not registering writer mapping");
             }

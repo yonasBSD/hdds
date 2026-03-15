@@ -48,7 +48,7 @@ impl Cdr2Encode for RawBytes {
 impl DdsTrait for RawBytes {
     fn type_descriptor() -> &'static TypeDescriptor {
         static DESC: TypeDescriptor = TypeDescriptor {
-            type_id: 0x00000000,
+            type_id: 0x0000_0000,
             type_name: "RawBytes",
             size_bytes: 0, // Variable size
             alignment: 1,
@@ -273,6 +273,7 @@ impl super::Participant {
                 let dur_val = match endpoint.qos.durability {
                     Durability::Volatile => 0u32,
                     Durability::TransientLocal => 1u32,
+                    Durability::Transient => 2u32,
                     Durability::Persistent => 3u32,
                 };
                 let hist_val = match endpoint.qos.history {

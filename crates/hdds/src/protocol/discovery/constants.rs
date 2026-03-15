@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 // Copyright (c) 2025-2026 naskel.com
 
-pub(super) const FNV1A_OFFSET_BASIS_64: u64 = 0xcbf29ce484222325;
-pub(super) const FNV1A_PRIME_64: u64 = 0x100000001b3;
+pub(super) const FNV1A_OFFSET_BASIS_64: u64 = 0xcbf2_9ce4_8422_2325;
+pub(super) const FNV1A_PRIME_64: u64 = 0x0100_0000_01b3;
 
 pub(super) const PID_SENTINEL: u16 = 0x0001;
 pub(super) const PID_PARTICIPANT_GUID: u16 = 0x0050;
@@ -40,6 +40,7 @@ pub(super) const PID_RESOURCE_LIMITS: u16 = 0x0041;
 pub(super) const PID_DEADLINE: u16 = 0x0023;
 pub(super) const PID_LIVELINESS: u16 = 0x001B;
 pub(super) const PID_OWNERSHIP: u16 = 0x001F;
+pub(super) const PID_OWNERSHIP_STRENGTH: u16 = 0x0006;
 pub(super) const PID_PARTITION: u16 = 0x0029;
 pub(super) const PID_TIME_BASED_FILTER: u16 = 0x0004;
 pub(super) const PID_DURABILITY_SERVICE: u16 = 0x001E; // DDS v1.4 Sec.2.2.3.5
@@ -87,7 +88,7 @@ pub(super) const PID_TYPE_OBJECT_LB: u16 = 0x8021; // v85: Compressed TypeObject
 // FastDDS/Cyclone ignore unknown bits per RTPS spec, so this is safe.
 //
 // Value 0x000F0C3F matches FastDDS reference captures.
-pub(super) const BUILTIN_ENDPOINT_SET_DEFAULT: u32 = 0x000F0C3F;
+pub(super) const BUILTIN_ENDPOINT_SET_DEFAULT: u32 = 0x000F_0C3F;
 // Bit 0  (0x00000001): DISC_BUILTIN_ENDPOINT_PARTICIPANT_ANNOUNCER (SPDPbuiltinParticipantWriter)
 // Bit 1  (0x00000002): DISC_BUILTIN_ENDPOINT_PARTICIPANT_DETECTOR (SPDPbuiltinParticipantReader)
 // Bit 2  (0x00000004): DISC_BUILTIN_ENDPOINT_PUBLICATIONS_ANNOUNCER (SEDPbuiltinPublicationsWriter)
@@ -105,7 +106,7 @@ pub(super) const BUILTIN_ENDPOINT_SET_DEFAULT: u32 = 0x000F0C3F;
 /// Provides QoS information for builtin endpoints
 /// Bit 0: BEST_EFFORT_PARTICIPANT_MESSAGE_DATA_READER
 #[allow(dead_code)] // Reserved for future builtin endpoint QoS support
-pub(super) const BUILTIN_ENDPOINT_QOS_DEFAULT: u32 = 0x00000001; // v81: RTI compatibility
+pub(super) const BUILTIN_ENDPOINT_QOS_DEFAULT: u32 = 0x0000_0001; // v81: RTI compatibility
 
 // ============================================================================
 // CDR Encapsulation Constants (RTPS v2.3 Sec.10.2)

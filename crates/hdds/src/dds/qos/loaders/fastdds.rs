@@ -105,7 +105,7 @@ impl FastDdsLoader {
                     qos.durability = match kind.trim() {
                         "VOLATILE" => Durability::Volatile,
                         "TRANSIENT_LOCAL" => Durability::TransientLocal,
-                        "TRANSIENT" => Durability::TransientLocal, // Map to TransientLocal (HDDS doesn't support Transient)
+                        "TRANSIENT" => Durability::Transient,
                         "PERSISTENT" => Durability::Persistent,
                         _ => Durability::Volatile,
                     };

@@ -335,10 +335,9 @@ pub fn classify_rtps(
 
                 // Continue with recovered offset (don't increment, let loop reprocess)
                 continue;
-            } else {
-                // For known submessage types with invalid length, stop scanning
-                break;
             }
+            // For known submessage types with invalid length, stop scanning
+            break;
         }
 
         offset = next_offset;

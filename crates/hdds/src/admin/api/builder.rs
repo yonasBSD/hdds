@@ -142,6 +142,7 @@ fn endpoint_view(endpoint: &EndpointInfo) -> EndpointView {
     let durability = match endpoint.qos.durability {
         Durability::Volatile => "VOLATILE",
         Durability::TransientLocal => "TRANSIENT_LOCAL",
+        Durability::Transient => "TRANSIENT",
         Durability::Persistent => "PERSISTENT",
     };
     let history = match endpoint.qos.history {

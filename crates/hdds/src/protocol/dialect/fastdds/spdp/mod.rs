@@ -35,7 +35,7 @@ mod pids {
 const VENDOR_ID_HDDS: u16 = 0x01AA;
 
 /// Builtin endpoint set flags (standard DDS)
-const BUILTIN_ENDPOINT_SET_DEFAULT: u32 = 0x0000003F; // Basic SEDP endpoints
+const BUILTIN_ENDPOINT_SET_DEFAULT: u32 = 0x0000_003F; // Basic SEDP endpoints
 
 /// Build SPDP participant announcement for FastDDS.
 ///

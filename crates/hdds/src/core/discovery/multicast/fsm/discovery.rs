@@ -18,6 +18,7 @@ use crate::protocol::discovery::{SedpData, SpdpData};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
+use std::time::Instant;
 
 /// Listener for discovery events (endpoints only).
 pub trait DiscoveryListener: Send + Sync {
@@ -151,6 +152,19 @@ pub struct DiscoveryFsm {
     security_validator: Option<Arc<dyn SecurityValidator>>,
     /// Whether to require security (reject participants without identity_token).
     require_authentication: bool,
+    /// v249: FSM creation timestamp for startup probation window.
+    created_at: Instant,
+    /// v249: Pending endpoint notifications for unconfirmed participants.
+    ///
+    /// When SEDP discovers an endpoint for a participant that is not yet
+    /// confirmed alive (spdp_count < 2), the endpoint is stored here
+    /// instead of being immediately notified. When the participant
+    /// transitions to confirmed (via handle_spdp refresh), all pending
+    /// endpoints for that participant are replayed.
+    ///
+    /// This prevents stale SPDP/SEDP packets from killed processes from
+    /// triggering false on_endpoint_discovered notifications.
+    pending_notifications: Arc<RwLock<Vec<EndpointInfo>>>,
 }
 
 impl DiscoveryFsm {
@@ -184,6 +198,8 @@ impl DiscoveryFsm {
             listeners: Arc::new(RwLock::new(Vec::new())),
             security_validator: None,
             require_authentication: false,
+            created_at: Instant::now(),
+            pending_notifications: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -378,6 +394,16 @@ impl DiscoveryFsm {
             }
         }
 
+        // SPDP dispose: lease_duration_ms == 0 means participant is leaving
+        if data.lease_duration_ms == 0 {
+            log::debug!(
+                "[SPDP] Dispose received for participant {:?}",
+                data.participant_guid
+            );
+            self.remove_participant(data.participant_guid);
+            return true;
+        }
+
         // Check if participant exists (read lock) and guard against poison.
         let exists = {
             let db = recover_read(Arc::as_ref(&self.db), "DiscoveryFsm::handle_spdp exists");
@@ -387,56 +413,68 @@ impl DiscoveryFsm {
         if exists {
             // Refresh existing participant (write lock).
             let mut db = recover_write(Arc::as_ref(&self.db), "DiscoveryFsm::handle_spdp refresh");
-            if let Some(info) = db.get_mut(&data.participant_guid) {
+            let just_confirmed = if let Some(info) = db.get_mut(&data.participant_guid) {
+                let was_unconfirmed = !info.is_confirmed_alive();
                 info.refresh();
-            }
-            return true; // v182: Signal this was a refresh
-        } else {
-            // Insert new participant (write lock).
-            let info = ParticipantInfo::new(
-                data.participant_guid,
-                data.metatraffic_unicast_locators.clone(), // v79: use metatraffic for SEDP
-                data.lease_duration_ms,
-            );
-
-            let mut db = recover_write(Arc::as_ref(&self.db), "DiscoveryFsm::handle_spdp insert");
-            db.insert(data.participant_guid, info);
-
-            // v99: FIX - Register USER DATA endpoint (port 7411) not metatraffic (port 7410)!
-            // User data must be sent to default_unicast_locators per RTPS v2.3 Sec.8.5.3.1
-            // v100: Filter out 0.0.0.0 addresses (FastDDS sends them meaning "use source IP")
-            // v197: Prefer addresses on the same subnet over Docker/bridge interfaces.
-            //       FastDDS may announce multiple locators including Docker bridge (172.17.x.x).
-            //       We should prefer addresses on the same 192.168.x.x subnet as our node.
-            let valid_default_unicast = select_best_locator(&data.default_unicast_locators);
-            let valid_metatraffic_unicast = select_best_locator(&data.metatraffic_unicast_locators);
-
-            if let Some(&endpoint) = valid_default_unicast {
-                self.endpoint_registry
-                    .register(data.participant_guid, endpoint);
-                log::debug!(
-                    "[discovery] v100: Registered USER DATA endpoint (port 7411): {}",
-                    endpoint
-                );
-            } else if let Some(&fallback_endpoint) = valid_metatraffic_unicast {
-                // Fallback: use metatraffic if default not available (legacy/buggy peers)
-                self.endpoint_registry
-                    .register(data.participant_guid, fallback_endpoint);
-                log::debug!(
-                    "[discovery] v100: FALLBACK - Using metatraffic endpoint (port 7410): {}",
-                    fallback_endpoint
-                );
+                was_unconfirmed && info.is_confirmed_alive()
             } else {
-                log::warn!(
-                    "[discovery] v100: No valid unicast locator found for participant {:?}",
-                    data.participant_guid
-                );
+                false
+            };
+            drop(db); // Release lock before replaying
+
+            // v249: When a participant transitions from unconfirmed to confirmed,
+            // replay all pending SEDP endpoint notifications that were deferred.
+            if just_confirmed {
+                self.replay_pending_for_participant(data.participant_guid);
             }
 
-            self.metrics
-                .participants_discovered
-                .fetch_add(1, Ordering::Relaxed);
+            return true; // v182: Signal this was a refresh
         }
+
+        // Insert new participant (write lock).
+        let info = ParticipantInfo::new(
+            data.participant_guid,
+            data.metatraffic_unicast_locators.clone(), // v79: use metatraffic for SEDP
+            data.lease_duration_ms,
+        );
+
+        let mut db = recover_write(Arc::as_ref(&self.db), "DiscoveryFsm::handle_spdp insert");
+        db.insert(data.participant_guid, info);
+
+        // v99: FIX - Register USER DATA endpoint (port 7411) not metatraffic (port 7410)!
+        // User data must be sent to default_unicast_locators per RTPS v2.3 Sec.8.5.3.1
+        // v100: Filter out 0.0.0.0 addresses (FastDDS sends them meaning "use source IP")
+        // v197: Prefer addresses on the same subnet over Docker/bridge interfaces.
+        //       FastDDS may announce multiple locators including Docker bridge (172.17.x.x).
+        //       We should prefer addresses on the same 192.168.x.x subnet as our node.
+        let valid_default_unicast = select_best_locator(&data.default_unicast_locators);
+        let valid_metatraffic_unicast = select_best_locator(&data.metatraffic_unicast_locators);
+
+        if let Some(&endpoint) = valid_default_unicast {
+            self.endpoint_registry
+                .register(data.participant_guid, endpoint);
+            log::debug!(
+                "[discovery] v100: Registered USER DATA endpoint (port 7411): {}",
+                endpoint
+            );
+        } else if let Some(&fallback_endpoint) = valid_metatraffic_unicast {
+            // Fallback: use metatraffic if default not available (legacy/buggy peers)
+            self.endpoint_registry
+                .register(data.participant_guid, fallback_endpoint);
+            log::debug!(
+                "[discovery] v100: FALLBACK - Using metatraffic endpoint (port 7410): {}",
+                fallback_endpoint
+            );
+        } else {
+            log::warn!(
+                "[discovery] v100: No valid unicast locator found for participant {:?}",
+                data.participant_guid
+            );
+        }
+
+        self.metrics
+            .participants_discovered
+            .fetch_add(1, Ordering::Relaxed);
         false // v182: New participant (not a refresh)
     }
 
@@ -478,6 +516,7 @@ impl DiscoveryFsm {
 
         // Create endpoint info (auto-detects Writer vs Reader from GUID).
         // Uses locked dialect for vendor-specific QoS defaults when no PIDs present.
+        let endpoint_unicast_locators = data.unicast_locators.clone();
         let dialect = self.get_locked_dialect();
         let endpoint = EndpointInfo::from_sedp(data, dialect);
 
@@ -537,10 +576,18 @@ impl DiscoveryFsm {
                     if is_new
                         && matches!(
                             endpoint_durability,
-                            Durability::TransientLocal | Durability::Persistent
+                            Durability::TransientLocal
+                                | Durability::Transient
+                                | Durability::Persistent
                         )
                     {
-                        if let Some(dest) = self.endpoint_registry.get(&endpoint_participant) {
+                        // Use participant's registered endpoint, or fall back to the
+                        // SEDP-announced unicast locator when SPDP hasn't been processed yet.
+                        let replay_dest = self
+                            .endpoint_registry
+                            .get(&endpoint_participant)
+                            .or_else(|| endpoint_unicast_locators.first().copied());
+                        if let Some(dest) = replay_dest {
                             self.replay_registry
                                 .replay_for(&topic_name, &type_name, dest);
                         } else {
@@ -557,7 +604,45 @@ impl DiscoveryFsm {
         };
 
         if is_new {
-            self.notify_endpoint_discovered(&endpoint);
+            // v249: During the startup probation window (first 200ms), gate
+            // notifications for unconfirmed participants. Stale SPDP/SEDP from
+            // killed processes arrive in the first ~50ms and would trigger false
+            // on_endpoint_discovered notifications. After the window, all
+            // notifications are immediate — zero ongoing latency cost.
+            //
+            // This is safe even for incompatibility tests because P0.1
+            // (blocked_writers) prevents data delivery from incompatible writers
+            // at the router level, regardless of notification timing.
+            const STARTUP_PROBATION_MS: u64 = 200;
+            let in_startup = (self.created_at.elapsed().as_millis() as u64) < STARTUP_PROBATION_MS;
+
+            if in_startup && !is_local_endpoint {
+                let confirmed = {
+                    let db = recover_read(
+                        Arc::as_ref(&self.db),
+                        "DiscoveryFsm::handle_sedp confirmed_check",
+                    );
+                    db.values().any(|p| {
+                        &p.guid.as_bytes()[..12] == endpoint_prefix && p.is_confirmed_alive()
+                    })
+                };
+
+                if confirmed {
+                    self.notify_endpoint_discovered(&endpoint);
+                } else {
+                    log::debug!(
+                        "[SEDP] v249: Deferring notification during startup probation (prefix={:02x?})",
+                        &endpoint_prefix[..4]
+                    );
+                    let mut pending = recover_write(
+                        Arc::as_ref(&self.pending_notifications),
+                        "DiscoveryFsm::handle_sedp pending_push",
+                    );
+                    pending.push(endpoint);
+                }
+            } else {
+                self.notify_endpoint_discovered(&endpoint);
+            }
         }
     }
 
@@ -591,6 +676,13 @@ impl DiscoveryFsm {
         crate::trace_fn!("DiscoveryFsm::get_participants");
         let db = recover_read(Arc::as_ref(&self.db), "DiscoveryFsm::get_participants");
         db.values().cloned().collect()
+    }
+
+    /// Check if a participant is known in the SPDP database.
+    #[must_use]
+    pub fn has_participant(&self, guid: &GUID) -> bool {
+        let db = recover_read(Arc::as_ref(&self.db), "DiscoveryFsm::has_participant");
+        db.contains_key(guid)
     }
 
     /// Get count of discovered participants.
@@ -636,6 +728,77 @@ impl DiscoveryFsm {
     /// Remove participant from database.
     ///
     /// Used by LeaseTracker to remove expired participants.
+    /// Remove participants that are still in probation (spdp_count < 2).
+    /// These are likely stale entries from killed processes whose SPDP was
+    /// read from the OS socket buffer during startup.
+    pub fn purge_unconfirmed_participants(&self) {
+        let stale_guids: Vec<GUID> = {
+            let db = recover_read(Arc::as_ref(&self.db), "DiscoveryFsm::purge_unconfirmed");
+            db.values()
+                .filter(|p| !p.is_confirmed_alive())
+                .map(|p| p.guid)
+                .collect()
+        };
+        for guid in &stale_guids {
+            self.remove_participant(*guid);
+        }
+        if !stale_guids.is_empty() {
+            log::debug!(
+                "[SPDP] Purged {} unconfirmed (stale) participants",
+                stale_guids.len()
+            );
+        }
+    }
+
+    /// Remove all discovered participants and their endpoints.
+    ///
+    /// Used at startup to clear stale SPDP/SEDP entries from previous
+    /// processes that were using the same domain. Should be called BEFORE
+    /// registering discovery listeners to avoid false match notifications.
+    pub fn clear_all_participants(&self) {
+        let guids: Vec<GUID> = {
+            let db = recover_read(Arc::as_ref(&self.db), "DiscoveryFsm::clear_all");
+            db.keys().copied().collect()
+        };
+        for guid in guids {
+            self.remove_participant(guid);
+        }
+    }
+
+    /// v249: Replay deferred endpoint notifications for a participant that
+    /// just transitioned to confirmed alive (spdp_count >= 2).
+    fn replay_pending_for_participant(&self, participant_guid: GUID) {
+        let participant_prefix = &participant_guid.as_bytes()[..12];
+        let to_replay: Vec<EndpointInfo> = {
+            let mut pending = recover_write(
+                Arc::as_ref(&self.pending_notifications),
+                "DiscoveryFsm::replay_pending",
+            );
+            let mut remaining = Vec::new();
+            let mut matching = Vec::new();
+            for ep in pending.drain(..) {
+                if &ep.endpoint_guid.as_bytes()[..12] == participant_prefix {
+                    matching.push(ep);
+                } else {
+                    remaining.push(ep);
+                }
+            }
+            *pending = remaining;
+            matching
+        };
+
+        if !to_replay.is_empty() {
+            log::debug!(
+                "[SEDP] v249: Replaying {} deferred endpoint(s) for confirmed participant {:?}",
+                to_replay.len(),
+                participant_guid
+            );
+            for endpoint in &to_replay {
+                self.notify_endpoint_discovered(endpoint);
+            }
+        }
+    }
+
     pub fn remove_participant(&self, guid: GUID) {
         crate::trace_fn!("DiscoveryFsm::remove_participant");
         // Remove from participant DB.
@@ -656,6 +819,16 @@ impl DiscoveryFsm {
 
             // Remove from endpoint registry (v0.5.1+).
             self.endpoint_registry.remove(&guid);
+
+            // v249: Clean up any pending notifications for this participant.
+            {
+                let prefix = &guid.as_bytes()[..12];
+                let mut pending = recover_write(
+                    Arc::as_ref(&self.pending_notifications),
+                    "DiscoveryFsm::remove_participant pending",
+                );
+                pending.retain(|ep| &ep.endpoint_guid.as_bytes()[..12] != prefix);
+            }
 
             self.metrics
                 .participants_expired

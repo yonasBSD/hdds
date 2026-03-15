@@ -25,7 +25,7 @@ impl ConfigFormat {
     pub fn from_extension(path: &Path) -> Option<Self> {
         match path.extension().and_then(|e| e.to_str()) {
             Some("xml") => Some(ConfigFormat::Xml),
-            Some("yaml") | Some("yml") => Some(ConfigFormat::Yaml),
+            Some("yaml" | "yml") => Some(ConfigFormat::Yaml),
             _ => None,
         }
     }

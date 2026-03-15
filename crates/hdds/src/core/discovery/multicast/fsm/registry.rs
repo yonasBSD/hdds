@@ -114,6 +114,20 @@ impl TopicRegistry {
             .unwrap_or_default()
     }
 
+    /// Find all endpoints whose GUID prefix matches the given prefix.
+    /// Used to replay endpoint notifications when a participant is promoted from probation.
+    pub fn find_endpoints_by_prefix(&self, prefix: &[u8]) -> Vec<EndpointInfo> {
+        let mut result = Vec::new();
+        for endpoints in self.topics.values() {
+            for ep in endpoints {
+                if ep.endpoint_guid.as_bytes()[..12] == *prefix {
+                    result.push(ep.clone());
+                }
+            }
+        }
+        result
+    }
+
     /// Find compatible writers for a topic (Phase 10 - XTypes v1.3 Integration).
     ///
     /// Filters writers by structural type compatibility using TypeObject EquivalenceHash.

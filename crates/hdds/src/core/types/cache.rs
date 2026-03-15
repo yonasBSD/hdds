@@ -137,21 +137,21 @@ impl TypeCache {
         }
 
         let start = Instant::now();
-        let built = Arc::new(build()?);
+        let new_entry = Arc::new(build()?);
         debug_assert_eq!(
-            built.ros_hash.as_ref(),
+            new_entry.ros_hash.as_ref(),
             key.rihs.as_ref(),
             "TypeObjectHandle hash must match lookup key"
         );
 
         if cache.len() >= cache.cap().into() && !self.free_slot(&mut cache) {
             self.record_miss(start);
-            return Ok(built);
+            return Ok(new_entry);
         }
 
-        cache.put(key.clone(), Arc::clone(&built));
+        cache.put(key.clone(), Arc::clone(&new_entry));
         self.record_miss(start);
-        Ok(built)
+        Ok(new_entry)
     }
 
     pub fn pin(&self, distro: Distro, fqn: &str, rihs: &[u8]) {

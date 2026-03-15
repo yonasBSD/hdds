@@ -319,6 +319,7 @@ impl YamlLoader {
             qos.durability = match dur.to_uppercase().as_str() {
                 "VOLATILE" => Durability::Volatile,
                 "TRANSIENT_LOCAL" => Durability::TransientLocal,
+                "TRANSIENT" => Durability::Transient,
                 "PERSISTENT" => Durability::Persistent,
                 other => return Err(format!("Invalid durability: {}", other)),
             };

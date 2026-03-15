@@ -421,7 +421,10 @@ pub struct QosProfile {
     pub liveliness_kind: u32, // 0=AUTOMATIC, 1=MANUAL_BY_PARTICIPANT, 2=MANUAL_BY_TOPIC
     pub liveliness_lease_sec: u32,
     pub liveliness_lease_nsec: u32,
-    pub ownership_kind: u32, // 0=SHARED, 1=EXCLUSIVE
+    pub ownership_kind: u32,     // 0=SHARED, 1=EXCLUSIVE
+    pub ownership_strength: i32, // Only meaningful when ownership_kind=1 (EXCLUSIVE)
+    pub partition_names: Vec<String>,
+    pub data_representation: Vec<u16>, // 0x0000=XCDR1, 0x0002=XCDR2; empty=default(both)
 }
 
 impl QosProfile {

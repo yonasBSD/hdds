@@ -46,7 +46,7 @@ impl StatusMask {
     pub const NONE: StatusMask = StatusMask(0);
 
     /// All statuses enabled
-    pub const ALL: StatusMask = StatusMask(0xFFFFFFFF);
+    pub const ALL: StatusMask = StatusMask(0xFFFF_FFFF);
 
     /// Data available to read (DataReader)
     pub const DATA_AVAILABLE: StatusMask = StatusMask(1 << 0);

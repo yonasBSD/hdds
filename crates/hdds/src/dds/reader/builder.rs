@@ -241,6 +241,11 @@ impl<T: DDS> ReaderBuilder<T> {
             if let Err(err) = registry.register_subscriber(subscriber) {
                 log::debug!("Failed to register subscriber: {}", err);
             }
+
+            // Enable exclusive ownership filtering for this topic if reader uses EXCLUSIVE ownership
+            if qos.ownership.kind == crate::qos::ownership::OwnershipKind::Exclusive {
+                registry.enable_exclusive_ownership(&topic);
+            }
         }
 
         let is_reliable = matches!(qos.reliability, Reliability::Reliable);

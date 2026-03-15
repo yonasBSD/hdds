@@ -38,6 +38,9 @@ pub struct QoS {
     pub writer_data_lifecycle: WriterDataLifecycle,
     pub reader_data_lifecycle: ReaderDataLifecycle,
     pub durability_service: DurabilityService,
+    /// Supported data representations (XCDR1=0, XCDR2=2).
+    /// Empty means "accept any" (default / unspecified).
+    pub data_representation: Vec<u16>,
 }
 
 impl QoS {
@@ -66,6 +69,7 @@ impl QoS {
             writer_data_lifecycle: WriterDataLifecycle::default(),
             reader_data_lifecycle: ReaderDataLifecycle::default(),
             durability_service: DurabilityService::default(),
+            data_representation: Vec::new(),
         }
     }
 
@@ -94,6 +98,7 @@ impl QoS {
             writer_data_lifecycle: WriterDataLifecycle::default(),
             reader_data_lifecycle: ReaderDataLifecycle::default(),
             durability_service: DurabilityService::default(),
+            data_representation: Vec::new(),
         }
     }
 
@@ -129,6 +134,7 @@ impl QoS {
             writer_data_lifecycle: WriterDataLifecycle::default(),
             reader_data_lifecycle: ReaderDataLifecycle::default(),
             durability_service: DurabilityService::default(),
+            data_representation: Vec::new(),
         }
     }
 

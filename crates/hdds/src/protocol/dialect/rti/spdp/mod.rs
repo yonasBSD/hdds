@@ -57,7 +57,7 @@ const VENDOR_ID_HDDS: u16 = 0x01AA;
 ///
 /// Without bits 16-19, RTI logs `subscriptionReaderListenerOnSampleLost` and
 /// refuses to send its SEDP publications DATA, breaking endpoint matching.
-const BUILTIN_ENDPOINT_SET_RTI: u32 = 0x000F0C3F;
+const BUILTIN_ENDPOINT_SET_RTI: u32 = 0x000F_0C3F;
 /// Build SPDP participant announcement for RTI Connext.
 // @audit-ok: Sequential builder (cyclo 17, cogni 2) - linear write_xxx calls without complex branching
 pub fn build_spdp(
@@ -329,8 +329,8 @@ fn write_reachability_lease_duration(buf: &mut [u8], offset: &mut usize) -> Enco
     buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
     *offset += 4;
     // INFINITE duration
-    buf[*offset..*offset + 4].copy_from_slice(&0x7FFFFFFFu32.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes());
+    buf[*offset..*offset + 4].copy_from_slice(&0x7FFF_FFFFu32.to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes());
     *offset += 8;
 
     Ok(())
@@ -344,7 +344,7 @@ fn write_vendor_builtin_endpoint_set(buf: &mut [u8], offset: &mut usize) -> Enco
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_VENDOR_BUILTIN_ENDPOINT_SET.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
     *offset += 4;
-    buf[*offset..*offset + 4].copy_from_slice(&0x00000003u32.to_le_bytes()); // bits 0+1
+    buf[*offset..*offset + 4].copy_from_slice(&0x0000_0003u32.to_le_bytes()); // bits 0+1
     *offset += 4;
 
     Ok(())

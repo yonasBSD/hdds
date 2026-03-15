@@ -348,11 +348,20 @@ pub fn build_sedp_rtps_packet(
 
     // Map DDS QoS (if present) to dialect-agnostic QosProfile for SEDP PIDs.
     let qos_profile: Option<QosProfile> = sedp_data.qos.as_ref().map(|q| {
-        use crate::dds::qos::{Durability, History, Reliability};
+        use crate::dds::qos::{Durability, History, OwnershipKind, Reliability};
 
         let (history_kind, history_depth) = match q.history {
             History::KeepLast(depth) => (0, depth), // KEEP_LAST
             History::KeepAll => (1, 0),             // KEEP_ALL
+        };
+
+        let (deadline_secs, deadline_nanos) = if q.deadline.is_infinite() {
+            (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
+        } else {
+            (
+                u32::try_from(q.deadline.period.as_secs()).unwrap_or(u32::MAX),
+                q.deadline.period.subsec_nanos(),
+            )
         };
 
         QosProfile {
@@ -363,10 +372,20 @@ pub fn build_sedp_rtps_packet(
             durability_kind: match q.durability {
                 Durability::Volatile => 0,       // VOLATILE
                 Durability::TransientLocal => 1, // TRANSIENT_LOCAL
+                Durability::Transient => 2,      // TRANSIENT
                 Durability::Persistent => 3,     // PERSISTENT
             },
             history_kind,
             history_depth,
+            ownership_kind: match q.ownership.kind {
+                OwnershipKind::Shared => 0,
+                OwnershipKind::Exclusive => 1,
+            },
+            ownership_strength: q.ownership_strength.value,
+            deadline_period_sec: deadline_secs,
+            deadline_period_nsec: deadline_nanos,
+            partition_names: q.partition.names.clone(),
+            data_representation: q.data_representation.clone(),
             ..Default::default()
         }
     });

@@ -243,6 +243,13 @@ pub enum Durability {
     /// Cache persists only during writer's lifetime (not durable to disk).
     /// Works with both BestEffort and Reliable QoS.
     TransientLocal,
+    /// Data outlives the writer but not the service (DDS spec rank 2)
+    ///
+    /// Requires a durability service to manage data independently of writers.
+    /// HDDS does not implement a full durability service; this variant exists
+    /// for correct QoS compatibility checking with other DDS implementations.
+    /// Behavior is identical to TransientLocal when used locally.
+    Transient,
     /// Writer persists samples to disk for late-joiners (v0.9.0+)
     ///
     /// Late-joining readers receive historical samples (up to History depth),

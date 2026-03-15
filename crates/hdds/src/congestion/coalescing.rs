@@ -11,10 +11,10 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
 /// FNV-1a 64-bit offset basis (standard constant).
-const FNV1A_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
+const FNV1A_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 
 /// FNV-1a 64-bit prime multiplier (standard constant).
-const FNV1A_PRIME: u64 = 0x100000001b3;
+const FNV1A_PRIME: u64 = 0x0100_0000_01b3;
 
 /// Instance key for coalescing (topic + key hash).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]

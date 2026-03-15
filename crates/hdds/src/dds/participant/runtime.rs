@@ -584,9 +584,11 @@ impl Participant {
         }
 
         // v102: Pass endpoint_registry to writer for unicast DATA sends
+        // v213: Pass discovery_fsm for partition-aware data routing
         if let Some(ref discovery_fsm) = self.discovery_fsm {
             builder = builder.with_endpoint_registry(discovery_fsm.endpoint_registry());
             builder = builder.with_replay_registry(discovery_fsm.replay_registry());
+            builder = builder.with_discovery_fsm(discovery_fsm.clone());
         }
 
         // Pass domain state for intra-process auto-binding

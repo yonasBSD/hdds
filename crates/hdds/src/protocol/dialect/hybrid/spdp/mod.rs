@@ -142,7 +142,7 @@ fn write_builtin_endpoint_set(buf: &mut [u8], offset: &mut usize) -> EncodeResul
     // `subscriptionReaderListenerOnSampleLost` and refuses SEDP matching.
     //
     // FastDDS/Cyclone ignore unknown bits per RTPS spec, so this is safe.
-    let endpoints: u32 = 0x000F0C3F;
+    let endpoints: u32 = 0x000F_0C3F;
 
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_BUILTIN_ENDPOINT_SET.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());

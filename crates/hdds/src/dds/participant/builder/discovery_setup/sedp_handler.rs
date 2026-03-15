@@ -154,6 +154,33 @@ pub(super) fn handle_sedp_packet(
                 );
                 registry.register_writer_guid(endpoint_guid_bytes, sedp_data.topic_name.clone());
 
+                // v249: Check QoS compatibility with local readers. If incompatible,
+                // block the writer so the router drops its data. This is the
+                // library-level enforcement of QoS matching (DDS spec 2.2.3).
+                if let Some(ref writer_qos) = sedp_data.qos {
+                    let local_readers = fsm.find_readers_for_topic(&sedp_data.topic_name);
+                    let is_incompatible_with_all_local = !local_readers.is_empty()
+                        && local_readers
+                            .iter()
+                            .filter(|r| r.endpoint_guid.as_bytes()[..12] == our_guid_prefix[..])
+                            .all(|r| {
+                                !crate::core::discovery::Matcher::is_compatible(&r.qos, writer_qos)
+                            });
+                    if is_incompatible_with_all_local {
+                        registry.block_writer(endpoint_guid_bytes);
+                    }
+                }
+
+                // Register writer ownership strength for exclusive ownership filtering
+                if let Some(ref qos) = sedp_data.qos {
+                    if qos.ownership.kind == crate::qos::ownership::OwnershipKind::Exclusive {
+                        registry.register_writer_ownership_strength(
+                            endpoint_guid_bytes,
+                            qos.ownership_strength.value,
+                        );
+                    }
+                }
+
                 // v187: Re-announce our Reader endpoints for the same topic if dialect requires it.
                 // OpenDDS has a peculiar state machine where it won't trigger PUBLICATION_MATCHED
                 // unless it receives a "fresh" DATA(r) after sending its DATA(w).
@@ -355,6 +382,14 @@ pub(super) fn handle_sedp_from_single_fragment(
                     sedp_data.topic_name
                 );
                 registry.register_writer_guid(endpoint_guid_bytes, sedp_data.topic_name.clone());
+                if let Some(ref qos) = sedp_data.qos {
+                    if qos.ownership.kind == crate::qos::ownership::OwnershipKind::Exclusive {
+                        registry.register_writer_ownership_strength(
+                            endpoint_guid_bytes,
+                            qos.ownership_strength.value,
+                        );
+                    }
+                }
             } else {
                 log::debug!("[callback] >>  Reader endpoint - not registering writer mapping");
             }
@@ -399,6 +434,14 @@ pub(super) fn handle_sedp_from_fragments(
                     sedp_data.topic_name
                 );
                 registry.register_writer_guid(endpoint_guid_bytes, sedp_data.topic_name.clone());
+                if let Some(ref qos) = sedp_data.qos {
+                    if qos.ownership.kind == crate::qos::ownership::OwnershipKind::Exclusive {
+                        registry.register_writer_ownership_strength(
+                            endpoint_guid_bytes,
+                            qos.ownership_strength.value,
+                        );
+                    }
+                }
             } else {
                 log::debug!("[callback] >>  Reader endpoint - not registering writer mapping");
             }

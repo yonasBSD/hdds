@@ -17,6 +17,7 @@ mod pids {
     pub const PID_HISTORY: u16 = 0x0040;
     pub const PID_DEADLINE: u16 = 0x0023;
     pub const PID_OWNERSHIP: u16 = 0x001f;
+    pub const PID_OWNERSHIP_STRENGTH: u16 = 0x0006;
     pub const PID_LIVELINESS: u16 = 0x001b;
 }
 
@@ -101,8 +102,8 @@ pub fn write_deadline(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
     // DDS Duration_t INFINITE = { 0x7FFFFFFF, 0xFFFFFFFF }
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_DEADLINE.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0x7FFFFFFFu32.to_le_bytes()); // INFINITE sec
-    buf[*offset + 8..*offset + 12].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // INFINITE nanosec
+    buf[*offset + 4..*offset + 8].copy_from_slice(&0x7FFF_FFFFu32.to_le_bytes()); // INFINITE sec
+    buf[*offset + 8..*offset + 12].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // INFINITE nanosec
     *offset += 12;
 
     Ok(())
@@ -110,14 +111,41 @@ pub fn write_deadline(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
 
 /// Write PID_OWNERSHIP (0x001f) - 4 bytes
 #[allow(dead_code)] // Part of hybrid SEDP QoS encoding API for future interoperability
-pub fn write_ownership(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
+pub fn write_ownership(
+    qos: Option<&QosProfile>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> EncodeResult<()> {
     if *offset + 8 > buf.len() {
         return Err(EncodeError::BufferTooSmall);
     }
 
+    let kind = qos.map(|q| q.ownership_kind).unwrap_or(0);
+
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_OWNERSHIP.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0u32.to_le_bytes()); // SHARED
+    buf[*offset + 4..*offset + 8].copy_from_slice(&kind.to_le_bytes());
+    *offset += 8;
+
+    Ok(())
+}
+
+/// Write PID_OWNERSHIP_STRENGTH (0x0006) - 4 bytes
+#[allow(dead_code)] // Part of hybrid SEDP QoS encoding API for future interoperability
+pub fn write_ownership_strength(
+    qos: Option<&QosProfile>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> EncodeResult<()> {
+    if *offset + 8 > buf.len() {
+        return Err(EncodeError::BufferTooSmall);
+    }
+
+    let strength = qos.map(|q| q.ownership_strength).unwrap_or(0);
+
+    buf[*offset..*offset + 2].copy_from_slice(&pids::PID_OWNERSHIP_STRENGTH.to_le_bytes());
+    buf[*offset + 2..*offset + 4].copy_from_slice(&4u16.to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&strength.to_le_bytes());
     *offset += 8;
 
     Ok(())
@@ -134,8 +162,8 @@ pub fn write_liveliness(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> 
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_LIVELINESS.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&12u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&0u32.to_le_bytes()); // AUTOMATIC
-    buf[*offset + 8..*offset + 12].copy_from_slice(&0x7FFFFFFFu32.to_le_bytes()); // INFINITE sec
-    buf[*offset + 12..*offset + 16].copy_from_slice(&0xFFFFFFFFu32.to_le_bytes()); // INFINITE nanosec
+    buf[*offset + 8..*offset + 12].copy_from_slice(&0x7FFF_FFFFu32.to_le_bytes()); // INFINITE sec
+    buf[*offset + 12..*offset + 16].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // INFINITE nanosec
     *offset += 16;
 
     Ok(())

@@ -283,7 +283,7 @@ impl MulticastListener {
         );
 
         // v212: Setup mio poll for epoll-based I/O
-        let mut poll = match Poll::new() {
+        let mut mio_poll = match Poll::new() {
             Ok(p) => p,
             Err(e) => {
                 log::error!("[MCAST-THREAD] Failed to create mio Poll: {}", e);
@@ -305,9 +305,10 @@ impl MulticastListener {
 
         // Register socket with poll for read events
         const SOCKET_TOKEN: Token = Token(0);
-        if let Err(e) = poll
-            .registry()
-            .register(&mut mio_socket, SOCKET_TOKEN, Interest::READABLE)
+        if let Err(e) =
+            mio_poll
+                .registry()
+                .register(&mut mio_socket, SOCKET_TOKEN, Interest::READABLE)
         {
             log::error!("[MCAST-THREAD] Failed to register socket with poll: {}", e);
             return;
@@ -316,10 +317,41 @@ impl MulticastListener {
         // Temporary buffer for recv_from (reused across iterations)
         let mut temp_buf = vec![0u8; crate::config::MAX_PACKET_SIZE];
 
+        // v249: Drain stale packets from OS socket buffer before processing.
+        //
+        // When a previous DDS process on the same domain is killed (SIGINT),
+        // its SPDP/SEDP packets may linger in the OS socket buffer. Draining
+        // the buffer here (instant, non-blocking) ensures stale packets from
+        // dead processes never enter the discovery FSM.
+        //
+        // IMPORTANT: No sleep/delay here — even 10ms delays discovery enough
+        // to cause incompatibility tests to fail (subscriber receives multicast
+        // data before SEDP detects the incompatibility).
+        {
+            let mut drained = 0u32;
+            loop {
+                match mio_socket.recv_from(&mut temp_buf) {
+                    Ok((len, _)) => {
+                        drained += 1;
+                        log::debug!("[MCAST-THREAD] v249: Drained stale packet ({} bytes)", len);
+                    }
+                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
+                }
+            }
+            if drained > 0 {
+                log::info!(
+                    "[MCAST-THREAD] v249: Drained {} stale packet(s) from OS buffer on {}",
+                    drained,
+                    local_addr
+                );
+            }
+        }
+
         while running.load(Ordering::Relaxed) {
             // v212: Wait for socket readability with mio poll
             // Minimal timeout (1ms) for ultra-low latency, graceful shutdown check
-            if let Err(e) = poll.poll(&mut events, Some(Duration::from_millis(1))) {
+            if let Err(e) = mio_poll.poll(&mut events, Some(Duration::from_millis(1))) {
                 if e.kind() != io::ErrorKind::Interrupted {
                     log::debug!("[MCAST-THREAD] poll error: {:?}", e);
                 }

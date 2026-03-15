@@ -15,11 +15,11 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use crate::core::discovery::GUID;
 use crate::protocol::discovery::constants::{
     CDR2_BE, CDR2_LE, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PID_BUILTIN_ENDPOINT_SET,
-    PID_DATA_REPRESENTATION, PID_DURABILITY, PID_DURABILITY_SERVICE, PID_ENDPOINT_GUID,
-    PID_HISTORY, PID_METATRAFFIC_UNICAST_LOCATOR, PID_PARTICIPANT_GUID,
-    PID_PARTICIPANT_LEASE_DURATION, PID_PRESENTATION, PID_RELIABILITY, PID_SENTINEL,
-    PID_TOPIC_NAME, PID_TYPE_NAME, PID_TYPE_OBJECT, PID_TYPE_OBJECT_LB, PID_UNICAST_LOCATOR,
-    PID_USER_DATA,
+    PID_DATA_REPRESENTATION, PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE,
+    PID_ENDPOINT_GUID, PID_HISTORY, PID_METATRAFFIC_UNICAST_LOCATOR, PID_OWNERSHIP,
+    PID_OWNERSHIP_STRENGTH, PID_PARTICIPANT_GUID, PID_PARTICIPANT_LEASE_DURATION, PID_PARTITION,
+    PID_PRESENTATION, PID_RELIABILITY, PID_SENTINEL, PID_TOPIC_NAME, PID_TYPE_NAME,
+    PID_TYPE_OBJECT, PID_TYPE_OBJECT_LB, PID_UNICAST_LOCATOR, PID_USER_DATA,
 };
 use crate::protocol::discovery::hash::simple_hash;
 use crate::protocol::discovery::types::{ParseError, SedpData};
@@ -147,7 +147,7 @@ fn parse_durability_service(
     }
 
     let cleanup_secs = read_u32(buf, offset, is_little_endian);
-    let cleanup_nsecs = read_u32(buf, offset + 4, is_little_endian);
+    let cleanup_ns = read_u32(buf, offset + 4, is_little_endian);
     // history_kind at offset+8 (not used directly, DurabilityService uses KEEP_LAST)
     let history_depth = read_u32(buf, offset + 12, is_little_endian);
     let max_samples = read_i32(buf, offset + 16, is_little_endian);
@@ -155,7 +155,7 @@ fn parse_durability_service(
     let max_samples_per_instance = read_i32(buf, offset + 24, is_little_endian);
 
     // Convert Duration_t to microseconds
-    let cleanup_delay_us = (cleanup_secs as u64) * 1_000_000 + (cleanup_nsecs as u64) / 1_000;
+    let cleanup_delay_us = (cleanup_secs as u64) * 1_000_000 + (cleanup_ns as u64) / 1_000;
 
     let ds = crate::dds::qos::DurabilityService::new(
         cleanup_delay_us,
@@ -328,6 +328,17 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
     // v235: Parse PID_DURABILITY_SERVICE for DurabilityService QoS
     let mut qos_durability_service: Option<crate::dds::qos::DurabilityService> = None;
 
+    // v236: Parse PID_OWNERSHIP and PID_DEADLINE for interop QoS compatibility
+    let mut qos_ownership: Option<crate::dds::qos::Ownership> = None;
+    let mut qos_ownership_strength: Option<i32> = None;
+    let mut qos_deadline: Option<crate::dds::qos::Deadline> = None;
+
+    // Partition QoS
+    let mut qos_partition_names: Vec<String> = Vec::new();
+
+    // Data representation (PID_DATA_REPRESENTATION)
+    let mut qos_data_representation: Vec<u16> = Vec::new();
+
     // v143: Parse PID_UNICAST_LOCATOR for OpenDDS interop - CRITICAL for knowing where to send user data
     let mut unicast_locators: Vec<SocketAddr> = Vec::new();
     let mut user_data: Option<String> = None;
@@ -448,7 +459,7 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                         // TRANSIENT (kind=2) mapped to TransientLocal: HDDS does not implement
                         // distributed cache (TRANSIENT requires a persistence service that
                         // outlives the DataWriter). TransientLocal is the closest behavior.
-                        2 => Some(crate::dds::qos::Durability::TransientLocal),
+                        2 => Some(crate::dds::qos::Durability::Transient),
                         3 => Some(crate::dds::qos::Durability::Persistent),
                         _ => None,
                     };
@@ -484,13 +495,93 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                     qos_presentation = parse_presentation(buf, offset, length, is_little_endian);
                 }
             }
+            PID_OWNERSHIP => {
+                if length >= 4 {
+                    let ownership_kind = read_u32(buf, offset, is_little_endian);
+                    qos_ownership = match ownership_kind {
+                        0 => Some(crate::dds::qos::Ownership::shared()),
+                        1 => Some(crate::dds::qos::Ownership::exclusive()),
+                        _ => None,
+                    };
+                    log::debug!("[SEDP-QOS] [?] PID_OWNERSHIP parsed: kind={} (0=SHARED, 1=EXCLUSIVE) -> {:?}",
+                              ownership_kind, qos_ownership);
+                }
+            }
+            PID_OWNERSHIP_STRENGTH => {
+                if length >= 4 {
+                    let strength = read_i32(buf, offset, is_little_endian);
+                    qos_ownership_strength = Some(strength);
+                    log::debug!(
+                        "[SEDP-QOS] [?] PID_OWNERSHIP_STRENGTH parsed: value={}",
+                        strength
+                    );
+                }
+            }
+            PID_DEADLINE => {
+                if length >= 8 {
+                    let seconds = read_u32(buf, offset, is_little_endian);
+                    let fraction = read_u32(buf, offset + 4, is_little_endian);
+                    qos_deadline = Some(if seconds >= 0x7FFF_FFFF {
+                        crate::dds::qos::Deadline::infinite()
+                    } else {
+                        let nanos = (seconds as u64) * 1_000_000_000 + (fraction as u64);
+                        crate::dds::qos::Deadline::new(std::time::Duration::from_nanos(nanos))
+                    });
+                    log::debug!(
+                        "[SEDP-QOS] [?] PID_DEADLINE parsed: {}s + {} frac -> {:?}",
+                        seconds,
+                        fraction,
+                        qos_deadline
+                    );
+                }
+            }
+            PID_PARTITION => {
+                // Format: sequence_length (u32) + for each: string_length (u32) + string + NUL + padding
+                if length >= 4 {
+                    let seq_len = read_u32(buf, offset, is_little_endian) as usize;
+                    let mut pos = offset + 4;
+                    let end = offset + length;
+                    for _ in 0..seq_len {
+                        if pos + 4 > end {
+                            break;
+                        }
+                        let str_len = read_u32(buf, pos, is_little_endian) as usize;
+                        pos += 4;
+                        if str_len == 0 || pos + str_len > end {
+                            break;
+                        }
+                        // str_len includes NUL terminator
+                        let name_len = if buf[pos + str_len - 1] == 0 {
+                            str_len - 1
+                        } else {
+                            str_len
+                        };
+                        if let Ok(name) = std::str::from_utf8(&buf[pos..pos + name_len]) {
+                            qos_partition_names.push(name.to_string());
+                        }
+                        // Advance past string + padding to 4-byte alignment
+                        let padded = (str_len + 3) & !3;
+                        pos += padded;
+                    }
+                    log::debug!(
+                        "[SEDP-QOS] [?] PID_PARTITION parsed: {} partition(s): {:?}",
+                        qos_partition_names.len(),
+                        qos_partition_names
+                    );
+                }
+            }
             PID_DATA_REPRESENTATION => {
                 if length >= 4 {
-                    let seq_len = read_u32(buf, offset, is_little_endian);
-                    if seq_len > 0 && length >= 6 {
-                        let data_repr = read_u16(buf, offset + 4, is_little_endian);
-                        log::debug!("[SEDP-QOS] [?] PID_DATA_REPRESENTATION detected: 0x{:04x} (0=XCDR1, 2=XCDR2)", data_repr);
+                    let seq_len = read_u32(buf, offset, is_little_endian) as usize;
+                    let max_items = seq_len.min((length - 4) / 2);
+                    for i in 0..max_items {
+                        let repr = read_u16(buf, offset + 4 + i * 2, is_little_endian);
+                        qos_data_representation.push(repr);
                     }
+                    log::debug!(
+                        "[SEDP-QOS] [?] PID_DATA_REPRESENTATION: {:?} (0=XCDR1, 2=XCDR2)",
+                        qos_data_representation
+                    );
                 }
             }
             PID_USER_DATA => {
@@ -688,6 +779,11 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
         || qos_history.is_some()
         || qos_presentation.is_some()
         || qos_durability_service.is_some()
+        || qos_ownership.is_some()
+        || qos_ownership_strength.is_some()
+        || qos_deadline.is_some()
+        || !qos_partition_names.is_empty()
+        || !qos_data_representation.is_empty()
     {
         // Start with default QoS and override with parsed values
         let mut qos_obj = crate::dds::qos::QoS::default();
@@ -707,10 +803,27 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
         if let Some(ds) = qos_durability_service {
             qos_obj.durability_service = ds;
         }
+        if let Some(ownership) = qos_ownership {
+            qos_obj.ownership = ownership;
+        }
+        if let Some(strength) = qos_ownership_strength {
+            qos_obj.ownership_strength =
+                crate::qos::ownership::OwnershipStrength { value: strength };
+        }
+        if let Some(deadline) = qos_deadline {
+            qos_obj.deadline = deadline;
+        }
+        if !qos_partition_names.is_empty() {
+            qos_obj.partition = crate::qos::partition::Partition::new(qos_partition_names);
+        }
+        if !qos_data_representation.is_empty() {
+            qos_obj.data_representation = qos_data_representation;
+        }
 
         log::debug!(
-            "[SEDP-QOS] [OK] Built QoS from PIDs: reliability={:?}, durability={:?}, history={:?}, presentation={:?}, durability_service.depth={}",
+            "[SEDP-QOS] [OK] Built QoS from PIDs: reliability={:?}, durability={:?}, history={:?}, presentation={:?}, ownership={:?}, deadline={:?}, durability_service.depth={}",
             qos_obj.reliability, qos_obj.durability, qos_obj.history, qos_obj.presentation,
+            qos_obj.ownership, qos_obj.deadline,
             qos_obj.durability_service.history_depth
         );
         Some(qos_obj)
