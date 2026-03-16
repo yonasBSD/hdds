@@ -93,17 +93,20 @@ pub(super) fn build_inline_qos_with_topic(topic: &str) -> Vec<u8> {
         None => return Vec::new(),
     };
 
-    let unaligned_size = 4 + 2 + 2 + param_len;
+    // PID header (4 bytes) + string payload, aligned to 4
+    let unaligned_size = 4 + param_len;
     let aligned_size = (unaligned_size + 3) & !3;
     let padding = aligned_size - unaligned_size;
 
+    // Total = PID_TOPIC_NAME (aligned) + PID_SENTINEL (4 bytes)
     let mut qos = Vec::with_capacity(aligned_size + 4);
 
-    // CDR encapsulation header (ALWAYS big-endian per CDR spec)
-    qos.extend_from_slice(&CDR_LE.to_be_bytes());
-    qos.extend_from_slice(&[0x00, 0x00]); // Options (reserved)
+    // Inline QoS is a ParameterList — NO CDR encapsulation header.
+    // RTPS v2.3 Sec.9.4.2.11: inline QoS starts directly with parameters.
     qos.extend_from_slice(&0x0005u16.to_le_bytes());
-    qos.extend_from_slice(&param_len_u16.to_le_bytes());
+    // parameterLength must include the string length field (4) + string + null + padding
+    let aligned_param_len = ((param_len + 3) & !3) as u16;
+    qos.extend_from_slice(&aligned_param_len.to_le_bytes());
     qos.extend_from_slice(&string_len_u32.to_le_bytes());
 
     qos.extend_from_slice(topic_bytes);

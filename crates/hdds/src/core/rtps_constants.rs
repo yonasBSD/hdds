@@ -95,7 +95,8 @@ pub const RTPS_ENTITYID_TYPELOOKUP_WRITER: [u8; 4] = [0x00, 0x03, 0x00, 0xC4];
 /// Participant entity ID
 pub const RTPS_ENTITYID_PARTICIPANT: [u8; 4] = [0x00, 0x00, 0x01, 0xC1];
 
-/// User data writer entity kind (RTPS v2.3 Table 9.2 - entityKind = 0x03 for writers)
+/// User data writer entity kind (RTPS v2.5 Table 9.1)
+/// 0x02 = WITH_KEY, 0x03 = NO_KEY. RTI/FastDDS use 0x03 for standard user writers.
 pub const ENTITY_KIND_USER_WRITER: u8 = 0x03;
 
 /// User data reader entity kind (RTPS v2.3 Table 9.2 - entityKind = 0x04 for NO_KEY readers)

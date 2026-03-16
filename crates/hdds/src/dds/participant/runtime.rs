@@ -860,12 +860,12 @@ impl Participant {
     /// Allocate a unique EntityId for a user endpoint.
     ///
     /// EntityId layout (RTPS v2.3 Table 9.2):
-    /// - bytes 0..3: 24-bit entity key (little-endian)
-    /// - byte 3: entity kind (writer=0x03, reader=0x04)
+    /// - bytes 0..2: 24-bit entity key (big-endian / network order)
+    /// - byte 3: entity kind (writer=0x02/0x03, reader=0x04/0x07)
     pub(super) fn next_user_entity_id(&self, entity_kind: u8) -> [u8; 4] {
         let key = (self.next_entity_key.fetch_add(1, Ordering::Relaxed) + 1) & 0x00FF_FFFF;
-        let key_bytes = key.to_le_bytes();
-        [key_bytes[0], key_bytes[1], key_bytes[2], entity_kind]
+        let key_bytes = key.to_be_bytes(); // Network byte order per RTPS spec
+        [key_bytes[1], key_bytes[2], key_bytes[3], entity_kind]
     }
 
     // =========================================================================

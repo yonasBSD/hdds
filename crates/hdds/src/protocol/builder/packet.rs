@@ -322,7 +322,7 @@ pub fn build_data_packet_with_context(
     packet.extend_from_slice(&sn_high.to_le_bytes());
     packet.extend_from_slice(&sn_low.to_le_bytes());
 
-    // Inline QoS (CDR header + PID_TOPIC_NAME + PID_SENTINEL)
+    // Inline QoS (PID_TOPIC_NAME + PID_SENTINEL)
     packet.extend_from_slice(&inline_qos);
 
     // Serialized payload

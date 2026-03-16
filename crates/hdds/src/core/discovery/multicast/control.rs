@@ -481,6 +481,7 @@ impl ControlHandler {
                                     msg.src_addr.ip(),
                                     &sedp_cache,
                                     &metrics,
+                                    &discovery_fsm,
                                 ) {
                                     // Track endpoint count for HEARTBEAT range
                                     if an.writer_entity_id == [0x00, 0x00, 0x03, 0xC2] {
@@ -799,6 +800,7 @@ impl ControlHandler {
         peer_ip: std::net::IpAddr,
         sedp_cache: &SedpCache,
         metrics: &ControlMetrics,
+        discovery_fsm: &DiscoveryFsm,
     ) -> Option<u64> {
         // Determine which endpoint kind to retransmit based on writer entity ID
         let target_kind = if *writer_entity_id == [0x00, 0x00, 0x03, 0xC2] {
@@ -835,13 +837,19 @@ impl ControlHandler {
             pos += 1;
             let seq_num = pos; // Fixed: always 1, 2, 3, ...
 
+            // Use locked dialect if available (RTI needs its own SEDP format),
+            // fallback to Hybrid for unknown or mixed vendors.
+            let dialect = discovery_fsm
+                .get_locked_dialect()
+                .unwrap_or(Dialect::Hybrid);
+
             match build_sedp_rtps_packet(
                 sd,
                 *kind,
                 &our_guid_prefix,
                 Some(peer_guid_prefix),
                 seq_num,
-                Dialect::Hybrid,
+                dialect,
             ) {
                 Ok(pkt) => {
                     if transport.send_to_endpoint(&pkt, &dest_addr).is_ok() {

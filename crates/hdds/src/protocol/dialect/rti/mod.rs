@@ -222,11 +222,11 @@ impl DialectEncoder for RtiEncoder {
     }
 
     fn rtps_version(&self) -> (u8, u8) {
-        (2, 6) // RTI uses RTPS 2.6
+        (2, 4) // HDDS native version — must match SPDP announcement
     }
 
     fn vendor_id(&self) -> [u8; 2] {
-        [0x01, 0x01] // RTI
+        [0x01, 0xAA] // HDDS — never impersonate RTI vendor ID
     }
 
     fn requires_type_object(&self) -> bool {

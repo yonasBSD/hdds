@@ -126,6 +126,10 @@ pub fn build_sedp(data: &SedpEndpointData) -> EncodeResult<Vec<u8>> {
     qos::write_group_data(&mut buf, &mut offset)?;
     // Note: We intentionally skip PID_HISTORY as FastDDS doesn't send it for subscribers
 
+    // PID_DATA_REPRESENTATION (0x0073) - XCDR1 (0x0000) for RTI compatibility
+    // RTI 7.x requires this PID for endpoint matching.
+    metadata::write_data_representation(&mut buf, &mut offset)?;
+
     // PID_TYPE_CONSISTENCY (0x0074) - FastDDS sends this after all QoS PIDs
     // RTI requires this for endpoint type matching
     metadata::write_type_consistency(&mut buf, &mut offset)?;

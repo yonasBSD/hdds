@@ -176,10 +176,15 @@ pub(super) fn handle_spdp_packet(
 
         is_interop_mode = detector.is_interop_mode();
         if is_interop_mode {
-            // v196: In interop mode with mixed vendors (HDDS + foreign), always use Hybrid.
-            // Hybrid is the conservative RTPS 2.3 encoding that works with all vendors.
-            // Previously we used locked_dialect() which could be FastDDS, breaking HDDS peers.
-            encoding_dialect = Dialect::Hybrid;
+            // v196: In interop mode with mixed vendors (HDDS + foreign), use Hybrid
+            // as conservative fallback. However, RTI requires its own dialect because
+            // it needs PID_KEY_HASH, specific PID ordering, and PID_TYPE_CONSISTENCY
+            // that Hybrid doesn't provide (RTI silently discards SEDP without them).
+            if let Some(Dialect::Rti) = detector.locked_dialect() {
+                encoding_dialect = Dialect::Rti;
+            } else {
+                encoding_dialect = Dialect::Hybrid;
+            }
         } else if let Some(locked) = detector.locked_dialect() {
             // Native mode: should be Dialect::Hdds
             encoding_dialect = locked;
@@ -421,10 +426,13 @@ pub(super) fn handle_spdp_from_fragments(
 
         is_interop_mode = detector.is_interop_mode();
         if is_interop_mode {
-            // v196: In interop mode with mixed vendors (HDDS + foreign), always use Hybrid.
-            // Hybrid is the conservative RTPS 2.3 encoding that works with all vendors.
-            // Previously we used locked_dialect() which could be FastDDS, breaking HDDS peers.
-            encoding_dialect = Dialect::Hybrid;
+            // v196: In interop mode, use Hybrid as conservative fallback.
+            // Exception: RTI requires its own dialect (PID_KEY_HASH, PID ordering).
+            if let Some(Dialect::Rti) = detector.locked_dialect() {
+                encoding_dialect = Dialect::Rti;
+            } else {
+                encoding_dialect = Dialect::Hybrid;
+            }
         } else if let Some(locked) = detector.locked_dialect() {
             // Native mode: should be Dialect::Hdds
             encoding_dialect = locked;

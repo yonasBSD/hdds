@@ -35,16 +35,6 @@ const VENDOR_ID_HDDS: u16 = 0x01AA;
 const XCDR1: u16 = 0x0000;
 const XCDR2: u16 = 0x0002;
 
-/// Convert HDDS internal entity_id to RTPS wire format if needed.
-#[inline]
-fn entity_id_to_wire(entity_id: &[u8; 4]) -> [u8; 4] {
-    if entity_id[0] != 0 && entity_id[2] == 0 {
-        [entity_id[2], entity_id[1], entity_id[0], entity_id[3]]
-    } else {
-        *entity_id
-    }
-}
-
 /// Write PID_ENDPOINT_GUID (0x005a) - 16 bytes
 pub fn write_endpoint_guid(guid: &Guid, buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
     if *offset + 20 > buf.len() {
@@ -56,7 +46,7 @@ pub fn write_endpoint_guid(guid: &Guid, buf: &mut [u8], offset: &mut usize) -> E
     *offset += 4;
 
     buf[*offset..*offset + 12].copy_from_slice(&guid.prefix);
-    buf[*offset + 12..*offset + 16].copy_from_slice(&entity_id_to_wire(&guid.entity_id));
+    buf[*offset + 12..*offset + 16].copy_from_slice(&guid.entity_id);
     *offset += 16;
 
     Ok(())
@@ -73,7 +63,7 @@ pub fn write_participant_guid(guid: &Guid, buf: &mut [u8], offset: &mut usize) -
     *offset += 4;
 
     buf[*offset..*offset + 12].copy_from_slice(&guid.prefix);
-    buf[*offset + 12..*offset + 16].copy_from_slice(&entity_id_to_wire(&guid.entity_id));
+    buf[*offset + 12..*offset + 16].copy_from_slice(&guid.entity_id);
     *offset += 16;
 
     Ok(())

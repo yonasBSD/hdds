@@ -165,6 +165,13 @@ pub struct DiscoveryFsm {
     /// This prevents stale SPDP/SEDP packets from killed processes from
     /// triggering false on_endpoint_discovered notifications.
     pending_notifications: Arc<RwLock<Vec<EndpointInfo>>>,
+    /// Buffered SEDP data from participants not yet in the DB.
+    ///
+    /// When SEDP arrives before SPDP (race condition common with RTI),
+    /// the SedpData is buffered here. When handle_spdp registers the
+    /// new participant, all matching entries are replayed through handle_sedp.
+    /// Capped at 64 entries to prevent unbounded growth.
+    pending_sedp: Arc<RwLock<Vec<SedpData>>>,
 }
 
 impl DiscoveryFsm {
@@ -200,6 +207,7 @@ impl DiscoveryFsm {
             require_authentication: false,
             created_at: Instant::now(),
             pending_notifications: Arc::new(RwLock::new(Vec::new())),
+            pending_sedp: Arc::new(RwLock::new(Vec::new())),
         }
     }
 
@@ -475,6 +483,16 @@ impl DiscoveryFsm {
         self.metrics
             .participants_discovered
             .fetch_add(1, Ordering::Relaxed);
+
+        // CRITICAL: Release the db write lock BEFORE replaying buffered SEDP.
+        // replay_pending_sedp() -> handle_sedp() acquires a read lock on self.db
+        // to check participant existence. Holding the write lock here would deadlock
+        // on the same thread (std::sync::RwLock is not reentrant on Linux/pthreads).
+        drop(db);
+
+        // Replay any SEDP that arrived before this SPDP (race condition fix).
+        self.replay_pending_sedp(&data.participant_guid);
+
         false // v182: New participant (not a refresh)
     }
 
@@ -506,11 +524,25 @@ impl DiscoveryFsm {
         };
 
         if !participant_exists {
-            // Ignore SEDP from unknown participants (not discovered via SPDP yet).
-            log::debug!(
-                "[SEDP] v207: Ignoring SEDP from unknown participant (prefix={:02x?})",
-                &endpoint_prefix[..4]
+            // Buffer SEDP from unknown participants (SPDP not yet processed).
+            // This race is common with RTI which sends SEDP on unicast before
+            // SPDP arrives on multicast. Replay when handle_spdp registers it.
+            let mut pending = recover_write(
+                Arc::as_ref(&self.pending_sedp),
+                "DiscoveryFsm::handle_sedp pending_sedp",
             );
+            if pending.len() < 64 {
+                log::debug!(
+                    "[SEDP] Buffering SEDP from unknown participant (prefix={:02x?}), will replay on SPDP",
+                    &endpoint_prefix[..4]
+                );
+                pending.push(data);
+            } else {
+                log::warn!(
+                    "[SEDP] Pending SEDP buffer full (64), dropping from prefix={:02x?}",
+                    &endpoint_prefix[..4]
+                );
+            }
             return;
         }
 
@@ -795,6 +827,40 @@ impl DiscoveryFsm {
             );
             for endpoint in &to_replay {
                 self.notify_endpoint_discovered(endpoint);
+            }
+        }
+    }
+
+    /// Replay buffered SEDP data that arrived before this participant's SPDP.
+    /// Called from handle_spdp after inserting the new participant into the DB.
+    fn replay_pending_sedp(&self, participant_guid: &GUID) {
+        let participant_prefix = &participant_guid.as_bytes()[..12];
+        let to_replay: Vec<SedpData> = {
+            let mut pending = recover_write(
+                Arc::as_ref(&self.pending_sedp),
+                "DiscoveryFsm::replay_pending_sedp",
+            );
+            let mut remaining = Vec::new();
+            let mut matching = Vec::new();
+            for sd in pending.drain(..) {
+                if &sd.endpoint_guid.as_bytes()[..12] == participant_prefix {
+                    matching.push(sd);
+                } else {
+                    remaining.push(sd);
+                }
+            }
+            *pending = remaining;
+            matching
+        };
+
+        if !to_replay.is_empty() {
+            log::debug!(
+                "[SEDP] Replaying {} buffered SEDP(s) for newly registered participant {:?}",
+                to_replay.len(),
+                participant_guid
+            );
+            for sd in to_replay {
+                self.handle_sedp(sd);
             }
         }
     }

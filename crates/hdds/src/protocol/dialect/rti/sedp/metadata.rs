@@ -36,29 +36,6 @@ mod pids {
 /// HDDS vendor ID
 const VENDOR_ID_HDDS: u16 = 0x01AA;
 
-/// Convert HDDS internal entity_id to RTI/RTPS wire format if needed.
-///
-/// HDDS runtime generates user entity IDs in little-endian: key=1 -> [0x01, 0x00, 0x00, kind]
-/// RTI/RTPS wire format uses big-endian: key=1 -> [0x00, 0x00, 0x01, kind]
-///
-/// Standard RTPS entity IDs (participant, built-in endpoints) are already big-endian
-/// and should NOT be converted. We detect HDDS little-endian format by checking if
-/// byte[0] is non-zero while byte[2] is zero (pattern of small LE integers).
-#[inline]
-fn entity_id_to_wire(entity_id: &[u8; 4]) -> [u8; 4] {
-    // Detect HDDS little-endian user entity IDs:
-    // - LE key=1: [0x01, 0x00, 0x00, kind] -> needs swap
-    // - BE key=1: [0x00, 0x00, 0x01, kind] -> already correct (standard RTPS)
-    // - BE key=0x0001C1: [0x00, 0x00, 0x01, 0xC1] -> participant, already correct
-    if entity_id[0] != 0 && entity_id[2] == 0 {
-        // Little-endian HDDS format - swap bytes 0,1,2
-        [entity_id[2], entity_id[1], entity_id[0], entity_id[3]]
-    } else {
-        // Already in big-endian RTPS format
-        *entity_id
-    }
-}
-
 /// Write PID_ENDPOINT_GUID (0x005a) - 16 bytes
 pub fn write_endpoint_guid(guid: &Guid, buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
     if *offset + 20 > buf.len() {
@@ -70,7 +47,7 @@ pub fn write_endpoint_guid(guid: &Guid, buf: &mut [u8], offset: &mut usize) -> E
     *offset += 4;
 
     buf[*offset..*offset + 12].copy_from_slice(&guid.prefix);
-    buf[*offset + 12..*offset + 16].copy_from_slice(&entity_id_to_wire(&guid.entity_id));
+    buf[*offset + 12..*offset + 16].copy_from_slice(&guid.entity_id);
     *offset += 16;
 
     Ok(())
@@ -87,7 +64,7 @@ pub fn write_participant_guid(guid: &Guid, buf: &mut [u8], offset: &mut usize) -
     *offset += 4;
 
     buf[*offset..*offset + 12].copy_from_slice(&guid.prefix);
-    buf[*offset + 12..*offset + 16].copy_from_slice(&entity_id_to_wire(&guid.entity_id));
+    buf[*offset + 12..*offset + 16].copy_from_slice(&guid.entity_id);
     *offset += 16;
 
     Ok(())
@@ -105,7 +82,7 @@ pub fn write_key_hash(guid: &Guid, buf: &mut [u8], offset: &mut usize) -> Encode
     *offset += 4;
 
     buf[*offset..*offset + 12].copy_from_slice(&guid.prefix);
-    buf[*offset + 12..*offset + 16].copy_from_slice(&entity_id_to_wire(&guid.entity_id));
+    buf[*offset + 12..*offset + 16].copy_from_slice(&guid.entity_id);
     *offset += 16;
 
     Ok(())
@@ -222,6 +199,27 @@ pub fn write_expects_inline_qos(
 // NOTE: RTI vendor-specific PIDs (0x8000+) are NOT sent by HDDS.
 // RTI validates that vendor PIDs come from its own vendor ID (0x0101).
 // When HDDS (vendor 0x01AA) sends vendor PIDs, RTI rejects the SEDP.
+
+/// Write PID_DATA_REPRESENTATION (0x0073) - XCDR1 only.
+///
+/// RTI 7.x default data representation is XCDR1 (0x0000).
+/// Format: seq_len (u32=1) + representation_id (u16=0x0000) + padding (u16).
+pub fn write_data_representation(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
+    if *offset + 12 > buf.len() {
+        return Err(EncodeError::BufferTooSmall);
+    }
+
+    buf[*offset..*offset + 2].copy_from_slice(&0x0073u16.to_le_bytes()); // PID_DATA_REPRESENTATION
+    buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes()); // payload length
+    *offset += 4;
+
+    buf[*offset..*offset + 4].copy_from_slice(&1u32.to_le_bytes()); // sequence length = 1
+    buf[*offset + 4..*offset + 6].copy_from_slice(&0x0000u16.to_le_bytes()); // XCDR1
+    buf[*offset + 6..*offset + 8].copy_from_slice(&[0x00, 0x00]); // padding
+    *offset += 8;
+
+    Ok(())
+}
 
 /// Write PID_TYPE_CONSISTENCY (0x0074) - 8 bytes
 ///
