@@ -364,6 +364,17 @@ impl ParticipantBuilder {
         #[cfg(feature = "xtypes")]
         let type_cache = Arc::new(TypeCache::new(self.type_cache_capacity));
 
+        // Step 7.5: Create match notification registry (DDS spec on_publication/subscription_matched)
+        let match_registry = if let Some(ref fsm) = discovery_components.discovery_fsm {
+            let reg = Arc::new(
+                crate::dds::match_notification::MatchNotificationRegistry::new(fsm, guid.prefix),
+            );
+            fsm.register_listener(reg.clone());
+            Some(reg)
+        } else {
+            None
+        };
+
         // Step 8: Get or create domain state for intra-process auto-binding
         let domain_state = DomainRegistry::global().get_or_create(self.domain_id);
 
@@ -475,6 +486,7 @@ impl ParticipantBuilder {
             dialect_detector,
             next_entity_key: AtomicU32::new(0),
             domain_state,
+            match_registry,
             #[cfg(feature = "xtypes")]
             type_cache,
             #[cfg(feature = "xtypes")]

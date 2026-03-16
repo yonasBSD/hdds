@@ -373,6 +373,32 @@ impl<T: DDS> ReaderBuilder<T> {
         #[cfg(feature = "security")]
         let security = participant.as_ref().and_then(|p| p.security());
 
+        // Register match notification (on_subscription_matched) if listener is present
+        let match_token = if let (Some(ref p), Some(ref l)) = (&participant, &listener) {
+            if let Some(ref reg) = p.match_registry {
+                let l = Arc::clone(l);
+                Some(reg.register_reader(
+                    topic.clone(),
+                    qos.clone(),
+                    move |total, total_change, current, current_change, last_handle| {
+                        l.on_subscription_matched(
+                            crate::dds::listener::SubscriptionMatchedStatus {
+                                total_count: total,
+                                total_count_change: total_change,
+                                current_count: current,
+                                current_count_change: current_change,
+                                last_publication_handle: last_handle,
+                            },
+                        );
+                    },
+                ))
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(DataReader::new(
             topic,
             qos,
@@ -384,6 +410,7 @@ impl<T: DDS> ReaderBuilder<T> {
             status_condition,
             bind_token,
             listener,
+            match_token,
             #[cfg(feature = "security")]
             security,
             dispose_events,

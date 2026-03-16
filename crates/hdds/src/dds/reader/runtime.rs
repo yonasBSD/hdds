@@ -83,6 +83,8 @@ pub struct DataReader<T: DDS> {
     security: Option<Arc<crate::security::SecurityPluginSuite>>,
     /// Optional listener for reader callbacks (deadline missed, etc.)
     listener: Option<Arc<dyn DataReaderListener<T>>>,
+    /// Match notification token (fires on_subscription_matched; unregisters on drop)
+    _match_token: Option<crate::dds::match_notification::MatchToken>,
     /// Deadline tracker for detecting requested deadline missed events (DDS spec 2.2.2.4.2.12).
     deadline_tracker: Mutex<crate::qos::deadline::ReaderDeadlineTracker>,
     deadline_missed_total: AtomicU32,
@@ -104,6 +106,7 @@ impl<T: DDS> DataReader<T> {
         status_condition: Arc<StatusCondition>,
         bind_token: Option<BindToken>,
         listener: Option<Arc<dyn DataReaderListener<T>>>,
+        match_token: Option<crate::dds::match_notification::MatchToken>,
         #[cfg(feature = "security")] security: Option<Arc<crate::security::SecurityPluginSuite>>,
         dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     ) -> Self {
@@ -130,6 +133,7 @@ impl<T: DDS> DataReader<T> {
             #[cfg(feature = "security")]
             security,
             listener,
+            _match_token: match_token,
             deadline_tracker: Mutex::new(crate::qos::deadline::ReaderDeadlineTracker::new(
                 deadline_period,
             )),

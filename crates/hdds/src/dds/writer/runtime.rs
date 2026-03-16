@@ -101,6 +101,8 @@ pub struct DataWriter<T: DDS> {
     pub(super) _replay_token: Option<ReplayToken>,
     /// Optional listener for writer callbacks
     pub(super) listener: Option<Arc<dyn DataWriterListener<T>>>,
+    /// Match notification token (fires on_publication_matched; unregisters on drop)
+    pub(super) _match_token: Option<crate::dds::match_notification::MatchToken>,
     /// Deadline tracker for detecting offered deadline missed events (DDS spec 2.2.2.4.2.11).
     /// Checks are piggybacked on write() calls.
     pub(super) deadline_tracker: Mutex<crate::qos::deadline::DeadlineTracker>,

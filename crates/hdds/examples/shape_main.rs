@@ -87,10 +87,6 @@ impl MatchNotifier {
         }
     }
 
-    fn incompatible_topics_ref(&self) -> Arc<Mutex<std::collections::HashSet<String>>> {
-        Arc::clone(&self.incompatible_topics)
-    }
-
     fn mark_incompatible(&self, topic: &str) {
         self.incompatible_topics
             .lock()
@@ -1349,26 +1345,16 @@ impl ShapeOptions {
 /// Writer listener that holds the actual topic name for correct printf output.
 struct WriterListener {
     topic_name: String,
-    incompatible_topics: Arc<Mutex<std::collections::HashSet<String>>>,
 }
 
 impl DataWriterListener<ShapeType> for WriterListener {
     fn on_publication_matched(&self, status: PublicationMatchedStatus) {
-        // v248: Defer match notification to let incompatibility detection fire first.
-        // The DDS library matcher fires before the MatchNotifier processes SEDP QoS.
-        let topic = self.topic_name.clone();
-        let current_count = status.current_count;
-        let change = status.current_count_change;
-        let incompat = Arc::clone(&self.incompatible_topics);
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(500));
-            if !incompat.lock().unwrap().contains(&topic) {
-                println!(
-                    "on_publication_matched() topic: '{}'  type: 'ShapeType' : matched readers {} (change = {})",
-                    topic, current_count, change
-                );
-            }
-        });
+        // v1.1.0: Middleware fires this callback after QoS compatibility check.
+        // No deferral needed — incompatible endpoints never trigger this callback.
+        println!(
+            "on_publication_matched() topic: '{}'  type: 'ShapeType' : matched readers {} (change = {})",
+            self.topic_name, status.current_count, status.current_count_change
+        );
     }
 
     fn on_offered_incompatible_qos(&self, policy_id: u32, policy_name: &str) {
@@ -1514,7 +1500,6 @@ fn run_publisher(
             .qos(qos.clone())
             .with_listener(Arc::new(WriterListener {
                 topic_name: tname.clone(),
-                incompatible_topics: notifier.incompatible_topics_ref(),
             }))
             .build()?;
         writers.push(writer);

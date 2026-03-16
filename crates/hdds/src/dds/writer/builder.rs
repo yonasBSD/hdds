@@ -609,6 +609,35 @@ impl<T: DDS> WriterBuilder<T> {
         // Capture deadline period before moving self.qos into the struct
         let deadline_period = self.qos.deadline.period;
 
+        // Register match notification (on_publication_matched) if listener is present.
+        // Must happen before self.listener is moved into the DataWriter.
+        let match_token =
+            if let (Some(ref participant), Some(ref listener)) = (&self.participant, &self.listener)
+            {
+                if let Some(ref reg) = participant.match_registry {
+                    let listener = Arc::clone(listener);
+                    Some(reg.register_writer(
+                        self.topic.clone(),
+                        self.qos.clone(),
+                        move |total, total_change, current, current_change, last_handle| {
+                            listener.on_publication_matched(
+                                crate::dds::listener::PublicationMatchedStatus {
+                                    total_count: total,
+                                    total_count_change: total_change,
+                                    current_count: current,
+                                    current_count_change: current_change,
+                                    last_subscription_handle: last_handle,
+                                },
+                            );
+                        },
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
         Ok(DataWriter {
             topic: self.topic,
             qos: self.qos,
@@ -625,6 +654,7 @@ impl<T: DDS> WriterBuilder<T> {
             _bind_token: bind_token,
             _replay_token: replay_token,
             listener: self.listener,
+            _match_token: match_token,
             deadline_tracker: std::sync::Mutex::new(crate::qos::deadline::DeadlineTracker::new(
                 deadline_period,
             )),
