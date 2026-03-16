@@ -251,6 +251,56 @@ pub fn route_data_packet(
         }
     };
 
+    // P1.2: Detect key-only DATA (K flag) for dispose/unregister lifecycle.
+    // When K flag is set, the payload contains only the serialized key (not full data).
+    // We extract StatusInfo + KeyHash from inline QoS and route via deliver_dispose().
+    if builder::is_key_only_data(payload) {
+        let inline_qos = builder::extract_inline_qos(payload);
+
+        let status_info = inline_qos.and_then(builder::extract_status_info);
+        let key_hash = inline_qos.and_then(builder::extract_key_hash);
+
+        if let (Some(status), Some(kh)) = (status_info, key_hash) {
+            let kind = match status & 0x03 {
+                0x03 => crate::engine::subscriber::DisposeKind::DisposedUnregistered,
+                0x02 => crate::engine::subscriber::DisposeKind::Unregistered,
+                0x01 => crate::engine::subscriber::DisposeKind::Disposed,
+                _ => {
+                    log::debug!(
+                        "[ROUTER] K-flag DATA with unknown StatusInfo={:#x} topic='{}'",
+                        status,
+                        topic_name
+                    );
+                    return RouteStatus::Dropped;
+                }
+            };
+
+            log::debug!(
+                "[ROUTER] dispose/unregister topic='{}' seq={} kind={:?} key_hash={:02x?}",
+                topic_name,
+                seq,
+                kind,
+                &kh[..4]
+            );
+
+            let errors = topic.deliver_dispose(seq, kh, kind);
+            metrics.packets_routed.fetch_add(1, Ordering::Relaxed);
+            if errors > 0 {
+                metrics
+                    .delivery_errors
+                    .fetch_add(errors as u64, Ordering::Relaxed);
+            }
+            return RouteStatus::Delivered;
+        }
+
+        log::debug!(
+            "[ROUTER] K-flag DATA missing StatusInfo or KeyHash topic='{}' seq={}",
+            topic_name,
+            seq
+        );
+        // Fall through to normal delivery as best-effort
+    }
+
     let cdr2_payload = if let Some(offset) = payload_offset {
         // Offset already points to the serialized payload (or the CDR header).
         // Only skip the CDR encapsulation header when it is actually present.

@@ -6,6 +6,7 @@
 //! Manages topic registration, subscriber lists, and data delivery.
 //! Provides GUID->topic mapping for RTI/Cyclone/FastDDS interoperability.
 
+use crate::engine::subscriber::DisposeKind;
 use crate::engine::subscriber::Subscriber;
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
@@ -137,6 +138,35 @@ impl Topic {
                 errors += 1;
                 log::debug!(
                     "[demux] Subscriber '{}' panicked during delivery",
+                    sub.topic_name()
+                );
+            }
+        }
+
+        errors
+    }
+
+    /// Deliver a dispose/unregister lifecycle notification to all subscribers.
+    ///
+    /// Returns number of delivery errors (panic count).
+    ///
+    /// # Arguments
+    /// - `seq`: RTPS writer sequence number
+    /// - `key_hash`: 16-byte instance key hash from PID_KEY_HASH
+    /// - `kind`: Dispose, Unregister, or both
+    #[inline]
+    pub fn deliver_dispose(&self, seq: u64, key_hash: [u8; 16], kind: DisposeKind) -> usize {
+        let mut errors = 0;
+
+        for sub in &self.subscribers {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                sub.on_dispose(&self.name, seq, key_hash, kind);
+            }));
+
+            if result.is_err() {
+                errors += 1;
+                log::debug!(
+                    "[demux] Subscriber '{}' panicked during dispose delivery",
                     sub.topic_name()
                 );
             }

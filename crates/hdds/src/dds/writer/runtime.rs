@@ -13,11 +13,11 @@ use crate::reliability::{HeartbeatTx, HistoryCache, ReliableMetrics};
 use crate::telemetry;
 use crate::telemetry::metrics::current_time_ns;
 use crate::transport::UdpTransport;
-use std::cell::RefCell;
+use std::cell::RefCell; // heartbeat_tx (pre-existing)
 use std::convert::TryFrom;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 /// Global counter for HEARTBEAT_FRAG messages (RTPS v2.3 Sec.8.3.7.6)
@@ -101,6 +101,10 @@ pub struct DataWriter<T: DDS> {
     pub(super) _replay_token: Option<ReplayToken>,
     /// Optional listener for writer callbacks
     pub(super) listener: Option<Arc<dyn DataWriterListener<T>>>,
+    /// Deadline tracker for detecting offered deadline missed events (DDS spec 2.2.2.4.2.11).
+    /// Checks are piggybacked on write() calls.
+    pub(super) deadline_tracker: Mutex<crate::qos::deadline::DeadlineTracker>,
+    pub(super) deadline_missed_total: AtomicU32,
     /// Security plugin suite for encryption (DDS Security v1.1)
     #[cfg(feature = "security")]
     pub(super) security: Option<Arc<crate::security::SecurityPluginSuite>>,
@@ -247,6 +251,9 @@ impl<T: DDS> DataWriter<T> {
     }
 
     pub fn write(&self, msg: &T) -> Result<()> {
+        // Check offered deadline before writing (DDS spec: fire callback on miss)
+        self.check_offered_deadline();
+
         let write_start_ns = current_time_ns();
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
 
@@ -475,6 +482,12 @@ impl<T: DDS> DataWriter<T> {
             listener.on_sample_written(msg, seq);
         }
 
+        // Record successful write for deadline tracking
+        self.deadline_tracker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .on_write();
+
         Ok(())
     }
 
@@ -559,6 +572,12 @@ impl<T: DDS> DataWriter<T> {
             listener.on_sample_written(msg, seq);
         }
 
+        // Record successful write for deadline tracking
+        self.deadline_tracker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .on_write();
+
         Ok(())
     }
 
@@ -624,7 +643,116 @@ impl<T: DDS> DataWriter<T> {
         Ok((entry, handle))
     }
 
-    #[must_use]
+    /// Check if offered deadline was missed and fire listener callback.
+    ///
+    /// Called at the start of each write() to detect if the writer has been
+    /// silent for longer than the configured deadline period.
+    fn check_offered_deadline(&self) {
+        let mut tracker = self
+            .deadline_tracker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if tracker.is_missed() {
+            let total = self.deadline_missed_total.fetch_add(1, Ordering::Relaxed) + 1;
+            // Increment missed count in the tracker
+            tracker.check();
+            if let Some(ref listener) = self.listener {
+                listener.on_offered_deadline_missed(
+                    crate::dds::listener::OfferedDeadlineMissedStatus {
+                        total_count: total,
+                        total_count_change: 1,
+                        last_instance_handle: None,
+                    },
+                );
+            }
+            log::debug!(
+                "[writer] Offered deadline missed on topic='{}' (total={})",
+                self.topic,
+                total
+            );
+        }
+    }
+
+    /// Dispose an instance — marks it as NOT_ALIVE_DISPOSED.
+    ///
+    /// Sends a DATA submessage with key-only payload (K flag) and
+    /// PID_STATUS_INFO = DISPOSED in inline QoS. Remote readers will
+    /// transition this instance to NOT_ALIVE_DISPOSED_INSTANCE_STATE.
+    ///
+    /// DDS spec: Section 2.2.2.4.1.11 — dispose
+    /// RTPS spec: Section 9.6.3.4 — StatusInfo_t
+    pub fn dispose(&self, instance: &T) -> Result<()> {
+        self.send_lifecycle_change(instance, crate::protocol::builder::StatusInfoKind::Disposed)
+    }
+
+    /// Unregister an instance — writer no longer claims ownership.
+    ///
+    /// Sends a DATA submessage with key-only payload (K flag) and
+    /// PID_STATUS_INFO = UNREGISTERED in inline QoS. Remote readers will
+    /// transition this instance to NOT_ALIVE_NO_WRITERS_INSTANCE_STATE
+    /// (if no other writers remain).
+    ///
+    /// DDS spec: Section 2.2.2.4.1.9 — unregister_instance
+    /// RTPS spec: Section 9.6.3.4 — StatusInfo_t
+    pub fn unregister_instance(&self, instance: &T) -> Result<()> {
+        self.send_lifecycle_change(
+            instance,
+            crate::protocol::builder::StatusInfoKind::Unregistered,
+        )
+    }
+
+    /// Internal: send a dispose or unregister lifecycle change on the wire.
+    fn send_lifecycle_change(
+        &self,
+        instance: &T,
+        status_info: crate::protocol::builder::StatusInfoKind,
+    ) -> Result<()> {
+        let Some(ref transport) = self.transport else {
+            // Intra-process only — no remote peers to notify
+            log::debug!(
+                "[writer] lifecycle change {:?} skipped (no transport)",
+                status_info
+            );
+            return Ok(());
+        };
+
+        let Some(ctx) = self.rtps_endpoint else {
+            log::debug!(
+                "[writer] lifecycle change {:?} skipped (no RTPS endpoint context)",
+                status_info
+            );
+            return Ok(());
+        };
+
+        let key_hash = instance.compute_key();
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+
+        let packet = crate::protocol::builder::build_dispose_packet_with_context(
+            &ctx,
+            &self.topic,
+            seq,
+            &key_hash,
+            status_info,
+        );
+
+        if packet.is_empty() {
+            return Err(Error::BufferTooSmall);
+        }
+
+        self.send_packet_to_endpoints(transport, &packet)
+            .map_err(|_| Error::TransportError)?;
+
+        log::debug!(
+            "[writer] Sent {:?} for topic='{}' seq={} key_hash={:02x?}",
+            status_info,
+            self.topic,
+            seq,
+            &key_hash[..4]
+        );
+
+        Ok(())
+    }
+
     pub fn stats(&self) -> WriterStats {
         WriterStats::default()
     }

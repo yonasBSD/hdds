@@ -116,3 +116,80 @@ pub(super) fn build_inline_qos_with_topic(topic: &str) -> Vec<u8> {
 
     qos
 }
+
+/// Status info values for dispose/unregister (DDS-RTPS Sec.9.6.3.4).
+///
+/// These are the valid bit flags for PID_STATUS_INFO (0x0071).
+/// The value is a 4-byte LE field in the inline QoS parameter.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusInfoKind {
+    /// Instance disposed by writer (NOT_ALIVE_DISPOSED)
+    Disposed = 0x0000_0001,
+    /// Writer no longer claims ownership (NOT_ALIVE_NO_WRITERS)
+    Unregistered = 0x0000_0002,
+    /// Both disposed and unregistered
+    DisposedUnregistered = 0x0000_0003,
+}
+
+/// Build inline QoS parameter list for dispose/unregister lifecycle changes.
+///
+/// Includes: PID_TOPIC_NAME + PID_KEY_HASH + PID_STATUS_INFO + PID_SENTINEL.
+/// This is used by DataWriter::dispose() and DataWriter::unregister_instance().
+pub(super) fn build_inline_qos_for_dispose(
+    topic: &str,
+    key_hash: &[u8; 16],
+    status_info: StatusInfoKind,
+) -> Vec<u8> {
+    use crate::protocol::discovery::constants::{PID_KEY_HASH, PID_STATUS_INFO};
+
+    let topic_bytes = topic.as_bytes();
+    let string_len = topic_bytes.len() + 1; // including NUL
+    let param_len = 4 + string_len;
+    let param_len_u16 = match try_u16_from_usize(param_len, "inline QoS parameter length") {
+        Some(value) => value,
+        None => return Vec::new(),
+    };
+    let string_len_u32 = match try_u32_from_usize(string_len, "inline QoS string length") {
+        Some(value) => value,
+        None => return Vec::new(),
+    };
+
+    // PID_TOPIC_NAME aligned size
+    let topic_unaligned = 2 + 2 + param_len; // PID + len + data
+    let topic_aligned = (topic_unaligned + 3) & !3;
+    let topic_padding = topic_aligned - topic_unaligned;
+
+    // Total: CDR header(4) + PID_TOPIC_NAME(aligned) + PID_KEY_HASH(20) + PID_STATUS_INFO(8) + PID_SENTINEL(4)
+    let total_size = 4 + topic_aligned + 20 + 8 + 4;
+    let mut qos = Vec::with_capacity(total_size);
+
+    // CDR encapsulation header (ALWAYS big-endian per CDR spec)
+    qos.extend_from_slice(&CDR_LE.to_be_bytes());
+    qos.extend_from_slice(&[0x00, 0x00]); // Options (reserved)
+
+    // PID_TOPIC_NAME (0x0005)
+    qos.extend_from_slice(&0x0005u16.to_le_bytes());
+    qos.extend_from_slice(&param_len_u16.to_le_bytes());
+    qos.extend_from_slice(&string_len_u32.to_le_bytes());
+    qos.extend_from_slice(topic_bytes);
+    qos.push(0); // NUL
+    qos.extend(std::iter::repeat_n(0, topic_padding));
+
+    // PID_KEY_HASH (0x0070) -- 16 bytes key hash
+    qos.extend_from_slice(&PID_KEY_HASH.to_le_bytes());
+    qos.extend_from_slice(&16u16.to_le_bytes());
+    qos.extend_from_slice(key_hash);
+
+    // PID_STATUS_INFO (0x0071) -- 4 bytes status
+    qos.extend_from_slice(&PID_STATUS_INFO.to_le_bytes());
+    qos.extend_from_slice(&4u16.to_le_bytes());
+    let status_value: u32 = status_info as u32; // @audit-ok: repr(u32) enum discriminant
+    qos.extend_from_slice(&status_value.to_le_bytes());
+
+    // PID_SENTINEL (0x0001)
+    qos.extend_from_slice(&0x0001u16.to_le_bytes());
+    qos.extend_from_slice(&0x0000u16.to_le_bytes());
+
+    qos
+}

@@ -25,8 +25,8 @@ pub(super) const PID_TYPE_OBJECT: u16 = 0x0072;
 pub(super) const PID_DATA_REPRESENTATION: u16 = 0x0073;
 
 // Endpoint identification PIDs
-#[allow(dead_code)] // Reserved for future keyed topic support
-pub(super) const PID_KEY_HASH: u16 = 0x0070; // DDS-RTPS Sec.9.6.2.2.1 - KeyHash_t parameter
+pub(crate) const PID_KEY_HASH: u16 = 0x0070; // DDS-RTPS Sec.9.6.2.2.1 - KeyHash_t parameter
+pub(crate) const PID_STATUS_INFO: u16 = 0x0071; // DDS-RTPS Sec.9.6.3.4 - StatusInfo_t (dispose/unregister)
 pub(super) const PID_RECV_QUEUE_SIZE: u16 = 0x0018; // v85: Deprecated but RTI still sends it
 pub(super) const PID_GROUP_ENTITY_ID: u16 = 0x0053; // v85: Publisher/Subscriber group ID
 pub(super) const PID_TYPE_CONSISTENCY: u16 = 0x0074; // v85: XTypes compatibility rules (CRITICAL)

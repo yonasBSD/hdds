@@ -464,3 +464,74 @@ fn build_single_data_frag_packet(
 pub fn should_fragment(payload_len: usize) -> bool {
     payload_len > DEFAULT_MAX_UNFRAGMENTED_SIZE
 }
+
+// =============================================================================
+// DISPOSE / UNREGISTER: Instance Lifecycle Packets
+// =============================================================================
+
+/// Build RTPS DATA packet for dispose or unregister (key-only, with StatusInfo).
+///
+/// DDS-RTPS Sec.9.6.3.4: A dispose/unregister sends a DATA submessage with:
+/// - K flag set (bit 3) instead of D flag (bit 2)
+/// - PID_KEY_HASH in inline QoS with the instance key hash
+/// - PID_STATUS_INFO in inline QoS with DISPOSED/UNREGISTERED flags
+/// - Serialized key as payload (CDR encapsulated key hash)
+///
+/// This is used by DataWriter::dispose() and DataWriter::unregister_instance().
+pub fn build_dispose_packet_with_context(
+    ctx: &RtpsEndpointContext,
+    topic: &str,
+    sequence: u64,
+    key_hash: &[u8; 16],
+    status_info: super::helpers::StatusInfoKind,
+) -> Vec<u8> {
+    use super::helpers::build_inline_qos_for_dispose;
+
+    // CDR-encapsulated key hash: encapsulation header (4) + key hash (16)
+    let mut key_payload = Vec::with_capacity(20);
+    key_payload.extend_from_slice(&[0x00, 0x01, 0x00, 0x00]); // PLAIN_CDR_LE
+    key_payload.extend_from_slice(key_hash);
+
+    let inline_qos = build_inline_qos_for_dispose(topic, key_hash, status_info);
+    if inline_qos.is_empty() {
+        return Vec::new();
+    }
+
+    // DATA submessage body: extraFlags(2) + octetsToInlineQos(2) + entityIds(8) + seq(8)
+    //                       + inline_qos + key_payload
+    let submsg_body_len = 20 + inline_qos.len() + key_payload.len();
+
+    // Build RTPS header (20 bytes) + DATA submessage
+    let mut packet = Vec::with_capacity(20 + 4 + submsg_body_len);
+    packet.extend_from_slice(RTPS_MAGIC);
+    packet.extend_from_slice(&[RTPS_VERSION_MAJOR, RTPS_VERSION_MINOR]);
+    packet.extend_from_slice(&HDDS_VENDOR_ID);
+    packet.extend_from_slice(&ctx.guid_prefix);
+
+    // DATA submessage header (4 bytes)
+    packet.push(0x15); // DATA submessage ID
+    packet.push(0x0B); // Flags: LE=1 + InlineQoS=1 + Key=1 (bits 0,1,3)
+    packet.extend_from_slice(&(submsg_body_len as u16).to_le_bytes());
+
+    // extraFlags + octetsToInlineQos
+    packet.extend_from_slice(&0u16.to_le_bytes()); // extraFlags
+    packet.extend_from_slice(&16u16.to_le_bytes()); // octetsToInlineQos (standard: 16)
+
+    // Reader/Writer entity IDs
+    packet.extend_from_slice(&ctx.reader_entity_id);
+    packet.extend_from_slice(&ctx.writer_entity_id);
+
+    // Sequence number (SequenceNumber_t = high:i32 + low:u32)
+    let sn_high = (sequence >> 32) as i32;
+    let sn_low = sequence as u32;
+    packet.extend_from_slice(&sn_high.to_le_bytes());
+    packet.extend_from_slice(&sn_low.to_le_bytes());
+
+    // Inline QoS (PID_TOPIC_NAME + PID_KEY_HASH + PID_STATUS_INFO + PID_SENTINEL)
+    packet.extend_from_slice(&inline_qos);
+
+    // Serialized key payload (CDR encapsulated key hash)
+    packet.extend_from_slice(&key_payload);
+
+    packet
+}

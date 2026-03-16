@@ -97,7 +97,7 @@ pub use qos::{
 pub use read_condition::{
     InstanceStateMask, QueryCondition, ReadCondition, SampleStateMask, ViewStateMask,
 };
-pub use reader::DataReader;
+pub use reader::{DataReader, InstanceDisposeEvent};
 pub use subscriber::Subscriber;
 pub use topic::Topic;
 pub use waitset::WaitSet;

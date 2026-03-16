@@ -86,7 +86,7 @@ pub use demux::{
 };
 pub use hub::{Event, Hub};
 pub use router::{route_data_packet, RouteStatus, Router, RouterMetrics};
-pub use subscriber::{CallbackSubscriber, Subscriber};
+pub use subscriber::{CallbackSubscriber, DisposeKind, Subscriber};
 pub use unicast_router::{route_raw_rtps_message, UnicastRouteOutcome};
 pub use wake::WakeNotifier;
 

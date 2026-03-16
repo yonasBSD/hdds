@@ -194,6 +194,103 @@ pub fn extract_writer_guid(rtps_packet: &[u8]) -> Option<[u8; 16]> {
     None // DATA submessage not found
 }
 
+/// Check if RTPS DATA submessage has the K (key-only) flag set (bit 3).
+///
+/// When K flag is set, the DATA payload contains only the serialized key
+/// (not full data). This is used for dispose and unregister lifecycle changes.
+///
+/// RTPS v2.3 Sec.8.3.7.2: DATA submessage flags
+/// - Bit 0: Endianness (E flag)
+/// - Bit 1: InlineQos (Q flag)
+/// - Bit 2: Data present (D flag)
+/// - Bit 3: Key present (K flag)
+pub fn is_key_only_data(rtps_packet: &[u8]) -> bool {
+    if !super::helpers::validate_rtps_data_packet(rtps_packet, 24) {
+        return false;
+    }
+    // DATA submessage flags at offset 21 (second byte of submessage header)
+    let flags = rtps_packet[21];
+    flags & 0x08 != 0 // Bit 3 = K flag
+}
+
+/// Extract PID_STATUS_INFO (0x0071) value from inline QoS parameter list.
+///
+/// The inline QoS bytes start with a 4-byte CDR encapsulation header,
+/// followed by PID parameters. Each parameter: PID(u16) + length(u16) + data.
+///
+/// Returns the 4-byte StatusInfo value as u32 if PID 0x0071 is found.
+/// StatusInfo bits: 0x01 = DISPOSED, 0x02 = UNREGISTERED.
+pub fn extract_status_info(inline_qos: &[u8]) -> Option<u32> {
+    // Skip CDR encapsulation header (4 bytes)
+    if inline_qos.len() < 4 {
+        return None;
+    }
+    let mut offset = 4;
+
+    loop {
+        if offset + 4 > inline_qos.len() {
+            return None;
+        }
+
+        let pid = u16::from_le_bytes([inline_qos[offset], inline_qos[offset + 1]]);
+        let len = u16::from_le_bytes([inline_qos[offset + 2], inline_qos[offset + 3]]) as usize;
+
+        // PID_SENTINEL -- end of parameter list
+        if pid == 0x0001 {
+            return None;
+        }
+
+        // PID_STATUS_INFO (0x0071) -- 4 bytes
+        if pid == 0x0071 && len >= 4 && offset + 4 + 4 <= inline_qos.len() {
+            let value = u32::from_le_bytes([
+                inline_qos[offset + 4],
+                inline_qos[offset + 5],
+                inline_qos[offset + 6],
+                inline_qos[offset + 7],
+            ]);
+            return Some(value);
+        }
+
+        offset += 4 + len;
+        offset = (offset + 3) & !3; // Align to 4 bytes
+    }
+}
+
+/// Extract PID_KEY_HASH (0x0070) from inline QoS parameter list.
+///
+/// Returns the 16-byte key hash if PID 0x0070 is found.
+pub fn extract_key_hash(inline_qos: &[u8]) -> Option<[u8; 16]> {
+    // Skip CDR encapsulation header (4 bytes)
+    if inline_qos.len() < 4 {
+        return None;
+    }
+    let mut offset = 4;
+
+    loop {
+        if offset + 4 > inline_qos.len() {
+            return None;
+        }
+
+        let pid = u16::from_le_bytes([inline_qos[offset], inline_qos[offset + 1]]);
+        let len = u16::from_le_bytes([inline_qos[offset + 2], inline_qos[offset + 3]]) as usize;
+
+        // PID_SENTINEL
+        if pid == 0x0001 {
+            return None;
+        }
+
+        // PID_KEY_HASH (0x0070) -- 16 bytes
+        if pid == 0x0070 && len >= 16 && offset + 4 + 16 <= inline_qos.len() {
+            let mut key_hash = [0u8; 16];
+            key_hash.copy_from_slice(&inline_qos[offset + 4..offset + 4 + 16]);
+            return Some(key_hash);
+        }
+
+        offset += 4 + len;
+        offset = (offset + 3) & !3;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::extract_writer_guid;

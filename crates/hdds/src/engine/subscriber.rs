@@ -3,6 +3,21 @@
 
 //! Subscriber trait and implementations for receiving topic data
 
+/// Dispose/unregister kind for instance lifecycle changes.
+///
+/// Maps to the PID_STATUS_INFO (0x0071) value in RTPS inline QoS.
+/// DDS-RTPS Sec.9.6.3.4: StatusInfo_t.
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DisposeKind {
+    /// Instance disposed by writer (NOT_ALIVE_DISPOSED_INSTANCE_STATE)
+    Disposed = 1,
+    /// Writer no longer claims ownership (NOT_ALIVE_NO_WRITERS_INSTANCE_STATE)
+    Unregistered = 2,
+    /// Both disposed and unregistered
+    DisposedUnregistered = 3,
+}
+
 /// Subscriber trait for receiving topic data
 ///
 /// # Thread Safety
@@ -39,6 +54,19 @@ pub trait Subscriber: Send + Sync {
     /// If this method panics, Router will catch it and continue
     /// delivery to other subscribers (logged as delivery_error metric).
     fn on_data(&self, topic: &str, seq: u64, data: &[u8]);
+
+    /// Called when a dispose or unregister lifecycle change is received.
+    ///
+    /// # Arguments
+    /// - `topic`: Topic name
+    /// - `seq`: RTPS writer sequence number
+    /// - `key_hash`: 16-byte instance key hash from PID_KEY_HASH
+    /// - `kind`: Dispose or unregister
+    ///
+    /// Default implementation: no-op (silently ignores lifecycle changes).
+    fn on_dispose(&self, _topic: &str, _seq: u64, _key_hash: [u8; 16], _kind: DisposeKind) {
+        // Default: silently ignore lifecycle changes
+    }
 
     /// Returns the topic name this subscriber is registered for
     fn topic_name(&self) -> &str;

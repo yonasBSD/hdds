@@ -127,6 +127,17 @@ pub enum SampleRejectedReason {
     SamplesPerInstanceLimit,
 }
 
+/// Status information for offered deadline missed events (writer-side).
+#[derive(Debug, Clone, Default)]
+pub struct OfferedDeadlineMissedStatus {
+    /// Total cumulative count of missed deadlines.
+    pub total_count: u32,
+    /// Change in total_count since last callback.
+    pub total_count_change: i32,
+    /// Handle of the instance that missed the deadline.
+    pub last_instance_handle: Option<u64>,
+}
+
 /// Status information for deadline missed events.
 #[derive(Debug, Clone, Default)]
 pub struct RequestedDeadlineMissedStatus {
@@ -289,9 +300,9 @@ pub trait DataWriterListener<T: DDS>: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `instance_handle` - Handle of the instance that missed the deadline
-    fn on_offered_deadline_missed(&self, instance_handle: Option<u64>) {
-        let _ = instance_handle;
+    /// * `status` - Current offered deadline missed status
+    fn on_offered_deadline_missed(&self, status: OfferedDeadlineMissedStatus) {
+        let _ = status;
     }
 
     /// Called when QoS is incompatible with a matched reader.
@@ -458,7 +469,7 @@ mod tests {
         // All these should do nothing but not panic
         listener.on_sample_written(&sample, 1);
         listener.on_publication_matched(PublicationMatchedStatus::default());
-        listener.on_offered_deadline_missed(None);
+        listener.on_offered_deadline_missed(OfferedDeadlineMissedStatus::default());
         listener.on_offered_incompatible_qos(0, "RELIABILITY");
         listener.on_liveliness_lost();
     }

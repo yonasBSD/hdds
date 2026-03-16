@@ -2,14 +2,18 @@
 // Copyright (c) 2025-2026 naskel.com
 
 use super::cache::{CachedSample, InstanceHandle, SampleCache};
+use super::subscriber::DisposeEvent;
 use crate::core::rt;
+use crate::dds::listener::{DataReaderListener, RequestedDeadlineMissedStatus};
 use crate::dds::{qos::History, BindToken, QoS, Result, StatusCondition, StatusMask, DDS};
+use crate::engine::subscriber::DisposeKind;
 use crate::engine::TopicRegistry;
 use crate::protocol::builder;
 use crate::reliability::{NackScheduler, ReliableMetrics};
 use crate::telemetry;
 use crate::telemetry::metrics::current_time_ns;
 use crate::transport::UdpTransport;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 /// A typed DDS DataReader that subscribes to samples on a topic.
@@ -77,6 +81,13 @@ pub struct DataReader<T: DDS> {
     #[cfg(feature = "security")]
     #[allow(dead_code)]
     security: Option<Arc<crate::security::SecurityPluginSuite>>,
+    /// Optional listener for reader callbacks (deadline missed, etc.)
+    listener: Option<Arc<dyn DataReaderListener<T>>>,
+    /// Deadline tracker for detecting requested deadline missed events (DDS spec 2.2.2.4.2.12).
+    deadline_tracker: Mutex<crate::qos::deadline::ReaderDeadlineTracker>,
+    deadline_missed_total: AtomicU32,
+    /// Shared dispose event queue from ReaderSubscriber (P1.2).
+    dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     _phantom: core::marker::PhantomData<T>,
 }
 
@@ -92,8 +103,13 @@ impl<T: DDS> DataReader<T> {
         reliable_metrics: Option<Arc<ReliableMetrics>>,
         status_condition: Arc<StatusCondition>,
         bind_token: Option<BindToken>,
+        listener: Option<Arc<dyn DataReaderListener<T>>>,
         #[cfg(feature = "security")] security: Option<Arc<crate::security::SecurityPluginSuite>>,
+        dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     ) -> Self {
+        // Capture deadline period before moving qos into struct
+        let deadline_period = qos.deadline.period;
+
         // Determine cache size from history QoS
         let cache_size = match qos.history {
             History::KeepLast(depth) => depth as usize,
@@ -113,6 +129,12 @@ impl<T: DDS> DataReader<T> {
             _bind_token: bind_token,
             #[cfg(feature = "security")]
             security,
+            listener,
+            deadline_tracker: Mutex::new(crate::qos::deadline::ReaderDeadlineTracker::new(
+                deadline_period,
+            )),
+            deadline_missed_total: AtomicU32::new(0),
+            dispose_events,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -125,6 +147,34 @@ impl<T: DDS> DataReader<T> {
     #[must_use]
     pub fn topic_name(&self) -> &str {
         &self.topic
+    }
+
+    /// Check if requested deadline was missed and fire listener callback.
+    ///
+    /// Called at the start of each take()/read() to detect if no sample
+    /// has been received within the configured deadline period.
+    /// (DDS spec 2.2.2.4.2.12 - RequestedDeadlineMissed)
+    fn check_requested_deadline(&self) {
+        let mut tracker = self
+            .deadline_tracker
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if tracker.is_missed() {
+            let total = self.deadline_missed_total.fetch_add(1, Ordering::Relaxed) + 1;
+            tracker.check();
+            if let Some(ref listener) = self.listener {
+                listener.on_requested_deadline_missed(RequestedDeadlineMissedStatus {
+                    total_count: total,
+                    total_count_change: 1,
+                    last_instance_handle: None,
+                });
+            }
+            log::debug!(
+                "[reader] Requested deadline missed on topic='{}' (total={})",
+                self.topic,
+                total
+            );
+        }
     }
 
     #[must_use]
@@ -264,6 +314,9 @@ impl<T: DDS> DataReader<T> {
     /// # #[derive(hdds::DDS, Debug)] struct MyType { x: i32 }
     /// ```
     pub fn take(&self) -> Result<Option<T>> {
+        // Check requested deadline before reading (DDS spec: fire callback on miss)
+        self.check_requested_deadline();
+
         // Pump pending samples from ring to cache
         self.pump_ring_to_cache()?;
 
@@ -345,6 +398,9 @@ impl<T: DDS + Clone> DataReader<T> {
     /// # #[derive(hdds::DDS, Debug, Clone)] struct MyType { x: i32 }
     /// ```
     pub fn read(&self) -> Result<Option<T>> {
+        // Check requested deadline before reading (DDS spec: fire callback on miss)
+        self.check_requested_deadline();
+
         // Pump pending samples from ring to cache
         self.pump_ring_to_cache()?;
 
@@ -425,6 +481,12 @@ impl<T: DDS> DataReader<T> {
                     );
                     self.cache.push(cached);
 
+                    // Record sample reception for deadline tracking
+                    self.deadline_tracker
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .on_sample();
+
                     // Update NACK scheduler if reliable
                     if let Some(scheduler) = &self.nack_scheduler {
                         if let Ok(mut sched) = scheduler.lock() {
@@ -456,6 +518,47 @@ impl<T: DDS> DataReader<T> {
     #[must_use]
     pub fn stats(&self) -> ReaderStats {
         ReaderStats::default()
+    }
+
+    /// Drain all pending dispose/unregister lifecycle events.
+    ///
+    /// Returns events in the order they were received from the network.
+    /// Each event indicates an instance that was disposed or unregistered
+    /// by a remote writer.
+    ///
+    /// # Example
+    /// ```rust,no_run
+    /// # use hdds::{Participant, QoS, Result};
+    /// # fn main() -> Result<()> {
+    /// # let participant = Participant::builder("test").build()?;
+    /// # let reader = participant.create_reader::<MyType>("topic", QoS::default())?;
+    /// for event in reader.get_dispose_events() {
+    ///     println!("Instance {:02x?} was {:?}", &event.key_hash[..4], event.kind);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// # #[derive(hdds::DDS, Debug)] struct MyType { x: i32 }
+    /// ```
+    pub fn get_dispose_events(&self) -> Vec<InstanceDisposeEvent> {
+        let mut events = match self.dispose_events.lock() {
+            Ok(mut guard) => {
+                let drained: Vec<_> = guard.drain(..).collect();
+                drained
+            }
+            Err(poisoned) => {
+                let mut guard = poisoned.into_inner();
+                guard.drain(..).collect()
+            }
+        };
+
+        events
+            .drain(..)
+            .map(|e| InstanceDisposeEvent {
+                key_hash: e.key_hash,
+                kind: e.kind,
+                seq: e.seq,
+            })
+            .collect()
     }
 
     fn enforce_history(&self) {
@@ -521,6 +624,20 @@ impl<T: DDS> DataReader<T> {
     pub(super) fn ring_for_test(&self) -> &Arc<rt::IndexRing> {
         &self.ring
     }
+}
+
+/// Information about a dispose/unregister instance lifecycle event.
+///
+/// Returned by [`DataReader::get_dispose_events()`] when a remote writer
+/// disposes or unregisters an instance.
+#[derive(Debug, Clone)]
+pub struct InstanceDisposeEvent {
+    /// 16-byte key hash identifying the disposed/unregistered instance.
+    pub key_hash: [u8; 16],
+    /// The kind of lifecycle change.
+    pub kind: DisposeKind,
+    /// RTPS writer sequence number.
+    pub seq: u64,
 }
 
 #[derive(Default, Debug, Clone, Copy)]

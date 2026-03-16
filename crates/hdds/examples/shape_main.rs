@@ -98,10 +98,6 @@ impl MatchNotifier {
             .insert(topic.to_string());
     }
 
-    fn is_incompatible(&self, topic: &str) -> bool {
-        self.incompatible_topics.lock().unwrap().contains(topic)
-    }
-
     fn add_writer_topic(&self, topic: String, qos: QoS, data_repr: DataRepresentation) {
         let ep = LocalEndpoint {
             topic: topic.clone(),
@@ -1383,14 +1379,11 @@ impl DataWriterListener<ShapeType> for WriterListener {
         );
     }
 
-    fn on_offered_deadline_missed(&self, _instance_handle: Option<u64>) {
+    fn on_offered_deadline_missed(&self, status: OfferedDeadlineMissedStatus) {
         // pexpect matches: "on_offered_deadline_missed"
-        // FIX #9: C++ prints (total = %d, change = %d). HDDS listener currently
-        // only provides instance_handle. We print total=1, change=1 as minimum.
-        // TODO: accumulate counts when HDDS provides OfferedDeadlineMissedStatus.
         println!(
-            "on_offered_deadline_missed() topic: '{}'  type: 'ShapeType' : (total = 1, change = 1)",
-            self.topic_name
+            "on_offered_deadline_missed() topic: '{}'  type: 'ShapeType' : (total = {}, change = {})",
+            self.topic_name, status.total_count, status.total_count_change
         );
     }
 
@@ -1554,30 +1547,7 @@ fn run_publisher(
 
     let mut n: u32 = 0;
 
-    // Deadline monitoring: track last write time for offered_deadline_missed
-    let deadline_period = if options.deadline_interval_ms > 0 {
-        Some(Duration::from_millis(options.deadline_interval_ms as u64))
-    } else {
-        None
-    };
-    let mut last_write_time = std::time::Instant::now();
-    let mut deadline_missed_reported = false;
-
     while !ALL_DONE.load(Ordering::SeqCst) {
-        // Check offered deadline missed BEFORE writing
-        if let Some(deadline) = deadline_period {
-            let elapsed = last_write_time.elapsed();
-            if elapsed > deadline && !deadline_missed_reported {
-                for tname in &topic_names {
-                    println!(
-                        "on_offered_deadline_missed() topic: '{}'  type: 'ShapeType' : (total = 1, change = 1)",
-                        tname
-                    );
-                }
-                deadline_missed_reported = true;
-            }
-        }
-
         // Move shape (bouncing box)
         shape.x += xvel;
         shape.y += yvel;
@@ -1654,10 +1624,6 @@ fn run_publisher(
             // TODO: call publisher.end_coherent_changes()
         }
 
-        // Reset deadline tracking after successful write
-        last_write_time = std::time::Instant::now();
-        deadline_missed_reported = false;
-
         n += 1;
         if options.num_iterations != 0 && options.num_iterations <= n {
             break;
@@ -1668,7 +1634,7 @@ fn run_publisher(
 
     // FIX #7: Dispose/Unregister instances
     if options.dispose || options.unregister {
-        for _writer in &writers {
+        for writer in &writers {
             for j in 0..options.num_instances {
                 if options.num_instances > 1 {
                     let instance_color = if j > 0 {
@@ -1678,22 +1644,15 @@ fn run_publisher(
                     };
                     shape.color = instance_color;
                 }
-                // TODO: call writer.dispose(&shape) / writer.unregister_instance(&shape)
-                // when HDDS DataWriter API supports explicit dispose/unregister.
-                // For now, log what would happen:
                 if options.unregister {
-                    log_debug(&format!("would unregister instance color={}", shape.color));
+                    let _ = writer.unregister_instance(&shape);
                 }
                 if options.dispose {
-                    log_debug(&format!("would dispose instance color={}", shape.color));
+                    let _ = writer.dispose(&shape);
                 }
             }
         }
     }
-
-    // FIX #7: wait_for_acknowledgments equivalent
-    // TODO: replace with writer.wait_for_acknowledgments() when available
-    thread::sleep(Duration::from_secs(1));
 
     Ok(())
 }
@@ -1791,33 +1750,7 @@ fn run_subscriber(
     // Main subscriber loop
     let mut n: u32 = 0;
 
-    // Deadline monitoring: track last receive time for requested_deadline_missed
-    let deadline_period = if options.deadline_interval_ms > 0 {
-        Some(Duration::from_millis(options.deadline_interval_ms as u64))
-    } else {
-        None
-    };
-    let mut last_receive_time = std::time::Instant::now();
-    let mut deadline_missed_reported = false;
-    let mut first_sample_received = false;
-
     while !ALL_DONE.load(Ordering::SeqCst) {
-        // Check requested deadline missed (only after first sample received)
-        if let Some(deadline) = deadline_period {
-            if first_sample_received && !deadline_missed_reported {
-                let elapsed = last_receive_time.elapsed();
-                if elapsed > deadline {
-                    for tname in &topic_names {
-                        println!(
-                            "on_requested_deadline_missed() topic: '{}'  type: 'ShapeType' : (total = 1, change = 1)",
-                            tname
-                        );
-                    }
-                    deadline_missed_reported = true;
-                }
-            }
-        }
-
         // FIX #6: coherent sets — begin_access
         if options.coherent_set_enabled || options.ordered_access_enabled {
             // TODO: call subscriber.begin_access() when HDDS provides Subscriber entity
@@ -1832,7 +1765,6 @@ fn run_subscriber(
 
         // FIX #3: drain ALL samples from ALL readers (not just one)
         for (idx, reader) in readers.iter().enumerate() {
-
             loop {
                 let result = if options.use_read {
                     reader.read()
@@ -1842,11 +1774,6 @@ fn run_subscriber(
 
                 match result {
                     Ok(Some(sample)) => {
-                        // Reset deadline tracking on sample receive
-                        last_receive_time = std::time::Instant::now();
-                        deadline_missed_reported = false;
-                        first_sample_received = true;
-
                         // pexpect matches "[<digits>]" — shapesize in brackets
                         print!(
                             "{:<10} {:<10} {:03} {:03} [{}]",
@@ -1858,19 +1785,36 @@ fn run_subscriber(
                         }
                         println!();
 
-                        // FIX #4: Instance state handling
-                        // When HDDS returns SampleInfo with instance_state, we should check:
-                        //   if instance_state == NOT_ALIVE_NO_WRITERS:
-                        //       println!("{:<10} {:<10} NOT_ALIVE_NO_WRITERS_INSTANCE_STATE",
-                        //               topic_name, color);
-                        //   if instance_state == NOT_ALIVE_DISPOSED:
-                        //       println!("{:<10} {:<10} NOT_ALIVE_DISPOSED_INSTANCE_STATE",
-                        //               topic_name, color);
-                        // This requires HDDS to surface SampleInfo alongside data.
+                        // FIX #4: Instance state handling (P1.2 — implemented)
                     }
                     Ok(None) => break, // No more samples available
                     Err(_) => break,
                 }
+            }
+        }
+
+        // FIX #4: Check for dispose/unregister events from all readers (P1.2)
+        for (idx, reader) in readers.iter().enumerate() {
+            for event in reader.get_dispose_events() {
+                let state_str = match event.kind {
+                    hdds::engine::DisposeKind::Disposed => "NOT_ALIVE_DISPOSED_INSTANCE_STATE",
+                    hdds::engine::DisposeKind::Unregistered => {
+                        "NOT_ALIVE_NO_WRITERS_INSTANCE_STATE"
+                    }
+                    hdds::engine::DisposeKind::DisposedUnregistered => {
+                        "NOT_ALIVE_DISPOSED_INSTANCE_STATE"
+                    }
+                };
+                // Print key hash as hex for instance identification
+                println!(
+                    "{:<10} [{:02x}{:02x}{:02x}{:02x}] {}",
+                    topic_names[idx],
+                    event.key_hash[0],
+                    event.key_hash[1],
+                    event.key_hash[2],
+                    event.key_hash[3],
+                    state_str
+                );
             }
         }
 

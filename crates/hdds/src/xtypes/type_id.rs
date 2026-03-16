@@ -155,6 +155,7 @@ pub enum TypeIdentifier {
 
 // Manual PartialEq/Eq/Hash because CompleteTypeObject does not derive Eq/Hash.
 impl PartialEq for TypeIdentifier {
+    // @audit-ok: flat enum variant dispatch (9 arms), no nesting
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Primitive(a), Self::Primitive(b)) => a == b,

@@ -65,7 +65,7 @@ mod tests;
 
 pub use builder::ReaderBuilder;
 #[allow(unused_imports)]
-pub use runtime::{DataReader, ReaderStats};
+pub use runtime::{DataReader, InstanceDisposeEvent, ReaderStats};
 
 use super::condition::HasStatusCondition;
 use super::DDS;

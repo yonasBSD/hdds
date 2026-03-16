@@ -42,6 +42,7 @@ impl Cdr2Encode for CompleteTypeObject {
             encode_u8(discriminator, buf, &mut local)?;
             Ok(local)
         };
+        // @audit-ok: flat enum variant dispatch (10 arms), no nesting
         let mut encode_variant = |buf: &mut [u8]| -> Result<usize, CdrError> {
             match self {
                 CompleteTypeObject::Struct(s) => s.encode_cdr2_le(buf),
@@ -171,7 +172,7 @@ impl Cdr2Encode for MinimalTypeObject {
             encode_u8(discriminator, buf, &mut local)?;
             Ok(local)
         };
-        // Closure cognitive 2: Dispatch to variant encoders
+        // @audit-ok: flat enum variant dispatch (10 arms), no nesting
         let mut encode_variant = |buf: &mut [u8]| -> Result<usize, CdrError> {
             match self {
                 MinimalTypeObject::Struct(s) => s.encode_cdr2_le(buf),

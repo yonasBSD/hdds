@@ -9,6 +9,7 @@ use std::time::Duration;
 #[test]
 fn waitset_triggers_on_participant_guard() {
     let participant = Participant::builder("rmw_waitset_guard_test")
+        .domain_id(201)
         .build()
         .expect("participant");
     let waitset = RmwWaitSet::new();
@@ -39,6 +40,7 @@ fn waitset_triggers_on_participant_guard() {
 #[test]
 fn waitset_triggers_on_reader_status() {
     let participant = Participant::builder("rmw_waitset_reader_test")
+        .domain_id(202)
         .build()
         .expect("participant");
     let reader = participant

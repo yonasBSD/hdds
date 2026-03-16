@@ -9,7 +9,7 @@
 
 use super::heartbeat::ReaderHeartbeatHandler;
 use super::runtime::DataReader;
-use super::subscriber::ReaderSubscriber;
+use super::subscriber::{DisposeEvent, ReaderSubscriber};
 use crate::config::READER_HISTORY_RING_SIZE;
 use crate::core::discovery::GUID;
 use crate::core::rt;
@@ -227,6 +227,9 @@ impl<T: DDS> ReaderBuilder<T> {
         let status_condition = Arc::new(StatusCondition::new());
         status_condition.set_enabled_statuses(StatusMask::DATA_AVAILABLE);
 
+        // Shared dispose event queue between ReaderSubscriber and DataReader
+        let dispose_events: Arc<Mutex<Vec<DisposeEvent>>> = Arc::new(Mutex::new(Vec::new()));
+
         if let Some(ref registry) = registry {
             let subscriber: Arc<dyn crate::engine::Subscriber> =
                 Arc::new(ReaderSubscriber::<T>::new(
@@ -236,6 +239,7 @@ impl<T: DDS> ReaderBuilder<T> {
                     participant_guard.as_ref().map(Arc::clone),
                     content_filter.clone(),
                     listener.clone(),
+                    Arc::clone(&dispose_events),
                 ));
 
             if let Err(err) = registry.register_subscriber(subscriber) {
@@ -379,8 +383,10 @@ impl<T: DDS> ReaderBuilder<T> {
             reliable_metrics,
             status_condition,
             bind_token,
+            listener,
             #[cfg(feature = "security")]
             security,
+            dispose_events,
         ))
     }
 }

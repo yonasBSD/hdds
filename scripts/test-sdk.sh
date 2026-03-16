@@ -492,9 +492,20 @@ run_pubsub_test() {
     LD_LIBRARY_PATH="$LIB_PATH" $pub_cmd > "$pub_log" 2>&1 &
     local pub_pid=$!
 
-    # Wait for publisher (should finish in ~3s)
+    # Wait for publisher (with timeout -- should finish in ~3s)
     local pub_ok=true
-    if ! wait "$pub_pid" 2>/dev/null; then
+    local pub_waited=0
+    while kill -0 "$pub_pid" 2>/dev/null; do
+        sleep 1
+        pub_waited=$((pub_waited + 1))
+        if [[ $pub_waited -ge $SUB_TIMEOUT ]]; then
+            kill -9 "$pub_pid" 2>/dev/null || true
+            wait "$pub_pid" 2>/dev/null || true
+            pub_ok=false
+            break
+        fi
+    done
+    if $pub_ok && ! wait "$pub_pid" 2>/dev/null; then
         pub_ok=false
     fi
 

@@ -16,6 +16,22 @@ use crate::telemetry::metrics::current_time_ns;
 use std::convert::TryFrom;
 use std::sync::{Arc, Mutex};
 
+use crate::engine::subscriber::DisposeKind;
+
+/// A dispose/unregister lifecycle event received from the network.
+///
+/// Stored by ReaderSubscriber and drained by DataReader to surface
+/// instance state changes to the application.
+#[derive(Debug, Clone)]
+pub(super) struct DisposeEvent {
+    /// 16-byte key hash identifying the instance.
+    pub key_hash: [u8; 16],
+    /// Dispose, Unregister, or both.
+    pub kind: DisposeKind,
+    /// RTPS writer sequence number.
+    pub seq: u64,
+}
+
 #[derive(Debug, Clone)]
 struct SeqWindow {
     /// Base sequence number (first remote sequence observed).
@@ -144,6 +160,8 @@ pub(super) struct ReaderSubscriber<T: DDS> {
     pub(super) content_filter: Option<FilterEvaluator>,
     /// Optional listener for data callbacks
     pub(super) listener: Option<Arc<dyn DataReaderListener<T>>>,
+    /// Shared queue for dispose/unregister events (drained by DataReader).
+    pub(super) dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     pub(super) _phantom: core::marker::PhantomData<T>,
 }
 
@@ -155,6 +173,7 @@ impl<T: DDS> ReaderSubscriber<T> {
         participant_guard: Option<Arc<GuardCondition>>,
         content_filter: Option<FilterEvaluator>,
         listener: Option<Arc<dyn DataReaderListener<T>>>,
+        dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     ) -> Self {
         if participant_guard.is_some() {
             log::debug!(
@@ -175,6 +194,7 @@ impl<T: DDS> ReaderSubscriber<T> {
             seq_window: Mutex::new(SeqWindow::new()),
             content_filter,
             listener,
+            dispose_events,
             _phantom: core::marker::PhantomData,
         }
     }
@@ -319,6 +339,32 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
         } else {
             slab_pool.release(handle);
             log::debug!("Reader ring full - dropping UDP packet");
+        }
+    }
+
+    fn on_dispose(&self, _topic: &str, seq: u64, key_hash: [u8; 16], kind: DisposeKind) {
+        log::debug!(
+            "[READER-SUB] on_dispose topic='{}' seq={} kind={:?} key_hash={:02x?}",
+            self.topic,
+            seq,
+            kind,
+            &key_hash[..4]
+        );
+
+        // Push event to shared queue (DataReader drains it)
+        if let Ok(mut events) = self.dispose_events.lock() {
+            events.push(DisposeEvent {
+                key_hash,
+                kind,
+                seq,
+            });
+        }
+
+        // Signal data available so WaitSet wakes up
+        self.status_condition
+            .set_active_statuses(StatusMask::DATA_AVAILABLE);
+        if let Some(guard) = &self.participant_guard {
+            guard.set_trigger_value(true);
         }
     }
 

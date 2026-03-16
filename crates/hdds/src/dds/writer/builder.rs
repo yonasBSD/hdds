@@ -606,6 +606,9 @@ impl<T: DDS> WriterBuilder<T> {
             _ => None,
         };
 
+        // Capture deadline period before moving self.qos into the struct
+        let deadline_period = self.qos.deadline.period;
+
         Ok(DataWriter {
             topic: self.topic,
             qos: self.qos,
@@ -622,6 +625,10 @@ impl<T: DDS> WriterBuilder<T> {
             _bind_token: bind_token,
             _replay_token: replay_token,
             listener: self.listener,
+            deadline_tracker: std::sync::Mutex::new(crate::qos::deadline::DeadlineTracker::new(
+                deadline_period,
+            )),
+            deadline_missed_total: std::sync::atomic::AtomicU32::new(0),
             #[cfg(feature = "security")]
             security,
             _phantom: core::marker::PhantomData,

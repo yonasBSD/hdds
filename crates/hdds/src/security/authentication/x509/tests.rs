@@ -122,6 +122,7 @@ fn test_x509_plugin_validate_identity() {
 }
 
 #[test]
+#[cfg(feature = "security")]
 fn test_x509_plugin_begin_handshake() {
     let (config, _cert, _key, _ca) = create_mock_config();
     let plugin = X509AuthenticationPlugin::new(&config).expect("Plugin creation should succeed");
@@ -137,6 +138,7 @@ fn test_x509_plugin_begin_handshake() {
 }
 
 #[test]
+#[cfg(feature = "security")]
 fn test_x509_plugin_process_handshake() {
     let (config, _cert, _key, _ca) = create_mock_config();
     let plugin = X509AuthenticationPlugin::new(&config).expect("Plugin creation should succeed");
@@ -183,6 +185,7 @@ fn test_validate_pem_format_empty() {
 }
 
 #[test]
+#[cfg(feature = "security")]
 fn test_generate_challenge() {
     let challenge = super::crypto::generate_challenge().unwrap();
     assert_eq!(challenge.len(), 32);

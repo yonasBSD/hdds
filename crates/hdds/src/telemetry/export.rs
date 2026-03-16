@@ -21,6 +21,7 @@ pub const VERSION: u32 = 0x0000_0100;
 ///
 /// # Latency Contract
 /// - p99 < 5 us for frames with <=32 fields (single allocation, fixed-width writes).
+// @audit-ok: linear serialization with dtype dispatch, no nesting
 pub fn encode_frame(frame: &Frame) -> Result<Vec<u8>, Error> {
     let mut buf = Vec::new();
 
