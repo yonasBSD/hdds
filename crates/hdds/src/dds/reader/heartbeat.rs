@@ -20,7 +20,7 @@
 
 use crate::core::discovery::multicast::DiscoveryFsm;
 use crate::engine::HeartbeatHandler;
-use crate::protocol::builder::build_acknack_packet;
+use crate::protocol::builder::build_acknack_packet_with_final;
 use crate::reliability::{HeartbeatMsg, HeartbeatRx, NackScheduler};
 use crate::transport::UdpTransport;
 use std::cmp;
@@ -209,15 +209,14 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
             }
         }
 
-        // Send ACKNACK if we have transport context and there are gaps
+        // Send ACKNACK if we have transport context
         if let Some(ref ctx) = self.acknack_ctx {
             // Always send ACKNACK in response to HEARTBEAT (per RTPS spec)
-            // - If we have gaps: bitmap contains missing sequences
-            // - If synchronized: empty bitmap (Final flag would be set)
+            // - If we have gaps: bitmap contains missing sequences, Final=false
+            // - If synchronized: empty bitmap, Final=true (stops HB/ACKNACK loop)
             let count = self.acknack_count.fetch_add(1, Ordering::Relaxed);
 
             // We need writer's GUID prefix and entity ID from the HEARTBEAT
-            // The HeartbeatMsg should contain writer_guid_prefix and writer_entity_id
             let writer_guid_prefix = hb.writer_guid_prefix;
             let writer_entity_id = hb.writer_entity_id;
 
@@ -228,7 +227,12 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
                 missing_seqs.iter().copied().min().unwrap_or(hb.first_seq)
             };
 
-            let acknack_packet = build_acknack_packet(
+            // v220: Set Final flag when reader is fully synchronized (no gaps).
+            // Per RTPS spec 8.3.7.1.5: Final flag = 1 tells the writer that
+            // the reader does not require a response, breaking the HB/ACKNACK
+            // ping-pong cycle.
+            let final_flag = missing_seqs.is_empty();
+            let acknack_packet = build_acknack_packet_with_final(
                 ctx.our_guid_prefix,
                 writer_guid_prefix,
                 ctx.reader_entity_id,
@@ -236,6 +240,7 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
                 seq_base,
                 &missing_seqs,
                 count,
+                final_flag,
             );
 
             // v219: Route ACKNACK to peer's METATRAFFIC unicast port.
@@ -243,29 +248,32 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
             // user-data port). RTPS control messages (HB, ACKNACK, GAP) must be
             // sent to the metatraffic channel. Resolve via DiscoveryFsm, falling
             // back to source_addr if the peer is not yet discovered.
-            let send_result = if let Some(addr) = source_addr {
+            let (send_result, dest) = if let Some(addr) = source_addr {
                 let dest = resolve_metatraffic_dest(
                     &writer_guid_prefix,
                     addr,
                     &ctx.discovery_fsm,
                 );
-                ctx.transport
+                let res = ctx.transport
                     .send_to_endpoint(&acknack_packet, &dest)
-                    .map(|_| ())
+                    .map(|_| ());
+                (res, Some(dest))
             } else {
                 // Fallback to multicast (intra-vendor / legacy path)
-                ctx.transport.send(&acknack_packet)
+                let res = ctx.transport.send(&acknack_packet);
+                (res, None)
             };
 
             if let Err(e) = send_result {
                 log::debug!("[reader] Failed to send ACKNACK: {}", e);
             } else {
                 log::trace!(
-                    "[reader] v219: Sent ACKNACK count={} base={} missing={} seqs dst={:?}",
+                    "[reader] v220: Sent ACKNACK count={} base={} missing={} final={} dst={:?}",
                     count,
                     seq_base,
                     missing_seqs.len(),
-                    source_addr,
+                    final_flag,
+                    dest,
                 );
             }
         }
