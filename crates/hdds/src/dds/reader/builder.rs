@@ -297,7 +297,9 @@ impl<T: DDS> ReaderBuilder<T> {
                                 our_guid_prefix,
                                 reader_entity_id,
                                 xport.clone(),
+                                part.discovery(),
                             ))
+
                         }
                         _ => {
                             // Fallback: no ACKNACK capability (intra-process mode)

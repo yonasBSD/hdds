@@ -18,11 +18,13 @@
 //!   ├──DATA(3) retransmit───────────────▶
 //! ```
 
+use crate::core::discovery::multicast::DiscoveryFsm;
 use crate::engine::HeartbeatHandler;
 use crate::protocol::builder::build_acknack_packet;
 use crate::reliability::{HeartbeatMsg, HeartbeatRx, NackScheduler};
 use crate::transport::UdpTransport;
 use std::cmp;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +36,9 @@ pub(super) struct AcknackContext {
     pub reader_entity_id: [u8; 4],
     /// UDP transport for sending ACKNACK
     pub transport: Arc<UdpTransport>,
+    /// v219: Discovery FSM for resolving peer metatraffic address.
+    /// ACKNACKs must go to the metatraffic port, not the user data port.
+    pub discovery_fsm: Option<Arc<DiscoveryFsm>>,
 }
 
 pub(super) struct ReaderHeartbeatHandler {
@@ -63,6 +68,7 @@ impl ReaderHeartbeatHandler {
         our_guid_prefix: [u8; 12],
         reader_entity_id: [u8; 4],
         transport: Arc<UdpTransport>,
+        discovery_fsm: Option<Arc<DiscoveryFsm>>,
     ) -> Self {
         Self {
             heartbeat_rx: Mutex::new(HeartbeatRx::new()),
@@ -72,14 +78,71 @@ impl ReaderHeartbeatHandler {
                 our_guid_prefix,
                 reader_entity_id,
                 transport,
+                discovery_fsm,
             }),
             acknack_count: AtomicU32::new(1),
         }
     }
 }
 
+/// v219: Resolve peer's metatraffic unicast address from SPDP discovery data.
+///
+/// RTPS control messages (HEARTBEAT, ACKNACK, GAP) are exchanged on the
+/// metatraffic channel. When a HEARTBEAT arrives on the user-data channel
+/// (e.g. compound [DATA+HEARTBEAT] from FastDDS), the UDP source address
+/// is the user-data port -- NOT the metatraffic port. Sending an ACKNACK
+/// back to the user-data port means FastDDS silently drops it.
+///
+/// This function looks up the peer's declared metatraffic unicast locator
+/// from SPDP, falling back to `source_addr` if the peer is not yet known.
+fn resolve_metatraffic_dest(
+    peer_guid_prefix: &[u8; 12],
+    source_addr: SocketAddr,
+    fsm: &Option<Arc<DiscoveryFsm>>,
+) -> SocketAddr {
+    let Some(ref fsm) = fsm else {
+        return source_addr;
+    };
+
+    let db = fsm.db();
+    if let Ok(guard) = db.read() {
+        for (guid, info) in guard.iter() {
+            if &guid.as_bytes()[..12] == peer_guid_prefix {
+                // Prefer endpoint on the same IP as the source
+                for ep in &info.endpoints {
+                    if ep.ip() == source_addr.ip() {
+                        log::debug!(
+                            "[reader] v219: Resolved peer metatraffic {} (was src={})",
+                            ep,
+                            source_addr
+                        );
+                        return *ep;
+                    }
+                }
+                // No IP match -- use first available endpoint
+                if let Some(ep) = info.endpoints.first() {
+                    log::debug!(
+                        "[reader] v219: Using first peer metatraffic {} (was src={})",
+                        ep,
+                        source_addr
+                    );
+                    return *ep;
+                }
+            }
+        }
+    }
+
+    // Peer not in FSM yet (startup race) -- fall back to source
+    log::debug!(
+        "[reader] v219: Peer not in FSM, fallback to src={} (prefix={:02x?})",
+        source_addr,
+        &peer_guid_prefix[..4]
+    );
+    source_addr
+}
+
 impl HeartbeatHandler for ReaderHeartbeatHandler {
-    fn on_heartbeat(&self, heartbeat_bytes: &[u8]) {
+    fn on_heartbeat(&self, heartbeat_bytes: &[u8], source_addr: Option<SocketAddr>) {
         // Use full packet decoder to extract GUID prefix and entity IDs
         let hb = match HeartbeatMsg::decode_from_packet(heartbeat_bytes) {
             Some(hb) => hb,
@@ -175,14 +238,34 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
                 count,
             );
 
-            if let Err(e) = ctx.transport.send(&acknack_packet) {
+            // v219: Route ACKNACK to peer's METATRAFFIC unicast port.
+            // The source_addr from the router is the raw UDP source (often the
+            // user-data port). RTPS control messages (HB, ACKNACK, GAP) must be
+            // sent to the metatraffic channel. Resolve via DiscoveryFsm, falling
+            // back to source_addr if the peer is not yet discovered.
+            let send_result = if let Some(addr) = source_addr {
+                let dest = resolve_metatraffic_dest(
+                    &writer_guid_prefix,
+                    addr,
+                    &ctx.discovery_fsm,
+                );
+                ctx.transport
+                    .send_to_endpoint(&acknack_packet, &dest)
+                    .map(|_| ())
+            } else {
+                // Fallback to multicast (intra-vendor / legacy path)
+                ctx.transport.send(&acknack_packet)
+            };
+
+            if let Err(e) = send_result {
                 log::debug!("[reader] Failed to send ACKNACK: {}", e);
             } else {
                 log::trace!(
-                    "[reader] Sent ACKNACK count={} base={} missing={} seqs",
+                    "[reader] v219: Sent ACKNACK count={} base={} missing={} seqs dst={:?}",
                     count,
                     seq_base,
-                    missing_seqs.len()
+                    missing_seqs.len(),
+                    source_addr,
                 );
             }
         }
