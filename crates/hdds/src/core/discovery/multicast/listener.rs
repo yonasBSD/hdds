@@ -579,6 +579,54 @@ impl MulticastListener {
                         // No control_tx: fall through to pool-based processing
                     }
 
+                    // v215: Compound message HEARTBEAT extraction
+                    //
+                    // RTPS allows multiple submessages in one packet. FastDDS commonly
+                    // bundles [INFO_TS, DATA, HEARTBEAT] in a single RTPS message for
+                    // RELIABLE writers. The classifier breaks early after finding DATA
+                    // (octets_to_next > 100), so `kind` is PacketKind::Data and the
+                    // HEARTBEAT dispatch block above is never reached.
+                    //
+                    // Fix: when the packet is classified as DATA (not Heartbeat/AckNack),
+                    // also scan for embedded HEARTBEATs and dispatch them to the control
+                    // channel. This is safe because parse_all_heartbeat_submessages()
+                    // scans all submessages independently of the classifier.
+                    if !matches!(kind, PacketKind::Heartbeat | PacketKind::AckNack | PacketKind::NackFrag) {
+                        if let Some(ref tx) = control_tx {
+                            let embedded_hbs = parse_all_heartbeat_submessages(&temp_buf[..len]);
+                            if !embedded_hbs.is_empty() {
+                                let mut peer_guid_prefix = [0u8; 12];
+                                if len >= 20 {
+                                    peer_guid_prefix.copy_from_slice(&temp_buf[8..20]);
+                                }
+
+                                log::debug!(
+                                    "[MCAST-RX] v215: Compound msg: extracted {} embedded HEARTBEAT(s) from {:?} packet, writers={:?}",
+                                    embedded_hbs.len(),
+                                    kind,
+                                    embedded_hbs.iter().map(|h| h.writer_entity_id).collect::<Vec<_>>()
+                                );
+
+                                for hb_info in embedded_hbs {
+                                    if let Some(msg) = ControlMessage::heartbeat(
+                                        src_addr,
+                                        peer_guid_prefix,
+                                        hb_info,
+                                        &temp_buf[..len],
+                                    ) {
+                                        if tx.try_send(msg).is_err() {
+                                            log::debug!(
+                                                "[MCAST-RX] v215: Control channel full, dropping embedded HEARTBEAT from {}",
+                                                src_addr
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+
                     // Invoke discovery callback for discovery packets (DATA/DATA_FRAG/SPDP/SEDP/TYPE_LOOKUP/Heartbeat)
                     // RTI uses DATA_FRAG for SPDP announcements and builtin writers for SEDP.
                     // v104: Also invoke for HEARTBEAT to enable SEDP NACK responses
@@ -595,16 +643,6 @@ impl MulticastListener {
                             | PacketKind::Heartbeat
                     ) {
                         if let Some(ref callback) = discovery_callback {
-                            if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() {
-                                let head_len = len.min(16);
-                                log::debug!(
-                                    "[MCAST-RX] kind={} len={} src={} head={:02x?}",
-                                    kind_label,
-                                    len,
-                                    src_addr,
-                                    &temp_buf[..head_len]
-                                );
-                            }
                             if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() {
                                 let head_len = len.min(16);
                                 log::debug!(
