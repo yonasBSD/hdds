@@ -419,6 +419,64 @@ impl MulticastListener {
                         std::thread::current().id()
                     );
 
+                    // v216: Submessage enumeration diagnostic
+                    // When HDDS_INTEROP_DIAGNOSTICS=1, dump ALL submessage IDs in each packet.
+                    // This answers the critical question: does FastDDS send compound
+                    // [DATA+HEARTBEAT] packets or separate ones?
+                    if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() && len >= 20 {
+                        let mut scan_offset = 20usize;
+                        let mut submsg_ids: Vec<(usize, u8, u16)> = Vec::new();
+                        while scan_offset + 4 <= len {
+                            let sid = temp_buf[scan_offset];
+                            let sflags = temp_buf[scan_offset + 1];
+                            let sotn = if sflags & 0x01 != 0 {
+                                u16::from_le_bytes([
+                                    temp_buf[scan_offset + 2],
+                                    temp_buf[scan_offset + 3],
+                                ])
+                            } else {
+                                u16::from_be_bytes([
+                                    temp_buf[scan_offset + 2],
+                                    temp_buf[scan_offset + 3],
+                                ])
+                            };
+                            submsg_ids.push((scan_offset, sid, sotn));
+                            if sotn == 0 {
+                                break;
+                            }
+                            scan_offset += 4 + sotn as usize;
+                        }
+                        let labels: Vec<String> = submsg_ids
+                            .iter()
+                            .map(|(off, id, otn)| {
+                                let name = match id {
+                                    0x01 => "PAD",
+                                    0x06 => "ACKNACK",
+                                    0x07 => "HB",
+                                    0x08 => "GAP",
+                                    0x09 => "INFO_TS",
+                                    0x0c => "INFO_SRC",
+                                    0x0e => "INFO_DST",
+                                    0x0f => "INFO_REPLY",
+                                    0x12 => "NACK_FRAG",
+                                    0x13 => "HB_FRAG",
+                                    0x15 => "DATA",
+                                    0x16 => "DATA_FRAG",
+                                    0x80 => "VENDOR_80",
+                                    _ => "UNK",
+                                };
+                                format!("{}@{}({})", name, off, otn)
+                            })
+                            .collect();
+                        log::info!(
+                            "[DIAG-v216] src={} classified={} len={} submessages=[{}]",
+                            src_addr,
+                            kind_label,
+                            len,
+                            labels.join(", ")
+                        );
+                    }
+
                     // Drop invalid packets
                     if matches!(kind, PacketKind::Invalid) {
                         metrics.packets_invalid.fetch_add(1, Ordering::Relaxed);
