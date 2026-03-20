@@ -8,7 +8,7 @@
 use crate::config::{MULTICAST_GROUP, PORT_BASE, SEDP_UNICAST_OFFSET};
 use crate::core::string_utils::format_string;
 use crate::transport::multicast::{
-    get_primary_interface_ip, get_unicast_locators, join_multicast_group,
+    get_primary_interface_ip, get_unicast_locators, join_multicast_group, resolve_forced_interface,
 };
 use crate::transport::ttl::{self, TtlConfig};
 use crate::transport::PortMapping;
@@ -93,7 +93,9 @@ impl UdpTransport {
         );
 
         // Compute primary IP early — needed for IP_MULTICAST_IF before socket conversion.
-        let primary_ip = get_primary_interface_ip()?;
+        // HDDS_INTERFACE forces everything onto one interface — no probing needed.
+        let forced_ip = resolve_forced_interface();
+        let primary_ip = forced_ip.unwrap_or(get_primary_interface_ip()?);
 
         // Set IP_MULTICAST_IF so outgoing multicast goes through the correct interface.
         // Without this, the kernel sends via the default route which may be a VPN tunnel
@@ -112,13 +114,21 @@ impl UdpTransport {
                         "[UDP] IP_MULTICAST_IF={} verified (multicast send OK)",
                         primary_ip
                     ),
+                    Err(_) if forced_ip.is_some() => {
+                        // User explicitly forced this interface via HDDS_INTERFACE.
+                        // Don't revert -- trust the user's choice even if probe fails.
+                        log::warn!(
+                            "[UDP] IP_MULTICAST_IF={} probe failed but HDDS_INTERFACE is set -- keeping forced interface.",
+                            primary_ip
+                        );
+                    }
                     Err(_) => {
                         // EPERM or similar: VPN/tunnel policy blocks multicast on this interface.
                         // Revert to UNSPECIFIED so the kernel uses its default route.
                         let _ = socket2.set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED);
                         log::warn!(
                             "[UDP] IP_MULTICAST_IF={} blocked (VPN/tunnel policy?), reverting to default. \
-                             For cross-vendor DDS interop, stop the VPN or set HDDS_MULTICAST_IF.",
+                             Set HDDS_INTERFACE to force a specific interface.",
                             primary_ip
                         );
                     }
@@ -262,7 +272,8 @@ impl UdpTransport {
     #[deprecated(since = "0.4.0", note = "Use new() with PortMapping instead")]
     // @audit-ok: Sequential initialization (cyclo 13, cogni 0) - linear socket setup without branching
     pub fn with_port(port: u16) -> io::Result<Self> {
-        let primary_ip = get_primary_interface_ip()?;
+        let forced_ip = resolve_forced_interface();
+        let primary_ip = forced_ip.unwrap_or(get_primary_interface_ip()?);
 
         let sock2 = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
         sock2.set_reuse_address(true)?;
