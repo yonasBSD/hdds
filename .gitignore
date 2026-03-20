@@ -109,3 +109,4 @@ compile_commands.json
 objectif.reprise
 .opencode/
 sbom/SHA256SUMS
+TEST_GUIDE_OMG.md

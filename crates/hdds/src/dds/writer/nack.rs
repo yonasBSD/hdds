@@ -10,16 +10,23 @@
 //!
 //! ```text
 //! Writer                              Reader
-//!   ├──DATA(1,2,3,4,5)──────────────────▶  (3 lost)
-//!   ├──HEARTBEAT(first=1,last=5)────────▶
-//!   │                                   │
-//!   ◀──────────ACKNACK(missing={3})─────┤
-//!   │                                   │
-//!   ├──DATA(3) retransmit───────────────▶  ← This module handles this
+//!   |--DATA(1,2,3,4,5)----------------->  (3 lost)
+//!   |--HEARTBEAT(first=1,last=5)------->
+//!   |                                   |
+//!   <----------ACKNACK(missing={3})-----|
+//!   |                                   |
+//!   |--DATA(3) retransmit-------------->  <- This module handles this
 //! ```
+//!
+//! ## Dual-format ACKNACK parsing
+//!
+//! Two callers feed `deliver_nack()` with different formats:
+//!   1. `router.rs` / `unicast_router.rs` -- raw RTPS packet (starts with "RTPS" magic)
+//!   2. `control.rs` -- CDR2-encoded `NackMsg` (missing-range list only)
+//!
+//! `on_nack()` tries RTPS parsing first, then falls back to NackMsg CDR2.
 
 use crate::core::discovery::multicast::control_parser::parse_acknack_submessage;
-use crate::core::discovery::multicast::control_types::AckNackInfo;
 use crate::engine::{NackFragHandler, NackHandler};
 use crate::protocol::builder;
 use crate::reliability::{GapTx, HistoryCache, NackMsg, ReliableMetrics, WriterRetransmitHandler};
@@ -56,38 +63,41 @@ impl WriterNackHandler {
 
 impl NackHandler for WriterNackHandler {
     fn on_nack(&self, nack_bytes: &[u8]) {
-        // v207: Use proper RTPS ACKNACK parser instead of internal format
         log::debug!(
-            "[writer] v207: on_nack called for topic={} with {} bytes",
+            "[writer] on_nack called for topic={} with {} bytes",
             self.topic,
             nack_bytes.len()
         );
 
-        // Parse RTPS ACKNACK packet using the proper parser
-        let ack_nack_info: AckNackInfo = match parse_acknack_submessage(nack_bytes) {
-            Some(info) => {
-                log::debug!(
-                    "[writer] v207: Parsed ACKNACK for writer={:02x?} with {} missing ranges",
-                    info.writer_entity_id,
-                    info.missing_ranges.len()
-                );
-                info
-            }
-            None => {
-                log::debug!(
-                    "[writer] v207: Failed to parse RTPS ACKNACK packet (len={})",
-                    nack_bytes.len()
-                );
-                return;
-            }
+        // Two formats arrive here:
+        // 1. Full RTPS packet (from router.rs / unicast_router.rs -- raw UDP)
+        // 2. NackMsg CDR2 (from control.rs which re-encodes parsed AckNackInfo)
+        let missing_ranges = if let Some(info) = parse_acknack_submessage(nack_bytes) {
+            log::debug!(
+                "[writer] Parsed RTPS ACKNACK for writer={:02x?} with {} missing ranges",
+                info.writer_entity_id,
+                info.missing_ranges.len()
+            );
+            info.missing_ranges
+        } else if let Some(nack_msg) = NackMsg::decode_cdr2_le(nack_bytes) {
+            log::debug!(
+                "[writer] Parsed NackMsg CDR2 with {} missing ranges (control.rs path)",
+                nack_msg.ranges.len()
+            );
+            nack_msg.ranges
+        } else {
+            log::debug!(
+                "[writer] Failed to parse ACKNACK: neither RTPS nor CDR2 (len={})",
+                nack_bytes.len()
+            );
+            return;
         };
 
-        // Convert AckNackInfo to NackMsg format for WriterRetransmitHandler
-        let nack = NackMsg::new(ack_nack_info.missing_ranges);
+        let nack = NackMsg::new(missing_ranges);
 
         // Skip if no missing ranges (pure ACK - reader is caught up)
         if nack.ranges.is_empty() {
-            log::debug!("[writer] v207: ACKNACK is pure ACK (no gaps) - reader is synchronized");
+            log::debug!("[writer] ACKNACK is pure ACK (no gaps) - reader is synchronized");
             return;
         }
 
@@ -105,7 +115,7 @@ impl NackHandler for WriterNackHandler {
         };
 
         log::debug!(
-            "[writer] v207: WriterRetransmitHandler returned {} retransmits, {} gaps for topic={}",
+            "[writer] Retransmitting {} samples, {} gaps for topic={}",
             retransmits.len(),
             gaps.len(),
             self.topic
@@ -263,6 +273,7 @@ impl NackFragHandler for WriterNackFragHandler {
                 guid_prefix: [0; 12],
                 reader_entity_id: [0; 4],
                 writer_entity_id: self.writer_entity_id,
+                encapsulation_kind: 0x0001, // PLAIN_CDR_LE fallback
             };
             builder::build_data_frag_packets(&ctx, writer_sn, &payload, fragment_size)
         };

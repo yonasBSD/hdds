@@ -451,15 +451,37 @@ impl<T: DDS> WriterBuilder<T> {
                 participant.announce_writer_endpoint::<T>(&self.topic, &self.qos)?
             };
             let guid = participant.guid();
-            // Default: use ENTITYID_UNKNOWN so that DATA is not tied to a
-            // specific remote reader. Targeting concrete reader EntityIds is
-            // only needed for specialised interop modes and is handled at a
-            // higher level when required.
+            // v240: ENTITYID_UNKNOWN as default; send_packet_to_endpoints()
+            // patches in the real reader entity ID per-reader for cross-vendor
+            // interop (RTPS v2.3 Sec.8.3.7.2).
             let reader_entity_id = [0, 0, 0, 0x00];
+
+            // v240: Determine CDR encapsulation from type extensibility.
+            // @final -> PLAIN_CDR_LE (0x0001), backward-compatible default.
+            // @appendable -> CDR2_LE (0x0007), required by XTypes v1.3 Sec.7.6.3.1.2.
+            // @mutable -> PL_CDR2_LE (0x000B).
+            // Fall back to T::get_type_object() when no explicit override is set,
+            // so that the normal topic.writer().build() path picks up the correct
+            // encapsulation from the type's DDS trait implementation.
+            let resolved_type_object = self.type_object_override.clone()
+                .or_else(|| T::get_type_object());
+            let encapsulation_kind = match &resolved_type_object {
+                Some(CompleteTypeObject::Struct(s))
+                    if s.struct_flags.contains(
+                        crate::xtypes::StructTypeFlag::IS_MUTABLE,
+                    ) => 0x000Bu16, // PL_CDR2_LE
+                Some(CompleteTypeObject::Struct(s))
+                    if s.struct_flags.contains(
+                        crate::xtypes::StructTypeFlag::IS_APPENDABLE,
+                    ) => 0x0009u16, // D_CDR2_LE (delimited, with DHEADER)
+                _ => 0x0001u16, // PLAIN_CDR_LE (default for @final or unknown)
+            };
+
             Some(RtpsEndpointContext {
                 guid_prefix: guid.prefix,
                 reader_entity_id,
                 writer_entity_id: entity_id,
+                encapsulation_kind,
             })
         } else {
             None

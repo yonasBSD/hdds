@@ -72,6 +72,7 @@ fn test_ctx() -> RtpsEndpointContext {
         ],
         reader_entity_id: [0x00, 0x00, 0x00, 0x04],
         writer_entity_id: [0x00, 0x00, 0x00, 0x02],
+        encapsulation_kind: 0x0001, // PLAIN_CDR_LE
     }
 }
 
@@ -419,6 +420,7 @@ fn test_data_frag_guid_prefix_in_header() {
         ],
         reader_entity_id: [0x00, 0x00, 0x00, 0x04],
         writer_entity_id: [0x00, 0x00, 0x00, 0x02],
+        encapsulation_kind: 0x0001, // PLAIN_CDR_LE
     };
 
     let payload = make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE + 1);

@@ -121,7 +121,7 @@ pub fn route_raw_rtps_message(
         }
 
         PacketKind::Heartbeat => {
-            let errors = registry.deliver_heartbeat(payload);
+            let errors = registry.deliver_heartbeat(payload, None);
             if errors > 0 {
                 metrics
                     .delivery_errors

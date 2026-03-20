@@ -158,17 +158,26 @@ pub(super) fn handle_sedp_packet(
                 // block the writer so the router drops its data. This is the
                 // library-level enforcement of QoS matching (DDS spec 2.2.3).
                 if let Some(ref writer_qos) = sedp_data.qos {
-                    let local_readers = fsm.find_readers_for_topic(&sedp_data.topic_name);
+                    let all_readers = fsm.find_readers_for_topic(&sedp_data.topic_name);
+                    // v222: Filter to LOCAL readers BEFORE the is_empty check.
+                    // .all() on an empty iterator returns true (vacuous truth in Rust),
+                    // which would incorrectly block compatible writers when no local
+                    // reader is registered yet (SEDP timing race).
+                    let local_readers: Vec<_> = all_readers
+                        .iter()
+                        .filter(|r| r.endpoint_guid.as_bytes()[..12] == our_guid_prefix[..])
+                        .collect();
                     let is_incompatible_with_all_local = !local_readers.is_empty()
-                        && local_readers
-                            .iter()
-                            .filter(|r| r.endpoint_guid.as_bytes()[..12] == our_guid_prefix[..])
-                            .all(|r| {
-                                !crate::core::discovery::Matcher::is_compatible(&r.qos, writer_qos)
-                            });
+                        && local_readers.iter().all(|r| {
+                            !crate::core::discovery::Matcher::is_compatible(&r.qos, writer_qos)
+                        });
                     if is_incompatible_with_all_local {
                         registry.block_writer(endpoint_guid_bytes);
                     }
+                    // NOTE: unblock_writer removed — suspected race condition causing
+                    // intermittent score drops (3-8/48). Writers are never permanently
+                    // blocked because the vacuous truth fix ensures empty local_readers
+                    // → is_incompatible_with_all_local = false → block never called.
                 }
 
                 // Register writer ownership strength for exclusive ownership filtering

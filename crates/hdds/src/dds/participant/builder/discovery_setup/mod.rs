@@ -395,7 +395,7 @@ pub(super) fn setup_discovery(
             rx_pool.clone(),                  // Reuse same pool
             rx_ring.clone(),                  // Reuse same ring -> goes to DemuxRouter!
             Some(discovery_callback.clone()), // For SPDP/SEDP on this port (rare but possible)
-            control_tx,                       // v203: Control channel for HEARTBEATs/ACKNACKs
+            control_tx.clone(),               // v203: Control channel for HEARTBEATs/ACKNACKs
             Some(wake_notifier.clone()),      // v210: WakeNotifier for low-latency
         )?;
     listeners.push(user_data_listener);
@@ -428,7 +428,7 @@ pub(super) fn setup_discovery(
             rx_pool.clone(),                  // Reuse same pool
             rx_ring.clone(),                  // Reuse same ring -> goes to DemuxRouter!
             Some(discovery_callback.clone()), // For any discovery packets on this port
-            None,                             // v240: No control channel needed for data multicast
+            control_tx,                       // v260: Control channel for RELIABLE HEARTBEATs/ACKNACKs on multicast
             Some(wake_notifier.clone()),      // v210: WakeNotifier for low-latency
         )?;
     listeners.push(data_multicast_listener);

@@ -111,6 +111,12 @@ impl MatchNotifier {
                 if remote_prefix == &self.local_prefix {
                     continue;
                 }
+                // v250: Skip endpoints from unconfirmed participants (stale
+                // SPDP/SEDP from killed processes). Belt-and-suspenders with
+                // the probation purge in DiscoveryFsm::handle_spdp.
+                if !fsm.is_endpoint_participant_confirmed(&remote.endpoint_guid) {
+                    continue;
+                }
                 let remote_repr = infer_data_repr_from_qos(&remote.qos);
                 if let Some(policy) = Self::check_writer_reader_compat(
                     &ep.qos,
@@ -147,6 +153,10 @@ impl MatchNotifier {
                 if remote_prefix == &self.local_prefix {
                     continue;
                 }
+                // v250: Skip endpoints from unconfirmed participants.
+                if !fsm.is_endpoint_participant_confirmed(&remote.endpoint_guid) {
+                    continue;
+                }
                 let remote_repr = infer_data_repr_from_qos(&remote.qos);
                 match Self::check_writer_reader_compat(
                     &remote.qos,
@@ -181,32 +191,24 @@ impl MatchNotifier {
     /// Other policies trigger on_*_incompatible_qos() notifications.
     fn check_writer_reader_compat(
         writer_qos: &QoS,
-        writer_repr: DataRepresentation,
+        _writer_repr: DataRepresentation,
         reader_qos: &QoS,
-        reader_repr: DataRepresentation,
+        _reader_repr: DataRepresentation,
     ) -> Option<&'static str> {
-        // Data representation: XCDR1-only and XCDR2-only are incompatible.
-        // Use QoS data_representation if available, otherwise fall back to local flag.
-        let w_reprs = if !writer_qos.data_representation.is_empty() {
-            &writer_qos.data_representation[..]
-        } else {
-            match writer_repr {
-                DataRepresentation::Xcdr1 => &[0u16][..],
-                DataRepresentation::Xcdr2 => &[2u16][..],
+        // Data representation: only check if BOTH sides explicitly advertise it.
+        // Empty data_representation = "default" (XCDR1), always compatible.
+        // This aligns with the library Matcher::is_compatible() behavior (qos.rs).
+        // Previously, falling back to infer_data_repr_from_qos() produced false
+        // DATA_REPRESENTATION incompatibilities when the remote had empty QoS
+        // but the local side used -x 2.
+        if !writer_qos.data_representation.is_empty()
+            && !reader_qos.data_representation.is_empty()
+        {
+            let has_common = writer_qos.data_representation.iter()
+                .any(|w| reader_qos.data_representation.contains(w));
+            if !has_common {
+                return Some("DATA_REPRESENTATION");
             }
-        };
-        let r_reprs = if !reader_qos.data_representation.is_empty() {
-            &reader_qos.data_representation[..]
-        } else {
-            match reader_repr {
-                DataRepresentation::Xcdr1 => &[0u16][..],
-                DataRepresentation::Xcdr2 => &[2u16][..],
-            }
-        };
-        // Check for at least one common representation
-        let has_common = w_reprs.iter().any(|w| r_reprs.contains(w));
-        if !has_common {
-            return Some("DATA_REPRESENTATION");
         }
 
         // Reliability: BEST_EFFORT writer cannot match RELIABLE reader
@@ -806,6 +808,7 @@ enum DurabilityKind {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum DataRepresentation {
+    Default, // No restriction — advertise both XCDR1 and XCDR2
     Xcdr1,
     Xcdr2,
 }
@@ -840,6 +843,7 @@ impl std::fmt::Display for DurabilityKind {
 impl std::fmt::Display for DataRepresentation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::Default => write!(f, "DEFAULT"),
             Self::Xcdr1 => write!(f, "XCDR"),
             Self::Xcdr2 => write!(f, "XCDR2"),
         }
@@ -911,7 +915,7 @@ impl Default for ShapeOptions {
             domain_id: 0,
             reliability_kind: ReliabilityKind::Reliable,
             durability_kind: DurabilityKind::Volatile,
-            data_representation: DataRepresentation::Xcdr1,
+            data_representation: DataRepresentation::Default,
             history_depth: -1,
             ownership_strength: -1,
             topic_name: None,
@@ -1292,11 +1296,12 @@ impl ShapeOptions {
             _ => {} // -1 = default
         }
 
-        // Data representation
-        qos = match self.data_representation {
-            DataRepresentation::Xcdr1 => qos.data_representation_xcdr1(),
-            DataRepresentation::Xcdr2 => qos.data_representation_xcdr2(),
-        };
+        // Data representation: Default leaves QoS empty (SEDP advertises both XCDR1+XCDR2)
+        match self.data_representation {
+            DataRepresentation::Default => {} // no restriction — compatible with all vendors
+            DataRepresentation::Xcdr1 => qos = qos.data_representation_xcdr1(),
+            DataRepresentation::Xcdr2 => qos = qos.data_representation_xcdr2(),
+        }
 
         if self.ownership_strength >= 0 {
             qos = qos
@@ -1349,12 +1354,11 @@ struct WriterListener {
 
 impl DataWriterListener<ShapeType> for WriterListener {
     fn on_publication_matched(&self, status: PublicationMatchedStatus) {
-        // v1.1.0: Middleware fires this callback after QoS compatibility check.
-        // No deferral needed — incompatible endpoints never trigger this callback.
-        println!(
-            "on_publication_matched() topic: '{}'  type: 'ShapeType' : matched readers {} (change = {})",
-            self.topic_name, status.current_count, status.current_count_change
-        );
+        // Suppressed: MatchNotifier::on_endpoint_discovered() handles this with
+        // full QoS compatibility checking (incl. DataRepresentation + local -x flag).
+        // The library MatchNotificationRegistry may fire false matches when either
+        // side has empty data_representation QoS (skips the check entirely).
+        let _ = status;
     }
 
     fn on_offered_incompatible_qos(&self, policy_id: u32, policy_name: &str) {
@@ -1391,10 +1395,11 @@ impl DataReaderListener<ShapeType> for ReaderListener {
     }
 
     fn on_subscription_matched(&self, status: SubscriptionMatchedStatus) {
-        println!(
-            "on_subscription_matched() topic: '{}'  type: 'ShapeType' : matched writers {} (change = {})",
-            self.topic_name, status.current_count, status.current_count_change
-        );
+        // Suppressed: MatchNotifier::on_endpoint_discovered() handles this with
+        // full QoS compatibility checking (incl. DataRepresentation + local -x flag).
+        // The library MatchNotificationRegistry may fire false matches when either
+        // side has empty data_representation QoS (skips the check entirely).
+        let _ = status;
     }
 
     fn on_requested_incompatible_qos(&self, status: RequestedIncompatibleQosStatus) {

@@ -92,6 +92,40 @@ impl UdpTransport {
             participant_id
         );
 
+        // Compute primary IP early — needed for IP_MULTICAST_IF before socket conversion.
+        let primary_ip = get_primary_interface_ip()?;
+
+        // Set IP_MULTICAST_IF so outgoing multicast goes through the correct interface.
+        // Without this, the kernel sends via the default route which may be a VPN tunnel
+        // (e.g. CloudflareWARP 172.16.0.2) instead of the real LAN interface.
+        //
+        // Probe: CloudflareWARP hijacks all multicast routes and returns EPERM for sends
+        // on non-WARP interfaces. If the probe send fails, revert to default routing.
+        if !primary_ip.is_unspecified() {
+            if let Ok(()) = socket2.set_multicast_if_v4(&primary_ip) {
+                let probe_dst: SocketAddr = SocketAddr::new(
+                    std::net::IpAddr::V4(Ipv4Addr::new(239, 255, 0, 1)),
+                    1, // discard port, no listener needed
+                );
+                match socket2.send_to(&[0], &probe_dst.into()) {
+                    Ok(_) => log::debug!(
+                        "[UDP] IP_MULTICAST_IF={} verified (multicast send OK)",
+                        primary_ip
+                    ),
+                    Err(_) => {
+                        // EPERM or similar: VPN/tunnel policy blocks multicast on this interface.
+                        // Revert to UNSPECIFIED so the kernel uses its default route.
+                        let _ = socket2.set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED);
+                        log::warn!(
+                            "[UDP] IP_MULTICAST_IF={} blocked (VPN/tunnel policy?), reverting to default. \
+                             For cross-vendor DDS interop, stop the VPN or set HDDS_MULTICAST_IF.",
+                            primary_ip
+                        );
+                    }
+                }
+            }
+        }
+
         let socket: UdpSocket = socket2.into();
         let iface = match join_multicast_group(&socket) {
             Ok(iface) => {
@@ -127,7 +161,6 @@ impl UdpTransport {
         if reuseport_enabled {
             set_reuseport(&unicast_socket2)?;
         }
-        let primary_ip = get_primary_interface_ip()?;
         let unicast_bind_addr = parse_socket_addr(
             format_string(format_args!("0.0.0.0:{}", mapping.metatraffic_unicast)),
             "metatraffic unicast bind address",
@@ -229,14 +262,33 @@ impl UdpTransport {
     #[deprecated(since = "0.4.0", note = "Use new() with PortMapping instead")]
     // @audit-ok: Sequential initialization (cyclo 13, cogni 0) - linear socket setup without branching
     pub fn with_port(port: u16) -> io::Result<Self> {
-        let bind_addr = format_string(format_args!("0.0.0.0:{}", port));
-        let socket = UdpSocket::bind(&bind_addr)?;
+        let primary_ip = get_primary_interface_ip()?;
+
+        let sock2 = Socket::new(Domain::IPV4, Type::DGRAM, Some(Protocol::UDP))?;
+        sock2.set_reuse_address(true)?;
+        let bind_addr: SocketAddr = format_string(format_args!("0.0.0.0:{}", port))
+            .parse()
+            .map_err(|e: std::net::AddrParseError| {
+                io::Error::new(io::ErrorKind::InvalidInput, e.to_string())
+            })?;
+        sock2.bind(&bind_addr.into())?;
+        if !primary_ip.is_unspecified() {
+            if let Ok(()) = sock2.set_multicast_if_v4(&primary_ip) {
+                let probe_dst: SocketAddr = SocketAddr::new(
+                    std::net::IpAddr::V4(Ipv4Addr::new(239, 255, 0, 1)),
+                    1,
+                );
+                if sock2.send_to(&[0], &probe_dst.into()).is_err() {
+                    let _ = sock2.set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED);
+                }
+            }
+        }
+        let socket: UdpSocket = sock2.into();
         let iface = join_multicast_group(&socket)?;
 
         // v133: Create unicast socket bound to 0.0.0.0:port for both send AND recv
         // Now used by MulticastListener for receiving SEDP unicast traffic
         let unicast_port = port + SEDP_UNICAST_OFFSET; // Legacy: SEDP offset from base port
-        let primary_ip = get_primary_interface_ip()?;
         let unicast_bind_addr = format_string(format_args!("0.0.0.0:{}", unicast_port));
         log::debug!(
             "[UDP] v133: Binding metatraffic_unicast_socket to {} (for send+recv) [primary_ip={}]",
@@ -494,6 +546,15 @@ impl UdpTransport {
     #[must_use]
     pub fn metatraffic_unicast_socket(&self) -> Arc<UdpSocket> {
         Arc::clone(&self.metatraffic_unicast_socket)
+    }
+
+    /// Get user data unicast socket reference for user DATA reception.
+    ///
+    /// Same principle as metatraffic_unicast_socket: use the transport's socket
+    /// for BOTH sending AND receiving to avoid Linux socket delivery issue.
+    #[must_use]
+    pub fn user_unicast_socket(&self) -> Arc<UdpSocket> {
+        Arc::clone(&self.user_unicast_socket)
     }
 
     /// Get multicast destination address.

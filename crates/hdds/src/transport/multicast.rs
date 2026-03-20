@@ -204,36 +204,112 @@ fn get_multicast_interfaces_crate() -> io::Result<Vec<Ipv4Addr>> {
 /// which correctly avoids virtual adapters (Hyper-V, WSL, Docker Desktop)
 /// that plague Windows. Every major DDS impl does this (RTI, FastDDS, CycloneDDS).
 pub fn get_primary_interface_ip() -> io::Result<Ipv4Addr> {
-    // Best method: UDP "connect" to a well-known address (no data is actually sent).
-    // The OS routing table selects the correct outgoing interface.
-    // This avoids virtual adapters (Hyper-V Default Switch, WSL, Docker Desktop)
-    // which local_ip_address crate may return first on Windows.
-    if let Ok(probe) = UdpSocket::bind("0.0.0.0:0") {
-        if probe.connect("8.8.8.8:80").is_ok() {
-            if let Ok(local) = probe.local_addr() {
-                if let std::net::IpAddr::V4(ip) = local.ip() {
-                    if !ip.is_unspecified() && !ip.is_loopback() {
-                        log::debug!("[UDP] Primary IP via routing table probe: {}", ip);
-                        return Ok(ip);
+    // Step 1: UDP "connect" probe — asks the OS which interface reaches 8.8.8.8.
+    // No data is sent; this just queries the routing table.
+    let probe_ip = UdpSocket::bind("0.0.0.0:0")
+        .ok()
+        .and_then(|sock| sock.connect("8.8.8.8:80").ok().map(|()| sock))
+        .and_then(|sock| sock.local_addr().ok())
+        .and_then(|addr| match addr.ip() {
+            std::net::IpAddr::V4(ip) if !ip.is_unspecified() && !ip.is_loopback() => Some(ip),
+            _ => None,
+        });
+
+    // Step 2: Accept probe result only if it's not a VPN/tunnel or docker bridge.
+    // When CloudflareWARP or WireGuard is the default route, the probe returns
+    // the tunnel IP (e.g. 172.16.0.2) which is unreachable from the LAN.
+    // Docker bridges (172.17-31.x.x) are also unreachable from remote DDS peers.
+    if let Some(ip) = probe_ip {
+        if !is_tunnel_ip(&ip) && !is_docker_bridge_ip(&ip) {
+            log::debug!("[UDP] Primary IP via routing table probe: {}", ip);
+            return Ok(ip);
+        }
+        if is_docker_bridge_ip(&ip) {
+            log::debug!(
+                "[UDP] Routing probe returned {} (Docker bridge), skipping",
+                ip
+            );
+        } else {
+            log::debug!(
+                "[UDP] Routing probe returned {} (POINTOPOINT tunnel), skipping",
+                ip
+            );
+        }
+    }
+
+    // Step 3: Fallback — first non-tunnel, non-docker interface from enumeration.
+    let interfaces = get_multicast_interfaces()?;
+    for &ip in &interfaces {
+        if !is_tunnel_ip(&ip) && !is_docker_bridge_ip(&ip) {
+            log::debug!("[UDP] Primary IP via interface enumeration: {}", ip);
+            return Ok(ip);
+        }
+    }
+
+    // Step 4: Accept any interface if all are tunnels (weird but possible)
+    if let Some(&ip) = interfaces.first() {
+        log::debug!("[UDP] Primary IP (all tunnels, using first): {}", ip);
+        return Ok(ip);
+    }
+
+    log::debug!(
+        "[UDP] WARNING: No suitable interface found, using UNSPECIFIED (may cause send issues!)"
+    );
+    Ok(Ipv4Addr::UNSPECIFIED)
+}
+
+/// Check if an IPv4 address belongs to a Docker bridge network.
+///
+/// Docker creates bridge networks in the 172.16.0.0/12 range (172.16-31.x.x).
+/// These are virtual bridges unreachable from remote DDS peers and should not
+/// be used for SPDP unicast locator announcements.
+fn is_docker_bridge_ip(ip: &Ipv4Addr) -> bool {
+    let octets = ip.octets();
+    // Docker default bridge: 172.17.0.0/16
+    // Docker user-defined bridges: 172.16-31.0.0/12
+    octets[0] == 172 && (16..=31).contains(&octets[1])
+}
+
+/// Check if an IPv4 address belongs to a POINTOPOINT interface (VPN tunnels).
+///
+/// On Linux, parses `ip -4 addr show` flags to detect POINTOPOINT interfaces
+/// (CloudflareWARP, WireGuard, OpenVPN tun devices). These interfaces are
+/// unreachable from the LAN and should not be used for DDS multicast.
+#[cfg(target_os = "linux")]
+fn is_tunnel_ip(ip: &Ipv4Addr) -> bool {
+    use std::process::Command;
+
+    let output = match Command::new("ip").args(["-4", "addr", "show"]).output() {
+        Ok(o) => o,
+        Err(_) => return false,
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut iface_ptp = false;
+
+    for line in stdout.lines() {
+        if line.starts_with(|c: char| c.is_ascii_digit()) {
+            iface_ptp = line.contains("POINTOPOINT");
+            continue;
+        }
+        if !iface_ptp {
+            continue;
+        }
+        if let Some(inet_part) = line.trim_start().strip_prefix("inet ") {
+            if let Some(addr_str) = inet_part.split('/').next() {
+                if let Ok(addr) = addr_str.trim().parse::<Ipv4Addr>() {
+                    if addr == *ip {
+                        return true;
                     }
                 }
             }
         }
     }
+    false
+}
 
-    // Fallback: enumerate interfaces (existing logic)
-    let interfaces = get_multicast_interfaces()?;
-
-    if let Some(&ip) = interfaces.first() {
-        log::debug!("[UDP] Primary IP via interface enumeration: {}", ip);
-        return Ok(ip);
-    }
-
-    // Last resort: use 0.0.0.0 (but this causes send issues on multi-interface machines)
-    log::debug!(
-        "[UDP] WARNING: No suitable interface found, using UNSPECIFIED (may cause send issues!)"
-    );
-    Ok(Ipv4Addr::UNSPECIFIED)
+#[cfg(not(target_os = "linux"))]
+fn is_tunnel_ip(_ip: &Ipv4Addr) -> bool {
+    false
 }
 
 /// Get locators for a given port on all non-loopback interfaces.

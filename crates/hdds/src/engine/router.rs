@@ -1344,7 +1344,7 @@ fn router_loop_with_transport(
                 }
             }
             PacketKind::Heartbeat => {
-                let errors = registry.deliver_heartbeat(payload);
+                let errors = registry.deliver_heartbeat(payload, Some(meta.sock));
                 if errors > 0 {
                     metrics
                         .delivery_errors

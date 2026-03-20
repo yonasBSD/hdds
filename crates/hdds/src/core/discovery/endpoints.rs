@@ -9,18 +9,27 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
 
-/// Registry of discovered remote endpoints (participants)
-/// Updated by discovery FSM, consumed by writers
+/// Registry of discovered remote endpoints (participants and readers).
+///
+/// Two levels of locator resolution:
+/// - **Participant-level** (from SPDP): `participant_guid -> SocketAddr` (default_unicast)
+/// - **Reader-level** (from SEDP): `reader_guid -> SocketAddr` (per-reader unicast)
+///
+/// Writers send DATA to each matched reader's SEDP-announced locator.
+/// Falls back to the participant's SPDP default_unicast if no reader locator is known.
 #[derive(Clone, Debug)]
 pub struct EndpointRegistry {
-    /// Map: participant GUID -> unicast endpoint (IP:port)
+    /// Map: participant GUID -> unicast endpoint (IP:port) from SPDP default_unicast_locator
     endpoints: Arc<RwLock<HashMap<GUID, SocketAddr>>>,
+    /// Map: reader endpoint GUID -> unicast endpoint (IP:port) from SEDP PID_UNICAST_LOCATOR
+    reader_locators: Arc<RwLock<HashMap<GUID, SocketAddr>>>,
 }
 
 impl EndpointRegistry {
     pub fn new() -> Self {
         Self {
             endpoints: Arc::new(RwLock::new(HashMap::new())),
+            reader_locators: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -30,6 +39,33 @@ impl EndpointRegistry {
             map.insert(guid, endpoint);
             log::debug!("[discovery] Registered endpoint: {} -> {}", guid, endpoint);
         }
+    }
+
+    /// Register a remote reader's unicast locator (from SEDP).
+    ///
+    /// This is the port the reader actually listens on for user DATA.
+    /// May differ from the participant's SPDP default_unicast_locator
+    /// (e.g. FastDDS uses ephemeral ports for reader endpoints).
+    pub fn register_reader_locator(&self, reader_guid: GUID, locator: SocketAddr) {
+        if let Ok(mut map) = self.reader_locators.write() {
+            map.insert(reader_guid, locator);
+            log::debug!(
+                "[discovery] Registered reader locator: {} -> {}",
+                reader_guid,
+                locator
+            );
+        }
+    }
+
+    /// Get the best unicast address to send user DATA for a given reader.
+    ///
+    /// Prefers the reader's own SEDP locator (per-reader port) over the
+    /// participant's SPDP default_unicast (which may be a different port).
+    pub fn get_reader_locator(&self, reader_guid: &GUID) -> Option<SocketAddr> {
+        if let Some(addr) = self.reader_locators.read().ok()?.get(reader_guid).copied() {
+            return Some(addr);
+        }
+        None
     }
 
     /// Get unicast endpoint for a participant (for DATA routing)
@@ -51,10 +87,15 @@ impl EndpointRegistry {
             .unwrap_or_default()
     }
 
-    /// Remove a participant (on lease expiry)
+    /// Remove a participant and all its reader locators (on lease expiry).
     pub fn remove(&self, guid: &GUID) {
         if let Ok(mut map) = self.endpoints.write() {
             map.remove(guid);
+        }
+        // Remove all reader locators belonging to this participant (same GUID prefix)
+        let prefix = &guid.as_bytes()[..12];
+        if let Ok(mut map) = self.reader_locators.write() {
+            map.retain(|reader_guid, _| &reader_guid.as_bytes()[..12] != prefix);
         }
     }
 

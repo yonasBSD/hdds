@@ -9,6 +9,7 @@
 use crate::engine::subscriber::DisposeKind;
 use crate::engine::subscriber::Subscriber;
 use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 // ============================================================================
@@ -22,8 +23,12 @@ pub trait HeartbeatHandler: Send + Sync {
     /// Called when a Heartbeat message is received.
     ///
     /// # Arguments
-    /// - `heartbeat_bytes`: Raw Heartbeat message payload (CDR2 encoded)
-    fn on_heartbeat(&self, heartbeat_bytes: &[u8]);
+    /// - `heartbeat_bytes`: Raw Heartbeat message payload (CDR2 encoded).
+    /// - `source_addr`: UDP source address of the HEARTBEAT sender.
+    ///   Used to route ACKNACK responses back to the writer's unicast
+    ///   metatraffic endpoint instead of multicast (required for
+    ///   cross-vendor RELIABLE interop, e.g. FastDDS).
+    fn on_heartbeat(&self, heartbeat_bytes: &[u8], source_addr: Option<SocketAddr>);
 }
 
 /// Handler trait for NACK messages (Reliable QoS control)
@@ -409,6 +414,20 @@ impl TopicRegistry {
         );
     }
 
+    /// v222: Unblock a previously blocked writer (QoS now compatible).
+    pub fn unblock_writer(&self, guid: [u8; 16]) {
+        let mut blocked = recover_write(
+            &self.blocked_writers,
+            "TopicRegistry::blocked_writers.write()",
+        );
+        if blocked.remove(&guid) {
+            log::debug!(
+                "[REGISTRY] v222: Unblocked writer {:02x?} (QoS now compatible)",
+                &guid[..]
+            );
+        }
+    }
+
     /// v249: Check if a writer GUID is blocked (QoS incompatible).
     #[must_use]
     #[inline]
@@ -542,7 +561,7 @@ impl TopicRegistry {
 
     #[must_use]
     #[inline]
-    pub fn deliver_heartbeat(&self, heartbeat_bytes: &[u8]) -> usize {
+    pub fn deliver_heartbeat(&self, heartbeat_bytes: &[u8], source_addr: Option<SocketAddr>) -> usize {
         let handlers = recover_read(
             &self.heartbeat_handlers,
             "TopicRegistry::heartbeat_handlers.read()",
@@ -551,7 +570,7 @@ impl TopicRegistry {
 
         for handler in handlers.iter() {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                handler.on_heartbeat(heartbeat_bytes);
+                handler.on_heartbeat(heartbeat_bytes, source_addr);
             }));
 
             if result.is_err() {

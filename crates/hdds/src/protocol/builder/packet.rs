@@ -17,7 +17,21 @@ pub struct RtpsEndpointContext {
     pub guid_prefix: [u8; 12],
     pub reader_entity_id: [u8; 4],
     pub writer_entity_id: [u8; 4],
+    /// CDR encapsulation kind for serialized payload.
+    ///
+    /// Defaults to `PLAIN_CDR_LE` (0x0001) for `@final` types.
+    /// Set to `CDR2_LE` (0x0007) for `@appendable` types (XTypes v1.3 Sec.7.6.3.1.2).
+    /// Set to `PL_CDR2_LE` (0x000B) for `@mutable` types.
+    pub encapsulation_kind: u16,
 }
+
+/// Byte offset of readerEntityId within a standard RTPS DATA packet.
+///
+/// Layout: RTPS header (20) + submsg header (4) + extraFlags (2) +
+/// octetsToInlineQos (2) = offset 28.
+/// Used by `send_packet_to_endpoints()` to patch per-reader entity IDs
+/// for cross-vendor interop (RTPS v2.3 Sec.8.3.7.2).
+pub const READER_ENTITY_ID_OFFSET: usize = 28;
 
 /// Build RTPS DATA packet with topic name and sequence number.
 ///
@@ -273,15 +287,19 @@ pub fn build_gap_packet(payload: &[u8]) -> Vec<u8> {
 /// ```
 ///
 /// RTI and FastDDS expect `PLAIN_CDR_LE` (0x0001) for user data.
+/// For `@appendable` types, XTypes v1.3 Sec.7.6.3.1.2 requires CDR2_LE (0x0007).
+/// The encapsulation kind is taken from `ctx.encapsulation_kind`.
 pub fn build_data_packet_with_context(
     ctx: &RtpsEndpointContext,
     topic: &str,
     sequence: u64,
     payload: &[u8],
 ) -> Vec<u8> {
-    // v235: Prepend CDR encapsulation header (PLAIN_CDR_LE = 0x0001)
+    // v235/v240: Prepend CDR encapsulation header from context.
+    // @final types use PLAIN_CDR_LE (0x0001), @appendable use CDR2_LE (0x0007).
     let mut encapsulated_payload = Vec::with_capacity(4 + payload.len());
-    encapsulated_payload.extend_from_slice(&[0x00, 0x01, 0x00, 0x00]); // PLAIN_CDR_LE
+    let enc_bytes = ctx.encapsulation_kind.to_be_bytes();
+    encapsulated_payload.extend_from_slice(&[enc_bytes[0], enc_bytes[1], 0x00, 0x00]);
     encapsulated_payload.extend_from_slice(payload);
 
     // v235: Build inline QoS with topic name for cross-process routing.

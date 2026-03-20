@@ -95,12 +95,23 @@ pub const RTPS_ENTITYID_TYPELOOKUP_WRITER: [u8; 4] = [0x00, 0x03, 0x00, 0xC4];
 /// Participant entity ID
 pub const RTPS_ENTITYID_PARTICIPANT: [u8; 4] = [0x00, 0x00, 0x01, 0xC1];
 
-/// User data writer entity kind (RTPS v2.5 Table 9.1)
-/// 0x02 = WITH_KEY, 0x03 = NO_KEY. RTI/FastDDS use 0x03 for standard user writers.
-pub const ENTITY_KIND_USER_WRITER: u8 = 0x03;
+/// User data writer entity kind — WITH_KEY (RTPS v2.5 Table 9.1)
+/// Used for types that have @key fields (e.g. ShapeType with @key color)
+pub const ENTITY_KIND_USER_WRITER_WITH_KEY: u8 = 0x02;
 
-/// User data reader entity kind (RTPS v2.3 Table 9.2 - entityKind = 0x04 for NO_KEY readers)
-pub const ENTITY_KIND_USER_READER: u8 = 0x04;
+/// User data writer entity kind — NO_KEY (RTPS v2.5 Table 9.1)
+/// Used for types without @key fields
+pub const ENTITY_KIND_USER_WRITER_NO_KEY: u8 = 0x03;
+
+/// User data reader entity kind — NO_KEY (RTPS v2.5 Table 9.1)
+pub const ENTITY_KIND_USER_READER_NO_KEY: u8 = 0x04;
+
+/// User data reader entity kind — WITH_KEY (RTPS v2.5 Table 9.1)
+pub const ENTITY_KIND_USER_READER_WITH_KEY: u8 = 0x07;
+
+/// Legacy aliases (kept for backwards compatibility with existing code)
+pub const ENTITY_KIND_USER_WRITER: u8 = ENTITY_KIND_USER_WRITER_NO_KEY;
+pub const ENTITY_KIND_USER_READER: u8 = ENTITY_KIND_USER_READER_NO_KEY;
 
 // ============================================================================
 // RTPS Submessage IDs (RTPS v2.3 Table 8.13)

@@ -427,6 +427,13 @@ impl ControlHandler {
                             continue;
                         }
 
+                        // v218: User data ACKNACKs use the METATRAFFIC port, same as
+                        // SEDP ACKNACKs. RTPS control messages (HB, ACKNACK, GAP) are
+                        // always exchanged on the metatraffic channel. FastDDS processes
+                        // ACKNACKs on its metatraffic listener -- sending to the user data
+                        // port (v217 bug) meant they were silently dropped.
+                        // peer_port already holds the metatraffic port from above.
+
                         if hb.final_flag {
                             metrics.heartbeats_final.fetch_add(1, Ordering::Relaxed);
                             Self::send_acknack(
@@ -599,6 +606,7 @@ impl ControlHandler {
                         );
                         acknack_count = acknack_count.wrapping_add(1);
 
+                        // v218: Route ACKNACK to the peer's metatraffic unicast port.
                         let dest_addr = SocketAddr::new(state.peer_ip, state.peer_port);
 
                         if transport.send_to_endpoint(&acknack, &dest_addr).is_ok() {

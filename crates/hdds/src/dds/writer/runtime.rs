@@ -394,9 +394,6 @@ impl<T: DDS> DataWriter<T> {
                                 hbf_count
                             );
                         }
-                        if i < 2 {
-                            std::thread::sleep(std::time::Duration::from_millis(2));
-                        }
                     }
                 }
 
@@ -794,9 +791,39 @@ impl<T: DDS> DataWriter<T> {
         } else {
             builder::build_heartbeat_packet(hb.first_seq, hb.last_seq, hb.count)
         };
-        if let Err(e) = transport.send(&rtps_packet) {
-            log::debug!("Failed to send Heartbeat: {}", e);
-        } else if let Some(ref metrics) = self.reliable_metrics {
+        // Send HEARTBEAT to each discovered reader's unicast locator.
+        // NOTE: Do NOT use send_packet_to_endpoints() — it patches readerEntityId
+        // at byte offset 28, which in a HEARTBEAT is the writerEntityId, not the
+        // readerId. That would corrupt the HEARTBEAT.
+        let mut hb_delivered = false;
+        if let (Some(ref fsm), Some(ref reg)) = (&self.discovery_fsm, &self.endpoint_registry) {
+            let readers = fsm.find_readers_for_topic(&self.topic);
+            let local_prefix = self.rtps_endpoint.map(|ctx| ctx.guid_prefix);
+            for reader in &readers {
+                if let Some(local_pfx) = local_prefix {
+                    if reader.participant_guid.as_bytes()[..12] == local_pfx {
+                        continue;
+                    }
+                }
+                let mut pguid_bytes = [0u8; 16];
+                pguid_bytes[..12].copy_from_slice(&reader.participant_guid.as_bytes()[..12]);
+                pguid_bytes[12..16].copy_from_slice(&RTPS_ENTITYID_PARTICIPANT);
+                let participant_key = GUID::from_bytes(pguid_bytes);
+                let dest = reg
+                    .get_reader_locator(&reader.endpoint_guid)
+                    .or_else(|| reg.get(&participant_key));
+                if let Some(endpoint) = dest {
+                    if transport.send_user_data_unicast(&rtps_packet, &endpoint).is_ok() {
+                        hb_delivered = true;
+                    }
+                }
+            }
+        }
+        if !hb_delivered {
+            // Fallback to multicast if no per-reader routing available
+            let _ = transport.send(&rtps_packet);
+        }
+        if let Some(ref metrics) = self.reliable_metrics {
             metrics.increment_heartbeats_sent(1);
         }
     }
@@ -811,49 +838,115 @@ impl<T: DDS> DataWriter<T> {
         transport: &UdpTransport,
         packet: &[u8],
     ) -> std::result::Result<(), std::io::Error> {
-        if let Some(ref registry) = self.endpoint_registry {
-            let endpoints = registry.entries();
-            if endpoints.is_empty() {
-                log::debug!("[writer] No endpoints in registry, falling back to multicast");
+        let registry = match self.endpoint_registry {
+            Some(ref r) => r,
+            None => {
+                log::debug!("[writer] No endpoint_registry, falling back to multicast");
                 return transport.send(packet);
             }
+        };
 
-            let local_guid = self
-                .rtps_endpoint
-                .map(|ctx| GUID::new(ctx.guid_prefix, RTPS_ENTITYID_PARTICIPANT));
+        if registry.is_empty() {
+            log::debug!("[writer] No endpoints in registry, falling back to multicast");
+            return transport.send(packet);
+        }
 
-            // Build set of participant GUIDs that have QoS-compatible readers
-            let allowed_participants = self.compute_allowed_participants();
+        let local_prefix = self
+            .rtps_endpoint
+            .map(|ctx| ctx.guid_prefix);
 
+        // Per-reader routing: find matched readers via discovery FSM, then send
+        // to each reader's SEDP-announced unicast locator. This is the correct
+        // RTPS behavior — remote readers may listen on different ports than the
+        // participant's SPDP default_unicast (e.g. FastDDS ephemeral ports).
+        if let Some(ref fsm) = self.discovery_fsm {
+            let readers = fsm.find_readers_for_topic(&self.topic);
             let mut delivered = false;
 
-            for (guid, endpoint) in endpoints {
-                if Some(guid) == local_guid {
-                    continue;
-                }
-                if let Some(ref allowed) = allowed_participants {
-                    if !allowed.contains(&guid) {
+            for reader in &readers {
+                // Skip local readers (same GUID prefix = same participant)
+                if let Some(local_pfx) = local_prefix {
+                    if reader.participant_guid.as_bytes()[..12] == local_pfx {
                         continue;
                     }
                 }
-                log::debug!(
-                    "[writer] Sending unicast USER DATA to endpoint={} guid={}",
-                    endpoint,
-                    guid
-                );
-                if transport.send_user_data_unicast(packet, &endpoint).is_ok() {
-                    delivered = true;
+                // QoS compatibility check (partition, etc.)
+                if !self.qos.partition.is_default()
+                    && !crate::core::discovery::Matcher::is_compatible(&reader.qos, &self.qos)
+                {
+                    continue;
+                }
+
+                // Look up reader's SEDP locator, fall back to participant's SPDP locator.
+                // EndpointInfo stores participant_guid with entity_id=[0,0,0,0], but
+                // the registry keys use RTPS_ENTITYID_PARTICIPANT=[0,0,1,0xC1].
+                let mut pguid_bytes = [0u8; 16];
+                pguid_bytes[..12].copy_from_slice(&reader.participant_guid.as_bytes()[..12]);
+                pguid_bytes[12..16].copy_from_slice(&RTPS_ENTITYID_PARTICIPANT);
+                let participant_key = GUID::from_bytes(pguid_bytes);
+
+                let dest = registry
+                    .get_reader_locator(&reader.endpoint_guid)
+                    .or_else(|| registry.get(&participant_key));
+
+                if let Some(endpoint) = dest {
+                    // v240: Patch readerEntityId for cross-vendor interop.
+                    // RTPS v2.3 Sec.8.3.7.2: unicast DATA must target the
+                    // specific reader entity ID, not ENTITYID_UNKNOWN.
+                    let mut patched = packet.to_vec();
+                    if patched.len() >= builder::READER_ENTITY_ID_OFFSET + 4 {
+                        patched[builder::READER_ENTITY_ID_OFFSET
+                            ..builder::READER_ENTITY_ID_OFFSET + 4]
+                            .copy_from_slice(&reader.endpoint_guid.entity_id);
+                    }
+                    log::debug!(
+                        "[writer] Sending unicast USER DATA to {} (reader={}, eid={:02x?})",
+                        endpoint,
+                        reader.endpoint_guid,
+                        reader.endpoint_guid.entity_id
+                    );
+                    if transport.send_user_data_unicast(&patched, &endpoint).is_ok() {
+                        delivered = true;
+                    }
                 }
             }
 
-            if delivered || allowed_participants.is_some() {
-                Ok(())
-            } else {
-                log::debug!("[writer] No remote endpoints (self-only); falling back to multicast");
-                transport.send(packet)
+            if delivered || !readers.is_empty() {
+                return Ok(());
             }
+            // No readers found in FSM — fall through to participant-level routing
+        }
+
+        // Fallback: participant-level routing (no discovery FSM, or no readers yet).
+        // Sends to each participant's SPDP default_unicast_locator.
+        let local_guid = local_prefix
+            .map(|pfx| GUID::new(pfx, RTPS_ENTITYID_PARTICIPANT));
+        let allowed_participants = self.compute_allowed_participants();
+        let mut delivered = false;
+
+        for (guid, endpoint) in registry.entries() {
+            if Some(guid) == local_guid {
+                continue;
+            }
+            if let Some(ref allowed) = allowed_participants {
+                if !allowed.contains(&guid) {
+                    continue;
+                }
+            }
+            log::debug!(
+                "[writer] Sending unicast USER DATA to endpoint={} guid={} (participant fallback)",
+                endpoint,
+                guid
+            );
+            if transport.send_user_data_unicast(packet, &endpoint).is_ok() {
+                delivered = true;
+            }
+        }
+
+        if delivered || allowed_participants.is_some() {
+            Ok(())
         } else {
-            log::debug!("[writer] No endpoint_registry, falling back to multicast");
+            log::debug!("[writer] No remote endpoints (self-only); falling back to multicast");
             transport.send(packet)
         }
     }
@@ -906,72 +999,125 @@ impl<T: DDS> DataWriter<T> {
         transport: &UdpTransport,
         packets: &[Vec<u8>],
     ) -> std::result::Result<(), std::io::Error> {
-        if let Some(ref registry) = self.endpoint_registry {
-            let endpoints = registry.entries();
-            if endpoints.is_empty() {
-                log::debug!(
-                    "[writer] No endpoints in registry, falling back to multicast for {} fragments",
-                    packets.len()
-                );
-                for packet in packets {
-                    transport.send(packet)?;
-                }
-                return Ok(());
-            }
-
-            let local_guid = self
-                .rtps_endpoint
-                .map(|ctx| GUID::new(ctx.guid_prefix, RTPS_ENTITYID_PARTICIPANT));
-            let allowed_participants = self.compute_allowed_participants();
-            let mut delivered = false;
-
-            for (guid, endpoint) in endpoints {
-                if Some(guid) == local_guid {
-                    continue;
-                }
-                if let Some(ref allowed) = allowed_participants {
-                    if !allowed.contains(&guid) {
-                        continue;
-                    }
-                }
-                log::debug!(
-                    "[writer] Sending {} DATA_FRAG unicast to endpoint={} guid={}",
-                    packets.len(),
-                    endpoint,
-                    guid
-                );
-                let mut all_sent = true;
-                for packet in packets {
-                    if transport.send_user_data_unicast(packet, &endpoint).is_err() {
-                        all_sent = false;
-                    }
-                }
-                if all_sent {
-                    delivered = true;
-                }
-            }
-
-            if delivered || allowed_participants.is_some() {
-                Ok(())
-            } else {
-                log::debug!(
-                    "[writer] No remote endpoints; falling back to multicast for {} fragments",
-                    packets.len()
-                );
-                for packet in packets {
-                    transport.send(packet)?;
-                }
-                Ok(())
-            }
-        } else {
-            log::debug!(
-                "[writer] No endpoint_registry, falling back to multicast for {} fragments",
-                packets.len()
-            );
-            for packet in packets {
+        let send_multicast = |pkts: &[Vec<u8>]| -> std::result::Result<(), std::io::Error> {
+            for packet in pkts {
                 transport.send(packet)?;
             }
             Ok(())
+        };
+
+        let registry = match self.endpoint_registry {
+            Some(ref r) => r,
+            None => {
+                log::debug!(
+                    "[writer] No endpoint_registry, falling back to multicast for {} fragments",
+                    packets.len()
+                );
+                return send_multicast(packets);
+            }
+        };
+
+        if registry.is_empty() {
+            log::debug!(
+                "[writer] No endpoints in registry, falling back to multicast for {} fragments",
+                packets.len()
+            );
+            return send_multicast(packets);
+        }
+
+        let local_prefix = self.rtps_endpoint.map(|ctx| ctx.guid_prefix);
+
+        // Per-reader routing (same logic as send_packet_to_endpoints)
+        if let Some(ref fsm) = self.discovery_fsm {
+            let readers = fsm.find_readers_for_topic(&self.topic);
+            let mut delivered = false;
+
+            for reader in &readers {
+                if let Some(local_pfx) = local_prefix {
+                    if reader.participant_guid.as_bytes()[..12] == local_pfx {
+                        continue;
+                    }
+                }
+                if !self.qos.partition.is_default()
+                    && !crate::core::discovery::Matcher::is_compatible(&reader.qos, &self.qos)
+                {
+                    continue;
+                }
+
+                let mut pguid_bytes = [0u8; 16];
+                pguid_bytes[..12].copy_from_slice(&reader.participant_guid.as_bytes()[..12]);
+                pguid_bytes[12..16].copy_from_slice(&RTPS_ENTITYID_PARTICIPANT);
+                let participant_key = GUID::from_bytes(pguid_bytes);
+
+                let dest = registry
+                    .get_reader_locator(&reader.endpoint_guid)
+                    .or_else(|| registry.get(&participant_key));
+
+                if let Some(endpoint) = dest {
+                    log::debug!(
+                        "[writer] Sending {} DATA_FRAG unicast to {} (reader={})",
+                        packets.len(),
+                        endpoint,
+                        reader.endpoint_guid
+                    );
+                    let mut all_sent = true;
+                    for packet in packets {
+                        // v240: Patch readerEntityId for cross-vendor interop
+                        // (same logic as single DATA path in send_packet_to_endpoints)
+                        let mut patched = packet.to_vec();
+                        if patched.len() >= builder::READER_ENTITY_ID_OFFSET + 4 {
+                            patched[builder::READER_ENTITY_ID_OFFSET
+                                ..builder::READER_ENTITY_ID_OFFSET + 4]
+                                .copy_from_slice(&reader.endpoint_guid.entity_id);
+                        }
+                        if transport.send_user_data_unicast(&patched, &endpoint).is_err() {
+                            all_sent = false;
+                        }
+                    }
+                    if all_sent {
+                        delivered = true;
+                    }
+                }
+            }
+
+            if delivered || !readers.is_empty() {
+                return Ok(());
+            }
+        }
+
+        // Fallback: participant-level routing
+        let local_guid = local_prefix.map(|pfx| GUID::new(pfx, RTPS_ENTITYID_PARTICIPANT));
+        let allowed_participants = self.compute_allowed_participants();
+        let mut delivered = false;
+
+        for (guid, endpoint) in registry.entries() {
+            if Some(guid) == local_guid {
+                continue;
+            }
+            if let Some(ref allowed) = allowed_participants {
+                if !allowed.contains(&guid) {
+                    continue;
+                }
+            }
+            let mut all_sent = true;
+            for packet in packets {
+                if transport.send_user_data_unicast(packet, &endpoint).is_err() {
+                    all_sent = false;
+                }
+            }
+            if all_sent {
+                delivered = true;
+            }
+        }
+
+        if delivered || allowed_participants.is_some() {
+            Ok(())
+        } else {
+            log::debug!(
+                "[writer] No remote endpoints; falling back to multicast for {} fragments",
+                packets.len()
+            );
+            send_multicast(packets)
         }
     }
 }

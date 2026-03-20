@@ -10,7 +10,10 @@
 use super::runtime::Participant;
 use crate::core::discovery::multicast::SedpEndpointKind;
 use crate::core::discovery::GUID;
-use crate::core::rtps_constants::{ENTITY_KIND_USER_READER, ENTITY_KIND_USER_WRITER};
+use crate::core::rtps_constants::{
+    ENTITY_KIND_USER_READER_NO_KEY, ENTITY_KIND_USER_READER_WITH_KEY,
+    ENTITY_KIND_USER_WRITER_NO_KEY, ENTITY_KIND_USER_WRITER_WITH_KEY,
+};
 #[cfg(target_os = "linux")]
 use crate::dds::qos::Reliability;
 use crate::dds::Result;
@@ -32,7 +35,7 @@ impl Participant {
         qos: &crate::dds::QoS,
     ) -> Result<[u8; 4]> {
         let (type_name, type_object) = self.resolve_type_info::<T>(topic, None, None);
-        self.announce_writer_endpoint_with_resolved(topic, qos, type_name, type_object)
+        self.announce_writer_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
     }
 
     pub(crate) fn announce_writer_endpoint_with_type<T: crate::dds::DDS>(
@@ -44,7 +47,7 @@ impl Participant {
     ) -> Result<[u8; 4]> {
         let (type_name, type_object) =
             self.resolve_type_info::<T>(topic, Some(type_name), type_object);
-        self.announce_writer_endpoint_with_resolved(topic, qos, type_name, type_object)
+        self.announce_writer_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
     }
 
     fn announce_writer_endpoint_with_resolved(
@@ -53,20 +56,26 @@ impl Participant {
         qos: &crate::dds::QoS,
         type_name: String,
         type_object: Option<CompleteTypeObject>,
+        has_key: bool,
     ) -> Result<[u8; 4]> {
         // NOTE: TypeObject handling is now delegated to the dialect encoder.
         // FastDdsEncoder ignores type_object (requires_type_object() = false)
         // RtiEncoder would encode it if present (requires_type_object() = true)
         // No need to drop it here - the encoder decides based on detected dialect.
 
+        let entity_kind = if has_key {
+            ENTITY_KIND_USER_WRITER_WITH_KEY
+        } else {
+            ENTITY_KIND_USER_WRITER_NO_KEY
+        };
         let mut endpoint_guid_bytes = [0u8; 16];
         endpoint_guid_bytes[..12].copy_from_slice(&self.guid.as_bytes()[..12]);
-        let entity_id = self.next_user_entity_id(ENTITY_KIND_USER_WRITER);
+        let entity_id = self.next_user_entity_id(entity_kind);
         endpoint_guid_bytes[12..16].copy_from_slice(&entity_id);
         log::debug!(
-            "[SEDP-ANNOUNCE] Writer entity_id={:02x?} guid={:02x?}",
+            "[SEDP-ANNOUNCE] Writer entity_id={:02x?} has_key={}",
             entity_id,
-            &endpoint_guid_bytes[12..16]
+            has_key
         );
         let endpoint_guid = GUID::from_bytes(endpoint_guid_bytes);
 
@@ -158,7 +167,7 @@ impl Participant {
             topic
         );
         let (type_name, type_object) = self.resolve_type_info::<T>(topic, None, None);
-        self.announce_reader_endpoint_with_resolved(topic, qos, type_name, type_object)
+        self.announce_reader_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
     }
 
     pub(crate) fn announce_reader_endpoint_with_type<T: crate::dds::DDS>(
@@ -170,7 +179,7 @@ impl Participant {
     ) -> Result<()> {
         let (type_name, type_object) =
             self.resolve_type_info::<T>(topic, Some(type_name), type_object);
-        self.announce_reader_endpoint_with_resolved(topic, qos, type_name, type_object)
+        self.announce_reader_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
     }
 
     fn announce_reader_endpoint_with_resolved(
@@ -179,20 +188,26 @@ impl Participant {
         qos: &crate::dds::QoS,
         type_name: String,
         type_object: Option<CompleteTypeObject>,
+        has_key: bool,
     ) -> Result<()> {
         // NOTE: TypeObject handling is now delegated to the dialect encoder.
         // FastDdsEncoder ignores type_object (requires_type_object() = false)
         // RtiEncoder would encode it if present (requires_type_object() = true)
         // No need to drop it here - the encoder decides based on detected dialect.
 
+        let entity_kind = if has_key {
+            ENTITY_KIND_USER_READER_WITH_KEY
+        } else {
+            ENTITY_KIND_USER_READER_NO_KEY
+        };
         let mut endpoint_guid_bytes = [0u8; 16];
         endpoint_guid_bytes[..12].copy_from_slice(&self.guid.as_bytes()[..12]);
-        let entity_id = self.next_user_entity_id(ENTITY_KIND_USER_READER);
+        let entity_id = self.next_user_entity_id(entity_kind);
         endpoint_guid_bytes[12..16].copy_from_slice(&entity_id);
         log::debug!(
-            "[SEDP-ANNOUNCE] Reader entity_id={:02x?} guid={:02x?}",
+            "[SEDP-ANNOUNCE] Reader entity_id={:02x?} has_key={}",
             entity_id,
-            &endpoint_guid_bytes[12..16]
+            has_key
         );
         let endpoint_guid = GUID::from_bytes(endpoint_guid_bytes);
 
