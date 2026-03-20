@@ -16,7 +16,7 @@ use crate::dds::qos::Durability;
 use crate::protocol::dialect::Dialect;
 use crate::protocol::discovery::{SedpData, SpdpData};
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::time::Instant;
 
@@ -172,6 +172,11 @@ pub struct DiscoveryFsm {
     /// new participant, all matching entries are replayed through handle_sedp.
     /// Capped at 64 entries to prevent unbounded growth.
     pending_sedp: Arc<RwLock<Vec<SedpData>>>,
+    /// v250: One-shot flag for probation purge.
+    /// After the startup probation window (200ms), unconfirmed participants
+    /// and their endpoints are purged from the registry. This flag ensures
+    /// the purge runs exactly once.
+    probation_purge_done: AtomicBool,
 }
 
 impl DiscoveryFsm {
@@ -208,6 +213,7 @@ impl DiscoveryFsm {
             created_at: Instant::now(),
             pending_notifications: Arc::new(RwLock::new(Vec::new())),
             pending_sedp: Arc::new(RwLock::new(Vec::new())),
+            probation_purge_done: AtomicBool::new(false),
         }
     }
 
@@ -364,6 +370,21 @@ impl DiscoveryFsm {
             return false;
         }
 
+
+        // v250: One-shot purge of unconfirmed (stale) participants after the
+        // startup probation window. Stale SPDP/SEDP from killed processes
+        // insert endpoints into TopicRegistry during the first ~50ms, but
+        // their participants never reach spdp_count >= 2. Without this purge,
+        // find_readers_for_topic() / find_writers_for_topic() would return
+        // stale endpoints indefinitely, causing false QoS incompatibility
+        // matches in application-level catch-up (e.g. shape_main MatchNotifier).
+        if !self.probation_purge_done.load(Ordering::Relaxed) {
+            let elapsed_ms = self.created_at.elapsed().as_millis() as u64;
+            if elapsed_ms >= 250 {
+                self.probation_purge_done.store(true, Ordering::Relaxed);
+                self.purge_unconfirmed_participants();
+            }
+        }
         // DDS Security v1.1: Validate identity token if security is enabled
         if let Some(ref validator) = self.security_validator {
             match &data.identity_token {
@@ -559,6 +580,26 @@ impl DiscoveryFsm {
         let endpoint_durability = endpoint.qos.durability;
         let endpoint_participant = endpoint.participant_guid;
 
+        // Register reader's SEDP unicast locator for per-reader DATA routing.
+        // Remote readers announce their user-data port in PID_UNICAST_LOCATOR,
+        // which may differ from the participant's SPDP default_unicast (e.g. FastDDS
+        // uses ephemeral ports like 33328, not the participant default port 7411).
+        if endpoint_kind == EndpointKind::Reader {
+            log::debug!(
+                "[SEDP-READER] topic='{}' kind={:?} locators={:?} guid={}",
+                topic_name, endpoint_kind, endpoint_unicast_locators, endpoint.endpoint_guid
+            );
+            if let Some(&locator) = select_best_locator(&endpoint_unicast_locators) {
+                self.endpoint_registry
+                    .register_reader_locator(endpoint.endpoint_guid, locator);
+            } else {
+                log::debug!(
+                    "[SEDP-READER] NO locator for reader {} on topic '{}'",
+                    endpoint.endpoint_guid, topic_name
+                );
+            }
+        }
+
         let is_new = {
             // Insert into topic registry (write lock).
             let mut registry = recover_write(
@@ -584,6 +625,7 @@ impl DiscoveryFsm {
                         &topic_name,
                         type_object.as_ref(),
                         &type_name,
+                        &endpoint.qos,
                     );
                     log::debug!(
                         "[SEDP Match] Writer on '{}' type='{}': {} compatible Reader(s)",
@@ -598,6 +640,7 @@ impl DiscoveryFsm {
                         &topic_name,
                         type_object.as_ref(),
                         &type_name,
+                        &endpoint.qos,
                     );
                     log::debug!(
                         "[SEDP Match] Reader on '{}' type='{}': {} compatible Writer(s)",
@@ -715,6 +758,24 @@ impl DiscoveryFsm {
     pub fn has_participant(&self, guid: &GUID) -> bool {
         let db = recover_read(Arc::as_ref(&self.db), "DiscoveryFsm::has_participant");
         db.contains_key(guid)
+    }
+
+    /// v250: Check if the participant owning this endpoint is confirmed alive.
+    ///
+    /// Looks up the participant by matching the first 12 bytes (GUID prefix)
+    /// of the endpoint GUID against participant GUIDs in the database.
+    /// Returns `false` if the participant is not found or not yet confirmed
+    /// (spdp_count < 2), indicating it may be a stale entry from a killed process.
+    #[must_use]
+    pub fn is_endpoint_participant_confirmed(&self, endpoint_guid: &GUID) -> bool {
+        let prefix = &endpoint_guid.as_bytes()[..12];
+        let db = recover_read(
+            Arc::as_ref(&self.db),
+            "DiscoveryFsm::is_endpoint_participant_confirmed",
+        );
+        db.values().any(|p| {
+            &p.guid.as_bytes()[..12] == prefix && p.is_confirmed_alive()
+        })
     }
 
     /// Get count of discovered participants.

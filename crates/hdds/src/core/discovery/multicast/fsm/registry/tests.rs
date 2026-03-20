@@ -214,7 +214,7 @@ fn test_find_compatible_writers_xtypes_matching() {
     ));
 
     let compatible =
-        registry.find_compatible_writers("geometry/points", Some(&point_type_obj), "Point");
+        registry.find_compatible_writers("geometry/points", Some(&point_type_obj), "Point", &crate::dds::qos::QoS::rti_defaults());
 
     assert_eq!(compatible.len(), 1);
     assert_eq!(compatible[0].kind, EndpointKind::Writer);
@@ -246,7 +246,7 @@ fn test_find_compatible_writers_xtypes_mismatch() {
     });
 
     let compatible =
-        registry.find_compatible_writers("geometry/points", Some(&line_type_obj), "Line");
+        registry.find_compatible_writers("geometry/points", Some(&line_type_obj), "Line", &crate::dds::qos::QoS::rti_defaults());
 
     assert!(compatible.is_empty());
 }
@@ -263,7 +263,7 @@ fn test_find_compatible_writers_legacy_matching() {
         None,
     ));
 
-    let compatible = registry.find_compatible_writers("sensor/temp", None, "Temperature");
+    let compatible = registry.find_compatible_writers("sensor/temp", None, "Temperature", &crate::dds::qos::QoS::rti_defaults());
     assert_eq!(compatible.len(), 1);
     assert_eq!(compatible[0].type_name, "Temperature");
 }
@@ -280,7 +280,7 @@ fn test_find_compatible_writers_legacy_mismatch() {
         None,
     ));
 
-    let compatible = registry.find_compatible_writers("sensor/temp", None, "Humidity");
+    let compatible = registry.find_compatible_writers("sensor/temp", None, "Humidity", &crate::dds::qos::QoS::rti_defaults());
     assert!(compatible.is_empty());
 }
 
@@ -310,7 +310,7 @@ fn test_find_compatible_readers_xtypes_matching() {
     ));
 
     let compatible =
-        registry.find_compatible_readers("sensor/temp", Some(&temp_type_obj), "Temperature");
+        registry.find_compatible_readers("sensor/temp", Some(&temp_type_obj), "Temperature", &crate::dds::qos::QoS::rti_defaults());
 
     assert_eq!(compatible.len(), 1);
     assert_eq!(compatible[0].kind, EndpointKind::Reader);
@@ -342,11 +342,11 @@ fn test_find_compatible_mixed_endpoints() {
         ));
     }
 
-    let writers = registry.find_compatible_writers("geometry/points", Some(&type_obj), "Point");
+    let writers = registry.find_compatible_writers("geometry/points", Some(&type_obj), "Point", &crate::dds::qos::QoS::rti_defaults());
     assert_eq!(writers.len(), 2);
     assert!(writers.iter().all(|e| e.kind == EndpointKind::Writer));
 
-    let readers = registry.find_compatible_readers("geometry/points", Some(&type_obj), "Point");
+    let readers = registry.find_compatible_readers("geometry/points", Some(&type_obj), "Point", &crate::dds::qos::QoS::rti_defaults());
     assert_eq!(readers.len(), 2);
     assert!(readers.iter().all(|e| e.kind == EndpointKind::Reader));
 }
@@ -356,9 +356,84 @@ fn test_find_compatible_empty_topic() {
     let registry = TopicRegistry::new();
 
     assert!(registry
-        .find_compatible_writers("nonexistent", None, "SomeType")
+        .find_compatible_writers("nonexistent", None, "SomeType", &crate::dds::qos::QoS::rti_defaults())
         .is_empty());
     assert!(registry
-        .find_compatible_readers("nonexistent", None, "SomeType")
+        .find_compatible_readers("nonexistent", None, "SomeType", &crate::dds::qos::QoS::rti_defaults())
         .is_empty());
+}
+
+#[test]
+fn test_find_compatible_writers_qos_incompatible() {
+    // RELIABLE reader should NOT match BEST_EFFORT writer
+    let mut registry = TopicRegistry::new();
+    let mut be_writer = make_endpoint(
+        EndpointKind::Writer,
+        "sensor/temp",
+        "Temperature",
+        1,
+        11_u64,
+        None,
+    );
+    be_writer.qos.reliability = crate::dds::qos::Reliability::BestEffort;
+    registry.insert(be_writer);
+
+    let reader_qos = crate::dds::qos::QoS {
+        reliability: crate::dds::qos::Reliability::Reliable,
+        ..crate::dds::qos::QoS::rti_defaults()
+    };
+
+    let compatible =
+        registry.find_compatible_writers("sensor/temp", None, "Temperature", &reader_qos);
+    assert!(compatible.is_empty(), "BE writer should NOT match RELIABLE reader");
+}
+
+#[test]
+fn test_find_compatible_writers_qos_compatible() {
+    // BEST_EFFORT reader should match RELIABLE writer
+    let mut registry = TopicRegistry::new();
+    let mut rel_writer = make_endpoint(
+        EndpointKind::Writer,
+        "sensor/temp",
+        "Temperature",
+        1,
+        11_u64,
+        None,
+    );
+    rel_writer.qos.reliability = crate::dds::qos::Reliability::Reliable;
+    registry.insert(rel_writer);
+
+    let reader_qos = crate::dds::qos::QoS {
+        reliability: crate::dds::qos::Reliability::BestEffort,
+        ..crate::dds::qos::QoS::rti_defaults()
+    };
+
+    let compatible =
+        registry.find_compatible_writers("sensor/temp", None, "Temperature", &reader_qos);
+    assert_eq!(compatible.len(), 1, "RELIABLE writer should match BE reader");
+}
+
+#[test]
+fn test_find_compatible_readers_qos_incompatible() {
+    // TRANSIENT_LOCAL reader should NOT match VOLATILE writer
+    let mut registry = TopicRegistry::new();
+    let mut tl_reader = make_endpoint(
+        EndpointKind::Reader,
+        "sensor/temp",
+        "Temperature",
+        1,
+        11_u64,
+        None,
+    );
+    tl_reader.qos.durability = crate::dds::qos::Durability::TransientLocal;
+    registry.insert(tl_reader);
+
+    let writer_qos = crate::dds::qos::QoS {
+        durability: crate::dds::qos::Durability::Volatile,
+        ..crate::dds::qos::QoS::rti_defaults()
+    };
+
+    let compatible =
+        registry.find_compatible_readers("sensor/temp", None, "Temperature", &writer_qos);
+    assert!(compatible.is_empty(), "VOLATILE writer should NOT match TL reader");
 }

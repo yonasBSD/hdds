@@ -9,6 +9,7 @@
 
 use super::endpoint::{EndpointInfo, EndpointKind};
 use crate::core::discovery::{Matcher, GUID};
+use crate::dds::qos::QoS;
 use crate::xtypes::CompleteTypeObject;
 use std::collections::HashMap;
 
@@ -137,6 +138,7 @@ impl TopicRegistry {
         topic_name: &str,
         local_type_object: Option<&CompleteTypeObject>,
         local_type_name: &str,
+        local_qos: &QoS,
     ) -> Vec<EndpointInfo> {
         crate::trace_fn!("TopicRegistry::find_compatible_writers");
         // Non-invasive diagnostics: when HDDS_INTEROP_DIAGNOSTICS=1, run
@@ -204,6 +206,18 @@ impl TopicRegistry {
 
                         compatible
                     })
+                    .filter(|e| {
+                        // v221: QoS compatibility check (RxO per DDS v1.4 Sec.2.2.3)
+                        // local_qos = reader QoS, e.qos = writer QoS
+                        let qos_ok = Matcher::is_compatible(local_qos, &e.qos);
+                        if !qos_ok {
+                            log::debug!(
+                                "[MATCH-QOS] Rejected: reader QoS incompatible with writer {} on '{}'",
+                                e.endpoint_guid, topic_name
+                            );
+                        }
+                        qos_ok
+                    })
                     .cloned()
                     .collect()
             })
@@ -229,6 +243,7 @@ impl TopicRegistry {
         topic_name: &str,
         local_type_object: Option<&CompleteTypeObject>,
         local_type_name: &str,
+        local_qos: &QoS,
     ) -> Vec<EndpointInfo> {
         crate::trace_fn!("TopicRegistry::find_compatible_readers");
         let mut diag_matcher = if crate::interop::diagnostics_enabled() {
@@ -286,6 +301,18 @@ impl TopicRegistry {
                         }
 
                         compatible
+                    })
+                    .filter(|e| {
+                        // v221: QoS compatibility check (RxO per DDS v1.4 Sec.2.2.3)
+                        // e.qos = reader QoS, local_qos = writer QoS
+                        let qos_ok = Matcher::is_compatible(&e.qos, local_qos);
+                        if !qos_ok {
+                            log::debug!(
+                                "[MATCH-QOS] Rejected: writer QoS incompatible with reader {} on '{}'",
+                                e.endpoint_guid, topic_name
+                            );
+                        }
+                        qos_ok
                     })
                     .cloned()
                     .collect()
