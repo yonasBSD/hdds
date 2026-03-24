@@ -167,7 +167,11 @@ mod tests {
     struct CountingHeartbeatHandler(Arc<AtomicUsize>);
 
     impl HeartbeatHandler for CountingHeartbeatHandler {
-        fn on_heartbeat(&self, _heartbeat_bytes: &[u8], _source_addr: Option<std::net::SocketAddr>) {
+        fn on_heartbeat(
+            &self,
+            _heartbeat_bytes: &[u8],
+            _source_addr: Option<std::net::SocketAddr>,
+        ) {
             self.0.fetch_add(1, Ordering::SeqCst);
         }
     }

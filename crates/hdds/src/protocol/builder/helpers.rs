@@ -84,10 +84,9 @@ pub(super) fn build_inline_qos_with_topic(topic: &str) -> Vec<u8> {
     let topic_bytes = topic.as_bytes();
     let string_len = topic_bytes.len() + 1;
     let param_len = 4 + string_len;
-    let param_len_u16 = match try_u16_from_usize(param_len, "inline QoS parameter length") {
-        Some(value) => value,
-        None => return Vec::new(),
-    };
+    if try_u16_from_usize(param_len, "inline QoS parameter length").is_none() {
+        return Vec::new();
+    }
     let string_len_u32 = match try_u32_from_usize(string_len, "inline QoS string length") {
         Some(value) => value,
         None => return Vec::new(),

@@ -160,6 +160,7 @@ pub fn join_multicast_group(socket: &UdpSocket) -> io::Result<Ipv4Addr> {
         get_multicast_interfaces()?
     };
     let mut any_joined = false;
+    let mut used_unspecified_fallback = false;
 
     if interfaces.is_empty() {
         // No interfaces found -- try UNSPECIFIED (let OS choose)
@@ -168,6 +169,7 @@ pub fn join_multicast_group(socket: &UdpSocket) -> io::Result<Ipv4Addr> {
             match socket.join_multicast_v4(group, &Ipv4Addr::UNSPECIFIED) {
                 Ok(()) => {
                     any_joined = true;
+                    used_unspecified_fallback = true;
                     log::debug!("[UDP] join_multicast_v4({}) on UNSPECIFIED", group);
                 }
                 Err(e) => {
@@ -223,6 +225,7 @@ pub fn join_multicast_group(socket: &UdpSocket) -> io::Result<Ipv4Addr> {
                     .is_ok()
                 {
                     any_joined = true;
+                    used_unspecified_fallback = true;
                     log::debug!(
                         "[UDP] join_multicast_v4({}) on UNSPECIFIED (fallback)",
                         group
@@ -240,9 +243,15 @@ pub fn join_multicast_group(socket: &UdpSocket) -> io::Result<Ipv4Addr> {
     log::debug!("[UDP] multicast loop enabled");
     let _ = socket.set_multicast_ttl_v4(1);
 
-    // Return forced interface or first discovered (or UNSPECIFIED if none)
+    // Return forced interface or first discovered.
+    // If we fell back to UNSPECIFIED (all per-interface joins failed),
+    // return UNSPECIFIED explicitly -- not the first failed interface.
     Ok(forced_ip.unwrap_or_else(|| {
-        interfaces.first().copied().unwrap_or(Ipv4Addr::UNSPECIFIED)
+        if used_unspecified_fallback || interfaces.is_empty() {
+            Ipv4Addr::UNSPECIFIED
+        } else {
+            interfaces.first().copied().unwrap_or(Ipv4Addr::UNSPECIFIED)
+        }
     }))
 }
 
@@ -291,7 +300,14 @@ fn get_multicast_interfaces_platform() -> io::Result<Vec<Ipv4Addr>> {
         if let Some(inet_part) = line.trim().strip_prefix("inet ") {
             if let Some(addr_str) = inet_part.split('/').next() {
                 if let Ok(addr) = addr_str.trim().parse::<Ipv4Addr>() {
-                    interfaces.push(addr);
+                    if is_docker_bridge_ip(&addr) {
+                        log::debug!(
+                            "[UDP] Skipping Docker bridge {} in multicast interfaces",
+                            addr
+                        );
+                    } else {
+                        interfaces.push(addr);
+                    }
                 }
             }
         }
@@ -321,7 +337,15 @@ fn get_multicast_interfaces_crate() -> io::Result<Vec<Ipv4Addr>> {
     let mut addrs = Vec::new();
     for (_name, ip) in interfaces {
         if let IpAddr::V4(ipv4) = ip {
-            if !ipv4.is_loopback() {
+            if ipv4.is_loopback() {
+                continue;
+            }
+            if is_docker_bridge_ip(&ipv4) {
+                log::debug!(
+                    "[UDP] Skipping Docker bridge {} in multicast interfaces (portable)",
+                    ipv4
+                );
+            } else {
                 addrs.push(ipv4);
             }
         }
@@ -410,6 +434,10 @@ pub fn get_primary_interface_ip() -> io::Result<Ipv4Addr> {
 /// Docker creates bridge networks in the 172.16.0.0/12 range (172.16-31.x.x).
 /// These are virtual bridges unreachable from remote DDS peers and should not
 /// be used for SPDP unicast locator announcements.
+///
+/// NOTE: This range also includes some legitimate corporate LANs (e.g. 172.20.x.x).
+/// When `HDDS_INTERFACE` is set, this filter is bypassed entirely -- the user's
+/// explicit choice always wins. This heuristic only affects auto-detection.
 fn is_docker_bridge_ip(ip: &Ipv4Addr) -> bool {
     let octets = ip.octets();
     // Docker default bridge: 172.17.0.0/16
@@ -422,36 +450,48 @@ fn is_docker_bridge_ip(ip: &Ipv4Addr) -> bool {
 /// On Linux, parses `ip -4 addr show` flags to detect POINTOPOINT interfaces
 /// (CloudflareWARP, WireGuard, OpenVPN tun devices). These interfaces are
 /// unreachable from the LAN and should not be used for DDS multicast.
+///
+/// The `ip` command output is cached via `OnceLock` -- parsed once per process,
+/// not once per call. Safe to call in a loop.
 #[cfg(target_os = "linux")]
 fn is_tunnel_ip(ip: &Ipv4Addr) -> bool {
-    use std::process::Command;
+    use std::collections::HashSet;
 
-    let output = match Command::new("ip").args(["-4", "addr", "show"]).output() {
-        Ok(o) => o,
-        Err(_) => return false,
-    };
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut iface_ptp = false;
+    static TUNNEL_IPS: OnceLock<HashSet<Ipv4Addr>> = OnceLock::new();
 
-    for line in stdout.lines() {
-        if line.starts_with(|c: char| c.is_ascii_digit()) {
-            iface_ptp = line.contains("POINTOPOINT");
-            continue;
-        }
-        if !iface_ptp {
-            continue;
-        }
-        if let Some(inet_part) = line.trim_start().strip_prefix("inet ") {
-            if let Some(addr_str) = inet_part.split('/').next() {
-                if let Ok(addr) = addr_str.trim().parse::<Ipv4Addr>() {
-                    if addr == *ip {
-                        return true;
+    let set = TUNNEL_IPS.get_or_init(|| {
+        use std::process::Command;
+
+        let output = match Command::new("ip").args(["-4", "addr", "show"]).output() {
+            Ok(o) => o,
+            Err(_) => return HashSet::new(),
+        };
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut tunnel_ips = HashSet::new();
+        let mut iface_ptp = false;
+
+        for line in stdout.lines() {
+            if line.starts_with(|c: char| c.is_ascii_digit()) {
+                iface_ptp = line.contains("POINTOPOINT");
+                continue;
+            }
+            if !iface_ptp {
+                continue;
+            }
+            if let Some(inet_part) = line.trim_start().strip_prefix("inet ") {
+                if let Some(addr_str) = inet_part.split('/').next() {
+                    if let Ok(addr) = addr_str.trim().parse::<Ipv4Addr>() {
+                        tunnel_ips.insert(addr);
                     }
                 }
             }
         }
-    }
-    false
+
+        log::debug!("[UDP] Cached {} POINTOPOINT tunnel IPs", tunnel_ips.len());
+        tunnel_ips
+    });
+
+    set.contains(ip)
 }
 
 #[cfg(not(target_os = "linux"))]

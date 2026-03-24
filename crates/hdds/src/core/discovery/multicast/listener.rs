@@ -649,7 +649,10 @@ impl MulticastListener {
                     // also scan for embedded HEARTBEATs and dispatch them to the control
                     // channel. This is safe because parse_all_heartbeat_submessages()
                     // scans all submessages independently of the classifier.
-                    if !matches!(kind, PacketKind::Heartbeat | PacketKind::AckNack | PacketKind::NackFrag) {
+                    if !matches!(
+                        kind,
+                        PacketKind::Heartbeat | PacketKind::AckNack | PacketKind::NackFrag
+                    ) {
                         if let Some(ref tx) = control_tx {
                             let embedded_hbs = parse_all_heartbeat_submessages(&temp_buf[..len]);
                             if !embedded_hbs.is_empty() {
@@ -683,7 +686,6 @@ impl MulticastListener {
                             }
                         }
                     }
-
 
                     // Invoke discovery callback for discovery packets (DATA/DATA_FRAG/SPDP/SEDP/TYPE_LOOKUP/Heartbeat)
                     // RTI uses DATA_FRAG for SPDP announcements and builtin writers for SEDP.

@@ -299,6 +299,9 @@ fn test_build_sedp_roundtrip_with_type_object() {
         type_object: Some(sample_complete_type_object()),
         unicast_locators: vec![],
         user_data: None,
+        has_explicit_reliability: false,
+        has_explicit_ownership: false,
+        has_ownership_strength: false,
     };
 
     let mut buf = vec![0u8; 2048];
@@ -323,6 +326,9 @@ fn test_build_sedp_roundtrip_without_type_object() {
         type_object: None,
         unicast_locators: vec![],
         user_data: None,
+        has_explicit_reliability: false,
+        has_explicit_ownership: false,
+        has_ownership_strength: false,
     };
 
     let mut buf = vec![0u8; 1024];
@@ -347,6 +353,9 @@ fn test_sedp_pid_order_endpoint_then_participant() {
         type_object: None,
         unicast_locators: vec![],
         user_data: None,
+        has_explicit_reliability: false,
+        has_explicit_ownership: false,
+        has_ownership_strength: false,
     };
 
     let mut buf = vec![0u8; 1024];
@@ -377,6 +386,9 @@ fn test_build_sedp_buffer_too_small() {
         type_object: None,
         unicast_locators: vec![],
         user_data: None,
+        has_explicit_reliability: false,
+        has_explicit_ownership: false,
+        has_ownership_strength: false,
     };
 
     let mut buf = vec![0u8; 16];

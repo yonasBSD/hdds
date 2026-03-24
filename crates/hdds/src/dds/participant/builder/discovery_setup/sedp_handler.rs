@@ -136,7 +136,7 @@ pub(super) fn handle_sedp_packet(
 
     let peer_guid_prefix = extract_peer_guid_prefix(payload);
     match parse_sedp(cdr_payload) {
-        Ok(sedp_data) => {
+        Ok(mut sedp_data) => {
             let endpoint_guid_bytes = sedp_data.endpoint_guid.as_bytes();
             let endpoint_kind = EndpointKind::from_guid(&sedp_data.endpoint_guid);
 
@@ -157,6 +157,24 @@ pub(super) fn handle_sedp_packet(
                 // v249: Check QoS compatibility with local readers. If incompatible,
                 // block the writer so the router drops its data. This is the
                 // library-level enforcement of QoS matching (DDS spec 2.2.3).
+                //
+                // IMPORTANT: Apply DDS spec reliability default BEFORE checking
+                // compatibility. Writers without PID_RELIABILITY default to RELIABLE
+                // (DDS spec Sec.2.2.3.12), but the raw parsed QoS has BestEffort
+                // (Rust struct default). Without this fix, RELIABLE writers that
+                // omit PID_RELIABILITY get permanently blocked.
+                // Apply DDS spec defaults for missing PIDs BEFORE compatibility check.
+                // Writers without PID_RELIABILITY default to RELIABLE (DDS spec Sec.2.2.3.12).
+                if !sedp_data.has_explicit_reliability {
+                    if let Some(ref mut qos) = sedp_data.qos {
+                        if qos.reliability == crate::dds::qos::Reliability::BestEffort {
+                            qos.reliability = crate::dds::qos::Reliability::Reliable;
+                        }
+                    }
+                }
+                // Ownership: NOT defaulted here. is_compatible() no longer checks ownership.
+                // Ownership incompatibility is handled by the MatchNotificationRegistry
+                // using has_explicit_ownership from EndpointInfo.
                 if let Some(ref writer_qos) = sedp_data.qos {
                     let all_readers = fsm.find_readers_for_topic(&sedp_data.topic_name);
                     // v222: Filter to LOCAL readers BEFORE the is_empty check.

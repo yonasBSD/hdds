@@ -64,9 +64,9 @@ mod content_filtered_topic;
 mod domain_registry;
 /// Content filter expression parser and evaluator.
 pub mod filter;
-pub(crate) mod match_notification;
 /// Listener traits for callback-based notifications.
 pub mod listener;
+pub(crate) mod match_notification;
 mod participant;
 /// Prelude module for convenient imports.
 pub mod prelude;

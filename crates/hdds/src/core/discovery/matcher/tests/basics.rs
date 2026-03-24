@@ -21,11 +21,12 @@ fn test_matcher_qos_compatible_reader_less() {
 }
 
 #[test]
-fn test_matcher_qos_incompatible_reader_greater() {
+fn test_matcher_qos_history_mismatch_still_compatible() {
+    // History is NOT an RxO policy (DDS spec Table 2.60).
     let reader_qos = QoS::best_effort().keep_last(200);
     let writer_qos = QoS::best_effort().keep_last(100);
 
-    assert!(!Matcher::is_compatible(&reader_qos, &writer_qos)); // 200 > 100 -> REJECT
+    assert!(Matcher::is_compatible(&reader_qos, &writer_qos));
 }
 
 #[test]
@@ -128,20 +129,21 @@ fn test_matcher_full_check_incompatible_topic() {
 
 #[test]
 fn test_matcher_full_check_incompatible_qos() {
+    // Use reliability mismatch (an actual RxO policy) instead of history
     let reader_topic = "sensor/temp";
     let writer_topic = "sensor/temp";
 
     let reader_type_id = make_type_id(0xAAAA_BBBB);
     let writer_type_id = make_type_id(0xAAAA_BBBB);
 
-    let reader_qos = QoS::best_effort().keep_last(10);
-    let writer_qos = QoS::best_effort().keep_last(5);
+    let reader_qos = QoS::reliable();
+    let writer_qos = QoS::best_effort();
 
     let topic_ok = Matcher::is_topic_match(reader_topic, writer_topic);
     let type_ok = Matcher::is_type_match(reader_type_id, writer_type_id);
     let qos_ok = Matcher::is_compatible(&reader_qos, &writer_qos);
 
-    assert!(!(topic_ok && type_ok && qos_ok)); // QoS incompatible
+    assert!(!(topic_ok && type_ok && qos_ok)); // QoS incompatible (reliability)
 }
 
 fn make_type_id(seed: u32) -> u32 {

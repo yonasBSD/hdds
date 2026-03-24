@@ -185,6 +185,12 @@ impl Matcher {
     ) -> bool {
         types::is_assignable_to(writer_type, reader_type)
     }
+
+    /// Return the DDS policy ID of the first incompatible QoS policy.
+    /// DDS policy IDs: 11=RELIABILITY, 7=DURABILITY, 5=OWNERSHIP, 13=DEADLINE, 21=LIVELINESS
+    pub fn first_incompatible_policy(reader_qos: &QoS, writer_qos: &QoS) -> u32 {
+        qos::first_incompatible_policy(reader_qos, writer_qos)
+    }
 }
 
 impl Default for Matcher {

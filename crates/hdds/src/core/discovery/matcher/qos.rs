@@ -19,7 +19,7 @@
 //! | Liveliness  | Kind must match, writer lease <= reader lease      |
 //! | Partition   | Must have intersection                            |
 
-use crate::dds::qos::{Durability, History, QoS, Reliability};
+use crate::dds::qos::{Durability, QoS, Reliability};
 use log;
 
 /// Check QoS compatibility between offered (writer) and requested (reader)
@@ -115,22 +115,9 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
         return false;
     }
 
-    // 3. History compatibility
-    let history_ok = match (reader_qos.history, writer_qos.history) {
-        (History::KeepLast(r_keep), History::KeepLast(w_keep)) => w_keep >= r_keep,
-        (History::KeepLast(_), History::KeepAll) => true,
-        (History::KeepAll, History::KeepAll) => true,
-        (History::KeepAll, History::KeepLast(_)) => false,
-    };
-
-    if !history_ok {
-        log::debug!(
-            "[MATCH-QOS] History mismatch (writer={:?}, reader={:?})",
-            writer_qos.history,
-            reader_qos.history
-        );
-        return false;
-    }
+    // 3. History: NOT an RxO policy per DDS spec (Table 2.60).
+    // History is a local cache policy and does NOT affect endpoint matching.
+    // Removed the check that incorrectly blocked KeepAll reader + KeepLast writer.
 
     // 4. Deadline compatibility
     // Writer period <= Reader period (faster writer can satisfy slower reader)
@@ -143,15 +130,10 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
         return false;
     }
 
-    // 5. Ownership compatibility (must match exactly)
-    if writer_qos.ownership.kind != reader_qos.ownership.kind {
-        log::debug!(
-            "[MATCH-QOS] Ownership mismatch (writer={:?}, reader={:?})",
-            writer_qos.ownership,
-            reader_qos.ownership
-        );
-        return false;
-    }
+    // 5. Ownership: NOT checked here. Vendors frequently omit PID_OWNERSHIP
+    // from SEDP (defaults to SHARED), causing false mismatches with EXCLUSIVE readers.
+    // Ownership incompatibility is detected by the MatchNotificationRegistry
+    // which has access to has_explicit_ownership from the EndpointInfo.
 
     // 6. Liveliness compatibility (kind + lease duration)
     // Kind must match AND writer lease_duration <= reader lease_duration
@@ -229,6 +211,50 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
     // 10. ResourceLimits - local configuration, no compatibility check
 
     true
+}
+
+/// Return the DDS policy ID of the first incompatible QoS policy.
+/// Returns 0 if all policies are compatible (should not happen if is_compatible returned false).
+/// DDS policy IDs per spec Table 2.60:
+///   7=DURABILITY, 11=RELIABILITY, 5=OWNERSHIP, 13=DEADLINE, 21=LIVELINESS, 23=DATA_REPRESENTATION
+pub(super) fn first_incompatible_policy(reader_qos: &QoS, writer_qos: &QoS) -> u32 {
+    // Check in same order as is_compatible
+    if let (Reliability::BestEffort, Reliability::Reliable) =
+        (&writer_qos.reliability, &reader_qos.reliability)
+    {
+        return 11; // RELIABILITY
+    }
+    let durability_rank = |d: Durability| match d {
+        Durability::Volatile => 0u8,
+        Durability::TransientLocal => 1,
+        Durability::Transient => 2,
+        Durability::Persistent => 3,
+    };
+    if durability_rank(writer_qos.durability) < durability_rank(reader_qos.durability) {
+        return 7; // DURABILITY
+    }
+    if writer_qos.deadline.period > reader_qos.deadline.period {
+        return 13; // DEADLINE
+    }
+    if writer_qos.ownership.kind != reader_qos.ownership.kind {
+        return 5; // OWNERSHIP
+    }
+    if writer_qos.liveliness.kind != reader_qos.liveliness.kind
+        || writer_qos.liveliness.lease_duration > reader_qos.liveliness.lease_duration
+    {
+        return 21; // LIVELINESS
+    }
+    // DataRepresentation mismatch
+    if !writer_qos.data_representation.is_empty() && !reader_qos.data_representation.is_empty() {
+        let has_common = writer_qos
+            .data_representation
+            .iter()
+            .any(|w| reader_qos.data_representation.contains(w));
+        if !has_common {
+            return 23; // DATA_REPRESENTATION
+        }
+    }
+    0 // Unknown — partition mismatch or truly compatible
 }
 
 /// Check if two partition names match, supporting fnmatch-style wildcards.
@@ -373,7 +399,9 @@ mod tests {
     }
 
     #[test]
-    fn test_history_writer_less_incompatible() {
+    fn test_history_writer_less_still_compatible() {
+        // History is NOT an RxO policy (DDS spec Table 2.60).
+        // Different history depths do not affect endpoint matching.
         let reader = QoS {
             history: History::KeepLast(10),
             ..QoS::default()
@@ -382,7 +410,7 @@ mod tests {
             history: History::KeepLast(5),
             ..QoS::default()
         };
-        assert!(!is_compatible(&reader, &writer));
+        assert!(is_compatible(&reader, &writer));
     }
 
     #[test]
@@ -399,7 +427,9 @@ mod tests {
     }
 
     #[test]
-    fn test_history_keep_all_reader_requires_keep_all() {
+    fn test_history_keep_all_reader_still_compatible() {
+        // History is NOT an RxO policy (DDS spec Table 2.60).
+        // KeepAll reader + KeepLast writer is still compatible.
         let reader = QoS {
             history: History::KeepAll,
             ..QoS::default()
@@ -408,7 +438,7 @@ mod tests {
             history: History::KeepLast(10),
             ..QoS::default()
         };
-        assert!(!is_compatible(&reader, &writer));
+        assert!(is_compatible(&reader, &writer));
     }
 
     #[test]
@@ -477,7 +507,10 @@ mod tests {
     }
 
     #[test]
-    fn test_ownership_mismatch_incompatible() {
+    fn test_ownership_mismatch_not_checked_in_is_compatible() {
+        // Ownership is NOT checked in is_compatible() — vendors omit PID_OWNERSHIP
+        // from SEDP. Ownership incompatibility is detected by MatchNotificationRegistry
+        // which has access to has_explicit_ownership from EndpointInfo.
         let reader = QoS {
             ownership: Ownership::shared(),
             ..QoS::default()
@@ -486,7 +519,7 @@ mod tests {
             ownership: Ownership::exclusive(),
             ..QoS::default()
         };
-        assert!(!is_compatible(&reader, &writer));
+        assert!(is_compatible(&reader, &writer));
     }
 
     #[test]

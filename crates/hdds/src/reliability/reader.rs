@@ -24,15 +24,19 @@ use super::{GapTracker, ReliableMetrics, RtpsRange};
 
 /// Heartbeat receiver (reader-side).
 #[derive(Debug, Default)]
+/// Heartbeat receiver (reader-side).
+/// Tracks per-writer heartbeat counts to support multiple writers on the same topic.
 pub struct HeartbeatRx {
-    last_count: Option<u32>,
+    last_counts: std::collections::HashMap<[u8; 16], u32>,
 }
 
 impl HeartbeatRx {
     /// Create a new heartbeat receiver.
     #[must_use]
     pub fn new() -> Self {
-        Self { last_count: None }
+        Self {
+            last_counts: std::collections::HashMap::new(),
+        }
     }
 
     /// Process a heartbeat and emit missing ranges if needed.
@@ -41,13 +45,17 @@ impl HeartbeatRx {
         hb: &HeartbeatMsg,
         reader_last_seen: u64,
     ) -> Option<Vec<Range<u64>>> {
-        if let Some(last_count) = self.last_count {
+        let mut writer_key = [0u8; 16];
+        writer_key[..GUID_PREFIX_LEN].copy_from_slice(&hb.writer_guid_prefix);
+        writer_key[GUID_PREFIX_LEN..].copy_from_slice(&hb.writer_entity_id);
+
+        if let Some(&last_count) = self.last_counts.get(&writer_key) {
             if hb.count <= last_count {
                 return None;
             }
         }
 
-        self.last_count = Some(hb.count);
+        self.last_counts.insert(writer_key, hb.count);
 
         if hb.last_seq > reader_last_seen {
             let gap = RtpsRange::from_inclusive(reader_last_seen + 1, hb.last_seq).into_range();
@@ -57,10 +65,10 @@ impl HeartbeatRx {
         }
     }
 
-    /// Last heartbeat count seen.
+    /// Last heartbeat count seen (from any writer).
     #[must_use]
     pub fn last_count(&self) -> Option<u32> {
-        self.last_count
+        self.last_counts.values().max().copied()
     }
 }
 

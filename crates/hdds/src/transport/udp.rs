@@ -5,7 +5,7 @@
 //!
 //! Consolidates socket management, multicast configuration, and send/receive operations.
 
-use crate::config::{MULTICAST_GROUP, PORT_BASE, SEDP_UNICAST_OFFSET};
+use crate::config::{MULTICAST_GROUP, SEDP_UNICAST_OFFSET};
 use crate::core::string_utils::format_string;
 use crate::transport::multicast::{
     get_primary_interface_ip, get_unicast_locators, join_multicast_group, resolve_forced_interface,
@@ -39,10 +39,9 @@ pub struct UdpTransport {
     pub(super) multicast_addr: SocketAddr,
     /// Multicast destination address for SEDP (239.255.0.1:7400, RTI compatible)
     pub(super) sedp_multicast_addr: SocketAddr,
-    /// Optional multicast address for user DATA/HEARTBEAT when forced (239.255.0.1:7401)
-    pub(super) data_multicast_addr: Option<SocketAddr>,
-    /// Whether to route DATA/HEARTBEAT to data_multicast_addr
-    pub(super) force_data_mc: bool,
+    /// Multicast address for user DATA (239.255.0.1:7401 for domain 0)
+    /// RTPS spec: PB + DG*domainId + d2, where d2=1
+    pub(super) data_multicast_addr: SocketAddr,
     /// Interface used for multicast (if specified via env)
     pub(super) iface: Ipv4Addr,
     /// Metatraffic unicast port for SEDP/discovery (e.g., 7410 for domain 0)
@@ -230,7 +229,8 @@ impl UdpTransport {
 
         let multicast_addr = parse_multicast_addr(mapping.metatraffic_multicast, "SPDP")?;
         let sedp_multicast_addr = parse_sedp_multicast_addr(mapping.sedp_multicast, "SEDP")?;
-        let (force_data_mc, data_multicast_addr) = setup_data_multicast()?;
+        // RTPS v2.5 Sec.9.6.1.1: user data multicast = PB + DG*domainId + d2 (d2=1)
+        let data_multicast_addr = parse_multicast_addr(mapping.metatraffic_multicast + 1, "DATA")?;
 
         // Apply TTL configuration from environment or defaults
         let ttl_config = TtlConfig::from_env();
@@ -239,17 +239,9 @@ impl UdpTransport {
         ttl::apply_ttl_config(&user_unicast_socket, &ttl_config)?;
 
         log::debug!(
-            "[UDP] transport metatraffic_unicast_port={} (for SPDP locators)",
-            mapping.metatraffic_unicast
-        );
-        log::debug!(
-            "[UDP] transport user_unicast_port={} (will be created in participant builder)",
-            mapping.user_unicast
-        );
-        log::debug!(
-            "[UDP] transport TTL config: multicast={}, unicast={}",
-            ttl_config.multicast,
-            ttl_config.unicast
+            "[UDP] transport metatraffic_unicast_port={} data_multicast={} (for SPDP locators)",
+            mapping.metatraffic_unicast,
+            data_multicast_addr
         );
 
         Ok(Self {
@@ -261,7 +253,6 @@ impl UdpTransport {
             multicast_addr,
             sedp_multicast_addr,
             data_multicast_addr,
-            force_data_mc,
             iface,
             metatraffic_unicast_port: mapping.metatraffic_unicast,
             ttl_config,
@@ -285,10 +276,8 @@ impl UdpTransport {
         sock2.bind(&bind_addr.into())?;
         if !primary_ip.is_unspecified() {
             if let Ok(()) = sock2.set_multicast_if_v4(&primary_ip) {
-                let probe_dst: SocketAddr = SocketAddr::new(
-                    std::net::IpAddr::V4(Ipv4Addr::new(239, 255, 0, 1)),
-                    1,
-                );
+                let probe_dst: SocketAddr =
+                    SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::new(239, 255, 0, 1)), 1);
                 if sock2.send_to(&[0], &probe_dst.into()).is_err() {
                     let _ = sock2.set_multicast_if_v4(&Ipv4Addr::UNSPECIFIED);
                 }
@@ -335,7 +324,7 @@ impl UdpTransport {
 
         let multicast_addr = parse_multicast_addr(port, "legacy SPDP")?;
         let sedp_multicast_addr = parse_sedp_multicast_addr(port, "legacy SEDP")?;
-        let (force_data_mc, data_multicast_addr) = setup_data_multicast()?;
+        let data_multicast_addr = parse_multicast_addr(port + 1, "legacy DATA")?;
 
         // Apply TTL configuration
         let ttl_config = TtlConfig::from_env();
@@ -353,7 +342,6 @@ impl UdpTransport {
             sedp_multicast_addr,
             data_multicast_addr,
             metatraffic_unicast_port: unicast_port,
-            force_data_mc,
             iface,
             ttl_config,
         })
@@ -363,28 +351,12 @@ impl UdpTransport {
 // ===== Send operations =====
 
 impl UdpTransport {
-    /// Send data to multicast group.
+    /// Send data to SPDP multicast group (metatraffic port, e.g. 7400).
     pub fn send(&self, data: &[u8]) -> io::Result<()> {
         crate::trace_fn!("UdpTransport::send");
-        let mut dest = self.multicast_addr;
+        let dest = self.multicast_addr;
 
-        if self.force_data_mc {
-            if let Some(&submsg_id) = data.get(16) {
-                if submsg_id == 0x09 || submsg_id == 0x06 {
-                    if let Some(addr) = self.data_multicast_addr {
-                        dest = addr;
-                    }
-                }
-            }
-        }
-
-        log::debug!(
-            "[UDP] send attempt dest={} len={} force_data_mc={} data_mc={:?}",
-            dest,
-            data.len(),
-            self.force_data_mc,
-            self.data_multicast_addr
-        );
+        log::debug!("[UDP] send attempt dest={} len={}", dest, data.len(),);
 
         let sent = match self.socket.send_to(data, dest) {
             Ok(n) => n,
@@ -410,6 +382,35 @@ impl UdpTransport {
                 self.format_iface()
             );
         }
+
+        Ok(())
+    }
+
+    /// Send user DATA to data multicast group (port 7401 for domain 0).
+    /// RTPS v2.5: user data multicast = PB + DG*domainId + d2 (d2=1).
+    pub fn send_user_data_multicast(&self, data: &[u8]) -> io::Result<()> {
+        crate::trace_fn!("UdpTransport::send_user_data_multicast");
+        let dest = self.data_multicast_addr;
+
+        let sent = match self.socket.send_to(data, dest) {
+            Ok(n) => n,
+            Err(err) => {
+                log::debug!(
+                    "[UDP] send_user_data_multicast error={} dest={} len={}",
+                    err,
+                    dest,
+                    data.len()
+                );
+                return Err(err);
+            }
+        };
+
+        log::debug!(
+            "[UDP] send_user_data_multicast -> {} len={} iface={}",
+            dest,
+            sent,
+            self.format_iface()
+        );
 
         Ok(())
     }
@@ -654,17 +655,8 @@ fn parse_sedp_multicast_addr(port: u16, label: &str) -> io::Result<SocketAddr> {
     )
 }
 
-fn setup_data_multicast() -> io::Result<(bool, Option<SocketAddr>)> {
-    let force_data_mc = std::env::var("HDDS_FORCE_DATA_MC")
-        .map(|v| v == "1")
-        .unwrap_or(false);
-    let data_multicast_addr = if force_data_mc {
-        Some(parse_multicast_addr(PORT_BASE + 1, "DATA")?)
-    } else {
-        None
-    };
-    Ok((force_data_mc, data_multicast_addr))
-}
+// setup_data_multicast removed: data_multicast_addr is now always computed
+// from metatraffic_multicast + 1 (RTPS v2.5 Sec.9.6.1.1, d2=1)
 
 /// v242: Set SO_REUSEPORT on a socket for multi-process port sharing.
 ///

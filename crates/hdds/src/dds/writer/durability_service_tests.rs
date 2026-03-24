@@ -230,6 +230,9 @@ fn test_sedp_includes_pid_durability_service() {
         type_object: None,
         unicast_locators: vec![],
         user_data: None,
+        has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
     };
 
     let mut buf = vec![0u8; 2048];
@@ -356,6 +359,9 @@ fn test_sedp_durability_service_roundtrip() {
         type_object: None,
         unicast_locators: vec![],
         user_data: None,
+        has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
     };
 
     let mut buf = vec![0u8; 2048];

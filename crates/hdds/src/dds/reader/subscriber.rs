@@ -206,8 +206,10 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
             Ok(m) => m,
             Err(_e) => {
                 log::debug!(
-                    "[READER-SUB] CDR2 decode failed for topic '{}': {:?}",
+                    "[READER-SUB] CDR2 decode failed topic='{}' seq={} len={}: {:?}",
                     self.topic,
+                    remote_seq,
+                    data.len(),
                     _e
                 );
                 return;

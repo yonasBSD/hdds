@@ -294,6 +294,9 @@ pub enum SedpEndpointKind {
 ///     qos_hash: 0x12345678,
 ///     type_object: None,
 ///     unicast_locators: vec![],
+///     has_explicit_reliability: false,
+///     has_explicit_ownership: false,
+///     has_ownership_strength: false,
 /// };
 ///
 /// let participant_prefix = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];

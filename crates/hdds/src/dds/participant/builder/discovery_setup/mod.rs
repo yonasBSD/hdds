@@ -428,8 +428,8 @@ pub(super) fn setup_discovery(
             rx_pool.clone(),                  // Reuse same pool
             rx_ring.clone(),                  // Reuse same ring -> goes to DemuxRouter!
             Some(discovery_callback.clone()), // For any discovery packets on this port
-            control_tx,                       // v260: Control channel for RELIABLE HEARTBEATs/ACKNACKs on multicast
-            Some(wake_notifier.clone()),      // v210: WakeNotifier for low-latency
+            control_tx, // v260: Control channel for RELIABLE HEARTBEATs/ACKNACKs on multicast
+            Some(wake_notifier.clone()), // v210: WakeNotifier for low-latency
         )?;
     listeners.push(data_multicast_listener);
 

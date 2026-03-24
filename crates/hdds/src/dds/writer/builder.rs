@@ -463,17 +463,23 @@ impl<T: DDS> WriterBuilder<T> {
             // Fall back to T::get_type_object() when no explicit override is set,
             // so that the normal topic.writer().build() path picks up the correct
             // encapsulation from the type's DDS trait implementation.
-            let resolved_type_object = self.type_object_override.clone()
+            let resolved_type_object = self
+                .type_object_override
+                .clone()
                 .or_else(|| T::get_type_object());
             let encapsulation_kind = match &resolved_type_object {
                 Some(CompleteTypeObject::Struct(s))
-                    if s.struct_flags.contains(
-                        crate::xtypes::StructTypeFlag::IS_MUTABLE,
-                    ) => 0x000Bu16, // PL_CDR2_LE
+                    if s.struct_flags
+                        .contains(crate::xtypes::StructTypeFlag::IS_MUTABLE) =>
+                {
+                    0x000Bu16
+                } // PL_CDR2_LE
                 Some(CompleteTypeObject::Struct(s))
-                    if s.struct_flags.contains(
-                        crate::xtypes::StructTypeFlag::IS_APPENDABLE,
-                    ) => 0x0009u16, // D_CDR2_LE (delimited, with DHEADER)
+                    if s.struct_flags
+                        .contains(crate::xtypes::StructTypeFlag::IS_APPENDABLE) =>
+                {
+                    0x0009u16
+                } // D_CDR2_LE (delimited, with DHEADER)
                 _ => 0x0001u16, // PLAIN_CDR_LE (default for @final or unknown)
             };
 
@@ -633,32 +639,32 @@ impl<T: DDS> WriterBuilder<T> {
 
         // Register match notification (on_publication_matched) if listener is present.
         // Must happen before self.listener is moved into the DataWriter.
-        let match_token =
-            if let (Some(ref participant), Some(ref listener)) = (&self.participant, &self.listener)
-            {
-                if let Some(ref reg) = participant.match_registry {
-                    let listener = Arc::clone(listener);
-                    Some(reg.register_writer(
-                        self.topic.clone(),
-                        self.qos.clone(),
-                        move |total, total_change, current, current_change, last_handle| {
-                            listener.on_publication_matched(
-                                crate::dds::listener::PublicationMatchedStatus {
-                                    total_count: total,
-                                    total_count_change: total_change,
-                                    current_count: current,
-                                    current_count_change: current_change,
-                                    last_subscription_handle: last_handle,
-                                },
-                            );
-                        },
-                    ))
-                } else {
-                    None
-                }
+        let match_token = if let (Some(ref participant), Some(ref listener)) =
+            (&self.participant, &self.listener)
+        {
+            if let Some(ref reg) = participant.match_registry {
+                let listener = Arc::clone(listener);
+                Some(reg.register_writer(
+                    self.topic.clone(),
+                    self.qos.clone(),
+                    move |total, total_change, current, current_change, last_handle| {
+                        listener.on_publication_matched(
+                            crate::dds::listener::PublicationMatchedStatus {
+                                total_count: total,
+                                total_count_change: total_change,
+                                current_count: current,
+                                current_count_change: current_change,
+                                last_subscription_handle: last_handle,
+                            },
+                        );
+                    },
+                ))
             } else {
                 None
-            };
+            }
+        } else {
+            None
+        };
 
         Ok(DataWriter {
             topic: self.topic,

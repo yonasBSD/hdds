@@ -123,6 +123,8 @@ impl MatchNotifier {
                     ep.data_repr,
                     &remote.qos,
                     remote_repr,
+                    true, // local writer: ownership always explicit
+                    true, // local writer: strength always known
                 ) {
                     if policy != "PARTITION" {
                         self.mark_incompatible(&ep.topic);
@@ -163,6 +165,8 @@ impl MatchNotifier {
                     remote_repr,
                     &ep.qos,
                     ep.data_repr,
+                    remote.has_explicit_ownership,
+                    remote.has_ownership_strength,
                 ) {
                     Some("PARTITION") => {
                         // Partition mismatch = no match, silent (not incompatible QoS)
@@ -194,17 +198,19 @@ impl MatchNotifier {
         _writer_repr: DataRepresentation,
         reader_qos: &QoS,
         _reader_repr: DataRepresentation,
+        writer_has_explicit_ownership: bool,
+        writer_has_ownership_strength: bool,
     ) -> Option<&'static str> {
-        // Data representation: only check if BOTH sides explicitly advertise it.
-        // Empty data_representation = "default" (XCDR1), always compatible.
-        // This aligns with the library Matcher::is_compatible() behavior (qos.rs).
-        // Previously, falling back to infer_data_repr_from_qos() produced false
-        // DATA_REPRESENTATION incompatibilities when the remote had empty QoS
-        // but the local side used -x 2.
-        if !writer_qos.data_representation.is_empty()
-            && !reader_qos.data_representation.is_empty()
+        // Data representation compatibility check.
+        // Only check when BOTH sides explicitly advertise data_representation
+        // via PID_DATA_REPRESENTATION in SEDP. Empty = "not restricted" or
+        // "not advertised" — always compatible to avoid false rejections
+        // (vendors often omit PID_DATA_REPRESENTATION even when using XCDR2).
+        if !writer_qos.data_representation.is_empty() && !reader_qos.data_representation.is_empty()
         {
-            let has_common = writer_qos.data_representation.iter()
+            let has_common = writer_qos
+                .data_representation
+                .iter()
                 .any(|w| reader_qos.data_representation.contains(w));
             if !has_common {
                 return Some("DATA_REPRESENTATION");
@@ -217,12 +223,28 @@ impl MatchNotifier {
         {
             return Some("RELIABILITY");
         }
-        // Ownership: SHARED vs EXCLUSIVE mismatch
-        if writer_qos.ownership.kind != reader_qos.ownership.kind {
+        // Ownership: infer writer ownership from SEDP PIDs.
+        // PID_OWNERSHIP present -> use directly.
+        // PID_OWNERSHIP absent + PID_OWNERSHIP_STRENGTH present -> EXCLUSIVE.
+        // Both absent -> SHARED (DDS default, Sec.2.2.3).
+        let inferred_writer_ownership = if writer_has_explicit_ownership {
+            writer_qos.ownership.kind
+        } else if writer_has_ownership_strength {
+            hdds::qos::ownership::OwnershipKind::Exclusive
+        } else {
+            hdds::qos::ownership::OwnershipKind::Shared
+        };
+        if inferred_writer_ownership != reader_qos.ownership.kind {
             return Some("OWNERSHIP");
         }
-        // Deadline: offered (writer) must be <= requested (reader)
-        if writer_qos.deadline.period > reader_qos.deadline.period {
+
+        // Deadline: offered (writer) must be <= requested (reader).
+        // Skip if either side uses the default (infinite) deadline — means "no constraint".
+        let default_deadline = std::time::Duration::from_secs(u64::MAX);
+        if writer_qos.deadline.period != default_deadline
+            && reader_qos.deadline.period != default_deadline
+            && writer_qos.deadline.period > reader_qos.deadline.period
+        {
             return Some("DEADLINE");
         }
         // Durability: writer durability must be >= reader durability
@@ -314,6 +336,8 @@ impl DiscoveryListener for MatchNotifier {
                             ep.data_repr,
                             &endpoint.qos,
                             remote_repr,
+                            true, // local writer: ownership always explicit
+                            true, // local writer: strength always known
                         ) {
                             Some("PARTITION") => {
                                 // Partition mismatch = no match, silent (not incompatible QoS)
@@ -352,6 +376,8 @@ impl DiscoveryListener for MatchNotifier {
                             remote_repr,
                             &ep.qos,
                             ep.data_repr,
+                            endpoint.has_explicit_ownership,
+                            endpoint.has_ownership_strength,
                         ) {
                             Some("PARTITION") => {
                                 // Partition mismatch = no match, silent (not incompatible QoS)
@@ -533,12 +559,19 @@ impl Cdr2Decode for ShapeType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset: usize = 0;
 
-        // DHEADER — skip (we decode field by field)
+        // DHEADER detection for @appendable D_CDR2 encoding.
+        // A DHEADER is a u32 size field covering the CDR2 data that follows.
+        // Heuristic: first_u32 >= 16 (min CDR size for ShapeType) and
+        // first_u32 + 4 fits within the payload. A CDR string length for
+        // a color name would be < 16, so this distinguishes reliably.
         if src.len() < 4 {
             return Err(CdrError::UnexpectedEof);
         }
-        let _dheader = u32::from_le_bytes(src[0..4].try_into().unwrap());
-        offset += 4;
+        let first_u32 = u32::from_le_bytes(src[0..4].try_into().unwrap());
+        if first_u32 as usize >= 16 && (first_u32 as usize + 4) <= src.len() {
+            // DHEADER present — skip it
+            offset += 4;
+        }
 
         // color (string)
         if src.len() < offset + 4 {

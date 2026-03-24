@@ -34,17 +34,26 @@ const USER_FRAG_TIMEOUT_MS: u64 = 1000;
 fn compute_instance_hash(cdr_payload: &[u8]) -> u64 {
     // Extract the first CDR string value for instance key hashing.
     // CDR payload may start with a DHEADER (u32 size) from D_CDR2 encoding.
-    // We detect it by checking if the first u32 equals (payload_len - 4),
-    // which is the DHEADER pattern. Then read the actual string length + bytes.
-    let data = if cdr_payload.len() >= 8 {
+    // Detection: DHEADER value is 16..=payload_len-4 and the u32 at offset 4
+    // looks like a reasonable CDR string length (1..=128).
+    let data = if cdr_payload.len() >= 12 {
         let first_u32 = u32::from_le_bytes([
             cdr_payload[0],
             cdr_payload[1],
             cdr_payload[2],
             cdr_payload[3],
         ]) as usize;
-        // DHEADER: value == remaining payload size
-        if first_u32 == cdr_payload.len() - 4 {
+        let second_u32 = u32::from_le_bytes([
+            cdr_payload[4],
+            cdr_payload[5],
+            cdr_payload[6],
+            cdr_payload[7],
+        ]) as usize;
+        // DHEADER: first_u32 is struct size (16..=payload_len-4),
+        // and the u32 after it is a plausible CDR string length (1..128).
+        // Without DHEADER, first_u32 IS the string length (typically 1..128).
+        if first_u32 >= 16 && first_u32 <= cdr_payload.len() - 4 && (1..=128).contains(&second_u32)
+        {
             &cdr_payload[4..]
         } else {
             cdr_payload
@@ -329,17 +338,14 @@ pub fn route_data_packet(
                 // Skip 4-byte encapsulation header
                 start += 4;
             } else if is_d_cdr2 && padding == 0 {
-                // D_CDR2: Skip 4-byte encapsulation header + 4-byte DHEADER (size field)
-                // DHEADER format: 4 bytes little-endian size of serialized data
-                if start + 8 <= payload.len() {
-                    start += 8;
-                    log::trace!(
-                        "[ROUTER] D_CDR2 detected (enc={:#06x}), skipped 8 bytes (encap+DHEADER)",
-                        enc
-                    );
-                } else {
-                    start += 4; // At least skip encap header
-                }
+                // D_CDR2: Skip ONLY the 4-byte encapsulation header.
+                // The DHEADER (4 bytes, size of serialized data) is part of the
+                // CDR2 encoding and must be preserved for the decoder.
+                start += 4;
+                log::trace!(
+                    "[ROUTER] D_CDR2 detected (enc={:#06x}), skipped 4 bytes (encap only, DHEADER preserved)",
+                    enc
+                );
             }
         }
 
@@ -416,14 +422,6 @@ pub fn route_data_packet(
             return RouteStatus::Dropped;
         }
     }
-
-    let subscriber_count = topic.subscriber_count();
-    log::debug!(
-        "[ROUTER] deliver topic='{}' seq={} subscriber_count={}",
-        topic.name(),
-        seq,
-        subscriber_count
-    );
 
     let errors = topic.deliver(seq, cdr2_payload);
 
@@ -715,9 +713,9 @@ fn route_reassembled_data(
         if (is_xcdr1 || is_xcdr2) && padding == 0 {
             // Skip 4-byte encapsulation header
             &payload[4..]
-        } else if is_d_cdr2 && padding == 0 && payload.len() >= 8 {
-            // D_CDR2: Skip 4-byte encapsulation header + 4-byte DHEADER
-            &payload[8..]
+        } else if is_d_cdr2 && padding == 0 {
+            // D_CDR2: Skip ONLY 4-byte encap header; DHEADER preserved for decoder
+            &payload[4..]
         } else {
             payload
         }

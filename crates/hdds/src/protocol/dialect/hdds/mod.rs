@@ -178,6 +178,9 @@ impl DialectEncoder for HddsEncoder {
             type_object,
             unicast_locators: data.unicast_locators.to_vec(),
             user_data: None,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         let mut buf = vec![0u8; 8192];

@@ -192,7 +192,8 @@ pub struct Participant {
     /// Domain state for intra-process auto-binding
     pub(crate) domain_state: Arc<DomainState>,
     /// Match notification registry for on_publication/subscription_matched (DDS spec 2.2.2.4)
-    pub(crate) match_registry: Option<Arc<crate::dds::match_notification::MatchNotificationRegistry>>,
+    pub(crate) match_registry:
+        Option<Arc<crate::dds::match_notification::MatchNotificationRegistry>>,
     /// DDS Security plugin suite (authentication, access control, crypto, logging)
     ///
     /// When set, security checks are performed on writer/reader creation and data operations.

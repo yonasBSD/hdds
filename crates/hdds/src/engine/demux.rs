@@ -492,13 +492,18 @@ impl TopicRegistry {
         match owners.get(&key) {
             Some(&(ref owner_guid, owner_strength)) => {
                 if writer_guid == owner_guid {
-                    true // Current owner
+                    // Current owner — also update stored strength if it changed
+                    // (SEDP may register strength after first data delivery)
+                    if writer_strength != owner_strength {
+                        owners.insert(key.clone(), (*writer_guid, writer_strength));
+                    }
+                    true
                 } else if writer_strength > owner_strength {
                     // Higher strength writer takes ownership
                     owners.insert(key, (*writer_guid, writer_strength));
                     true
                 } else {
-                    false // Lower strength, reject
+                    false // Lower or equal strength, reject
                 }
             }
             None => {
@@ -561,7 +566,11 @@ impl TopicRegistry {
 
     #[must_use]
     #[inline]
-    pub fn deliver_heartbeat(&self, heartbeat_bytes: &[u8], source_addr: Option<SocketAddr>) -> usize {
+    pub fn deliver_heartbeat(
+        &self,
+        heartbeat_bytes: &[u8],
+        source_addr: Option<SocketAddr>,
+    ) -> usize {
         let handlers = recover_read(
             &self.heartbeat_handlers,
             "TopicRegistry::heartbeat_handlers.read()",

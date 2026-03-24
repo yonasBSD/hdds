@@ -150,6 +150,9 @@
             type_object: None,
             unicast_locators: vec![],
             user_data: None,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         fsm.handle_sedp(sedp_data);
@@ -186,6 +189,9 @@
             type_object: None,
             unicast_locators: vec![],
             user_data: None,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         fsm.handle_sedp(sedp_data);

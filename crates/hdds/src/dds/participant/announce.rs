@@ -35,7 +35,13 @@ impl Participant {
         qos: &crate::dds::QoS,
     ) -> Result<[u8; 4]> {
         let (type_name, type_object) = self.resolve_type_info::<T>(topic, None, None);
-        self.announce_writer_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
+        self.announce_writer_endpoint_with_resolved(
+            topic,
+            qos,
+            type_name,
+            type_object,
+            T::has_key(),
+        )
     }
 
     pub(crate) fn announce_writer_endpoint_with_type<T: crate::dds::DDS>(
@@ -47,7 +53,13 @@ impl Participant {
     ) -> Result<[u8; 4]> {
         let (type_name, type_object) =
             self.resolve_type_info::<T>(topic, Some(type_name), type_object);
-        self.announce_writer_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
+        self.announce_writer_endpoint_with_resolved(
+            topic,
+            qos,
+            type_name,
+            type_object,
+            T::has_key(),
+        )
     }
 
     fn announce_writer_endpoint_with_resolved(
@@ -115,6 +127,9 @@ impl Participant {
             type_object,
             unicast_locators,
             user_data,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         // Cache announcement for unicast replay / re-announces driven by SPDP
@@ -167,7 +182,13 @@ impl Participant {
             topic
         );
         let (type_name, type_object) = self.resolve_type_info::<T>(topic, None, None);
-        self.announce_reader_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
+        self.announce_reader_endpoint_with_resolved(
+            topic,
+            qos,
+            type_name,
+            type_object,
+            T::has_key(),
+        )
     }
 
     pub(crate) fn announce_reader_endpoint_with_type<T: crate::dds::DDS>(
@@ -179,7 +200,13 @@ impl Participant {
     ) -> Result<()> {
         let (type_name, type_object) =
             self.resolve_type_info::<T>(topic, Some(type_name), type_object);
-        self.announce_reader_endpoint_with_resolved(topic, qos, type_name, type_object, T::has_key())
+        self.announce_reader_endpoint_with_resolved(
+            topic,
+            qos,
+            type_name,
+            type_object,
+            T::has_key(),
+        )
     }
 
     fn announce_reader_endpoint_with_resolved(
@@ -246,6 +273,9 @@ impl Participant {
             type_object,
             unicast_locators,
             user_data,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         // Cache announcement for unicast replay to discovered peers

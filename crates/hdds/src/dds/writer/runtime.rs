@@ -813,15 +813,18 @@ impl<T: DDS> DataWriter<T> {
                     .get_reader_locator(&reader.endpoint_guid)
                     .or_else(|| reg.get(&participant_key));
                 if let Some(endpoint) = dest {
-                    if transport.send_user_data_unicast(&rtps_packet, &endpoint).is_ok() {
+                    if transport
+                        .send_user_data_unicast(&rtps_packet, &endpoint)
+                        .is_ok()
+                    {
                         hb_delivered = true;
                     }
                 }
             }
         }
         if !hb_delivered {
-            // Fallback to multicast if no per-reader routing available
-            let _ = transport.send(&rtps_packet);
+            // Fallback to data multicast if no per-reader routing available
+            let _ = transport.send_user_data_multicast(&rtps_packet);
         }
         if let Some(ref metrics) = self.reliable_metrics {
             metrics.increment_heartbeats_sent(1);
@@ -841,19 +844,17 @@ impl<T: DDS> DataWriter<T> {
         let registry = match self.endpoint_registry {
             Some(ref r) => r,
             None => {
-                log::debug!("[writer] No endpoint_registry, falling back to multicast");
-                return transport.send(packet);
+                log::debug!("[writer] No endpoint_registry, falling back to data multicast");
+                return transport.send_user_data_multicast(packet);
             }
         };
 
         if registry.is_empty() {
-            log::debug!("[writer] No endpoints in registry, falling back to multicast");
-            return transport.send(packet);
+            log::debug!("[writer] No endpoints in registry, falling back to data multicast");
+            return transport.send_user_data_multicast(packet);
         }
 
-        let local_prefix = self
-            .rtps_endpoint
-            .map(|ctx| ctx.guid_prefix);
+        let local_prefix = self.rtps_endpoint.map(|ctx| ctx.guid_prefix);
 
         // Per-reader routing: find matched readers via discovery FSM, then send
         // to each reader's SEDP-announced unicast locator. This is the correct
@@ -905,8 +906,13 @@ impl<T: DDS> DataWriter<T> {
                         reader.endpoint_guid,
                         reader.endpoint_guid.entity_id
                     );
-                    if transport.send_user_data_unicast(&patched, &endpoint).is_ok() {
-                        delivered = true;
+                    match transport.send_user_data_unicast(&patched, &endpoint) {
+                        Ok(_) => {
+                            delivered = true;
+                        }
+                        Err(_e) => {
+                            log::debug!("[writer] Failed to send unicast to {}: {}", endpoint, _e);
+                        }
                     }
                 }
             }
@@ -919,8 +925,7 @@ impl<T: DDS> DataWriter<T> {
 
         // Fallback: participant-level routing (no discovery FSM, or no readers yet).
         // Sends to each participant's SPDP default_unicast_locator.
-        let local_guid = local_prefix
-            .map(|pfx| GUID::new(pfx, RTPS_ENTITYID_PARTICIPANT));
+        let local_guid = local_prefix.map(|pfx| GUID::new(pfx, RTPS_ENTITYID_PARTICIPANT));
         let allowed_participants = self.compute_allowed_participants();
         let mut delivered = false;
 
@@ -946,8 +951,8 @@ impl<T: DDS> DataWriter<T> {
         if delivered || allowed_participants.is_some() {
             Ok(())
         } else {
-            log::debug!("[writer] No remote endpoints (self-only); falling back to multicast");
-            transport.send(packet)
+            log::debug!("[writer] No remote endpoints (self-only); falling back to data multicast");
+            transport.send_user_data_multicast(packet)
         }
     }
 
@@ -1001,7 +1006,7 @@ impl<T: DDS> DataWriter<T> {
     ) -> std::result::Result<(), std::io::Error> {
         let send_multicast = |pkts: &[Vec<u8>]| -> std::result::Result<(), std::io::Error> {
             for packet in pkts {
-                transport.send(packet)?;
+                transport.send_user_data_multicast(packet)?;
             }
             Ok(())
         };
@@ -1070,7 +1075,10 @@ impl<T: DDS> DataWriter<T> {
                                 ..builder::READER_ENTITY_ID_OFFSET + 4]
                                 .copy_from_slice(&reader.endpoint_guid.entity_id);
                         }
-                        if transport.send_user_data_unicast(&patched, &endpoint).is_err() {
+                        if transport
+                            .send_user_data_unicast(&patched, &endpoint)
+                            .is_err()
+                        {
                             all_sent = false;
                         }
                     }

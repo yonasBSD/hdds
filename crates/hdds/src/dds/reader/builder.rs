@@ -299,7 +299,6 @@ impl<T: DDS> ReaderBuilder<T> {
                                 xport.clone(),
                                 part.discovery(),
                             ))
-
                         }
                         _ => {
                             // Fallback: no ACKNACK capability (intra-process mode)
@@ -375,15 +374,16 @@ impl<T: DDS> ReaderBuilder<T> {
         #[cfg(feature = "security")]
         let security = participant.as_ref().and_then(|p| p.security());
 
-        // Register match notification (on_subscription_matched) if listener is present
+        // Register match notification (on_subscription_matched + on_requested_incompatible_qos)
         let match_token = if let (Some(ref p), Some(ref l)) = (&participant, &listener) {
             if let Some(ref reg) = p.match_registry {
-                let l = Arc::clone(l);
-                Some(reg.register_reader(
+                let l_match = Arc::clone(l);
+                let l_incompat = Arc::clone(l);
+                Some(reg.register_reader_with_incompatible(
                     topic.clone(),
                     qos.clone(),
                     move |total, total_change, current, current_change, last_handle| {
-                        l.on_subscription_matched(
+                        l_match.on_subscription_matched(
                             crate::dds::listener::SubscriptionMatchedStatus {
                                 total_count: total,
                                 total_count_change: total_change,
@@ -393,6 +393,15 @@ impl<T: DDS> ReaderBuilder<T> {
                             },
                         );
                     },
+                    Some(Box::new(move |total, total_change, policy_id| {
+                        l_incompat.on_requested_incompatible_qos(
+                            crate::dds::listener::RequestedIncompatibleQosStatus {
+                                total_count: total,
+                                total_count_change: total_change,
+                                last_policy_id: policy_id,
+                            },
+                        );
+                    })),
                 ))
             } else {
                 None

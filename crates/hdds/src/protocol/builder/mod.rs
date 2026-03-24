@@ -24,7 +24,8 @@ pub use packet::{
     build_acknack_packet_from_ranges, build_data_frag_packets, build_data_packet,
     build_data_packet_with_context, build_dispose_packet_with_context, build_gap_packet,
     build_heartbeat_packet, build_heartbeat_packet_with_context, should_fragment,
-    RtpsEndpointContext, READER_ENTITY_ID_OFFSET, DEFAULT_FRAGMENT_SIZE, DEFAULT_MAX_UNFRAGMENTED_SIZE,
+    RtpsEndpointContext, DEFAULT_FRAGMENT_SIZE, DEFAULT_MAX_UNFRAGMENTED_SIZE,
+    READER_ENTITY_ID_OFFSET,
 };
 
 #[cfg(test)]

@@ -22,6 +22,10 @@ use crate::dds::qos::QoS;
 /// Args: (total_count, total_count_change, current_count, current_count_change, last_remote_guid)
 type MatchCallback = Box<dyn Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync>;
 
+/// Type-erased incompatible QoS callback.
+/// Args: (total_count, total_count_change, last_policy_id)
+type IncompatibleCallback = Box<dyn Fn(u32, i32, u32) + Send + Sync>;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LocalKind {
     Writer,
@@ -34,8 +38,10 @@ struct MatchEntry {
     qos: QoS,
     kind: LocalKind,
     callback: MatchCallback,
+    incompatible_callback: Option<IncompatibleCallback>,
     matched_remotes: Mutex<HashSet<GUID>>,
     total_count: AtomicU32,
+    incompatible_count: AtomicU32,
 }
 
 /// Token returned when registering a match callback.
@@ -55,9 +61,7 @@ impl Drop for MatchToken {
 
 impl std::fmt::Debug for MatchToken {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("MatchToken")
-            .field("id", &self.id)
-            .finish()
+        f.debug_struct("MatchToken").field("id", &self.id).finish()
     }
 }
 
@@ -100,8 +104,10 @@ impl MatchNotificationRegistry {
             qos: qos.clone(),
             kind: LocalKind::Writer,
             callback: Box::new(callback),
+            incompatible_callback: None,
             matched_remotes: Mutex::new(HashSet::new()),
             total_count: AtomicU32::new(0),
+            incompatible_count: AtomicU32::new(0),
         };
         {
             let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
@@ -114,15 +120,13 @@ impl MatchNotificationRegistry {
         }
     }
 
-    /// Register a local reader for match notifications.
-    ///
-    /// The callback fires when a compatible remote writer is discovered.
-    /// Returns a MatchToken that unregisters on drop.
-    pub fn register_reader(
+    /// Register a local reader with both match and incompatible QoS callbacks.
+    pub fn register_reader_with_incompatible(
         self: &Arc<Self>,
         topic: String,
         qos: QoS,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
+        incompatible_callback: Option<IncompatibleCallback>,
     ) -> MatchToken {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = MatchEntry {
@@ -131,8 +135,10 @@ impl MatchNotificationRegistry {
             qos: qos.clone(),
             kind: LocalKind::Reader,
             callback: Box::new(callback),
+            incompatible_callback,
             matched_remotes: Mutex::new(HashSet::new()),
             total_count: AtomicU32::new(0),
+            incompatible_count: AtomicU32::new(0),
         };
         {
             let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
@@ -180,8 +186,10 @@ impl MatchNotificationRegistry {
         let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
         for entry in entries.iter() {
             if entry.id == entry_id {
-                let mut matched =
-                    entry.matched_remotes.lock().unwrap_or_else(|e| e.into_inner());
+                let mut matched = entry
+                    .matched_remotes
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 if matched.insert(remote_guid) {
                     let total = entry.total_count.fetch_add(1, Ordering::Relaxed) + 1;
                     let current = matched.len() as u32;
@@ -201,6 +209,18 @@ impl DiscoveryListener for MatchNotificationRegistry {
             return;
         }
 
+        // Build effective QoS: when PID_OWNERSHIP absent, copy local ownership
+        // to skip ownership in compatibility check (vendors omit default PIDs).
+        // The explicit ownership check is done separately below.
+        let remote_qos_for_compat = {
+            let mut q = endpoint.qos.clone();
+            if !endpoint.has_explicit_ownership {
+                // Placeholder: will be set per-entry
+                q.ownership = crate::dds::qos::Ownership::shared();
+            }
+            q
+        };
+
         let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
         for entry in entries.iter() {
             if entry.topic != endpoint.topic_name {
@@ -209,22 +229,60 @@ impl DiscoveryListener for MatchNotificationRegistry {
 
             let compatible = match (entry.kind, endpoint.kind) {
                 (LocalKind::Writer, EndpointKind::Reader) => {
-                    Matcher::is_compatible(&endpoint.qos, &entry.qos)
+                    Matcher::is_compatible(&remote_qos_for_compat, &entry.qos)
                 }
                 (LocalKind::Reader, EndpointKind::Writer) => {
-                    Matcher::is_compatible(&entry.qos, &endpoint.qos)
+                    Matcher::is_compatible(&entry.qos, &remote_qos_for_compat)
                 }
                 _ => false,
             };
 
-            if compatible {
-                let mut matched =
-                    entry.matched_remotes.lock().unwrap_or_else(|e| e.into_inner());
+            // Ownership check: infer ownership kind from SEDP PIDs.
+            // PID_OWNERSHIP present → use it directly.
+            // PID_OWNERSHIP absent + PID_OWNERSHIP_STRENGTH present → EXCLUSIVE.
+            // Both absent → UNKNOWN, skip check (assume compatible to avoid false positives).
+            let ownership_ok = if endpoint.has_explicit_ownership {
+                endpoint.qos.ownership.kind == entry.qos.ownership.kind
+            } else if endpoint.has_ownership_strength {
+                crate::qos::ownership::OwnershipKind::Exclusive == entry.qos.ownership.kind
+            } else {
+                // No PID_OWNERSHIP, no PID_OWNERSHIP_STRENGTH → writer is SHARED (DDS default).
+                // SHARED is only compatible with SHARED readers/writers.
+                crate::qos::ownership::OwnershipKind::Shared == entry.qos.ownership.kind
+            };
+
+            if compatible && ownership_ok {
+                let mut matched = entry
+                    .matched_remotes
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 if matched.insert(endpoint.endpoint_guid) {
                     let total = entry.total_count.fetch_add(1, Ordering::Relaxed) + 1;
                     let current = matched.len() as u32;
                     drop(matched);
                     (entry.callback)(total, 1, current, 1, Some(endpoint.endpoint_guid));
+                }
+            } else if let Some(ref incompat_cb) = entry.incompatible_callback {
+                // Fire on_requested_incompatible_qos / on_offered_incompatible_qos.
+                // But NOT for partition mismatches — those are silent no-match (DDS spec).
+                let policy_id = if !ownership_ok {
+                    5 // OWNERSHIP
+                } else {
+                    Matcher::first_incompatible_policy(&entry.qos, &remote_qos_for_compat)
+                };
+                // policy_id 0 = no real QoS incompatibility found (partition mismatch
+                // or unknown). Partition mismatch is not an INCOMPATIBLE_QOS event.
+                if policy_id != 0 {
+                    if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() {
+                        eprintln!(
+                            "[MATCH-INCOMPAT] topic='{}' policy={} own_ok={} has_expl={} has_str={} remote_own={:?} local_own={:?} compat={}",
+                            entry.topic, policy_id, ownership_ok,
+                            endpoint.has_explicit_ownership, endpoint.has_ownership_strength,
+                            endpoint.qos.ownership.kind, entry.qos.ownership.kind, compatible
+                        );
+                    }
+                    let total = entry.incompatible_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    incompat_cb(total, 1, policy_id);
                 }
             }
         }

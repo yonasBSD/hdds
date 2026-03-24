@@ -73,6 +73,9 @@ impl DialectEncoder for FastDdsEncoder {
             type_object: None,
             unicast_locators: data.unicast_locators.to_vec(),
             user_data: None,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         // Use certified builder (8KB buffer matches original)

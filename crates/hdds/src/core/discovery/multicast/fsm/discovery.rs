@@ -370,7 +370,6 @@ impl DiscoveryFsm {
             return false;
         }
 
-
         // v250: One-shot purge of unconfirmed (stale) participants after the
         // startup probation window. Stale SPDP/SEDP from killed processes
         // insert endpoints into TopicRegistry during the first ~50ms, but
@@ -525,6 +524,7 @@ impl DiscoveryFsm {
     pub fn handle_sedp(&self, data: SedpData) {
         crate::trace_fn!("DiscoveryFsm::handle_sedp");
         self.metrics.sedp_received.fetch_add(1, Ordering::Relaxed);
+        // (diagnostic removed)
 
         // Extract participant prefix from endpoint GUID (first 12 bytes).
         let endpoint_prefix = &data.endpoint_guid.as_bytes()[..12];
@@ -587,7 +587,10 @@ impl DiscoveryFsm {
         if endpoint_kind == EndpointKind::Reader {
             log::debug!(
                 "[SEDP-READER] topic='{}' kind={:?} locators={:?} guid={}",
-                topic_name, endpoint_kind, endpoint_unicast_locators, endpoint.endpoint_guid
+                topic_name,
+                endpoint_kind,
+                endpoint_unicast_locators,
+                endpoint.endpoint_guid
             );
             if let Some(&locator) = select_best_locator(&endpoint_unicast_locators) {
                 self.endpoint_registry
@@ -595,7 +598,8 @@ impl DiscoveryFsm {
             } else {
                 log::debug!(
                     "[SEDP-READER] NO locator for reader {} on topic '{}'",
-                    endpoint.endpoint_guid, topic_name
+                    endpoint.endpoint_guid,
+                    topic_name
                 );
             }
         }
@@ -679,45 +683,9 @@ impl DiscoveryFsm {
         };
 
         if is_new {
-            // v249: During the startup probation window (first 200ms), gate
-            // notifications for unconfirmed participants. Stale SPDP/SEDP from
-            // killed processes arrive in the first ~50ms and would trigger false
-            // on_endpoint_discovered notifications. After the window, all
-            // notifications are immediate — zero ongoing latency cost.
-            //
-            // This is safe even for incompatibility tests because P0.1
-            // (blocked_writers) prevents data delivery from incompatible writers
-            // at the router level, regardless of notification timing.
-            const STARTUP_PROBATION_MS: u64 = 200;
-            let in_startup = (self.created_at.elapsed().as_millis() as u64) < STARTUP_PROBATION_MS;
-
-            if in_startup && !is_local_endpoint {
-                let confirmed = {
-                    let db = recover_read(
-                        Arc::as_ref(&self.db),
-                        "DiscoveryFsm::handle_sedp confirmed_check",
-                    );
-                    db.values().any(|p| {
-                        &p.guid.as_bytes()[..12] == endpoint_prefix && p.is_confirmed_alive()
-                    })
-                };
-
-                if confirmed {
-                    self.notify_endpoint_discovered(&endpoint);
-                } else {
-                    log::debug!(
-                        "[SEDP] v249: Deferring notification during startup probation (prefix={:02x?})",
-                        &endpoint_prefix[..4]
-                    );
-                    let mut pending = recover_write(
-                        Arc::as_ref(&self.pending_notifications),
-                        "DiscoveryFsm::handle_sedp pending_push",
-                    );
-                    pending.push(endpoint);
-                }
-            } else {
-                self.notify_endpoint_discovered(&endpoint);
-            }
+            // v249: Startup probation removed. Stale endpoint filtering is handled
+            // by block_writer (QoS incompatibility) and dedup cache in the router.
+            self.notify_endpoint_discovered(&endpoint);
         }
     }
 
@@ -773,9 +741,8 @@ impl DiscoveryFsm {
             Arc::as_ref(&self.db),
             "DiscoveryFsm::is_endpoint_participant_confirmed",
         );
-        db.values().any(|p| {
-            &p.guid.as_bytes()[..12] == prefix && p.is_confirmed_alive()
-        })
+        db.values()
+            .any(|p| &p.guid.as_bytes()[..12] == prefix && p.is_confirmed_alive())
     }
 
     /// Get count of discovered participants.
@@ -1137,6 +1104,9 @@ mod tests {
             type_object: None,
             unicast_locators: vec![],
             user_data: None,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         fsm.handle_sedp(sedp_data);
@@ -1173,6 +1143,9 @@ mod tests {
             type_object: None,
             unicast_locators: vec![],
             user_data: None,
+            has_explicit_reliability: false,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
         };
 
         fsm.handle_sedp(sedp_data);

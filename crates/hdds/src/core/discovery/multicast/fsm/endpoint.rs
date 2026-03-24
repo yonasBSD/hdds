@@ -116,6 +116,10 @@ pub struct EndpointInfo {
     /// - Primitive types (no complex structure)
     /// - Endpoints that opt out of type discovery
     pub type_object: Option<CompleteTypeObject>,
+    /// Whether PID_OWNERSHIP was explicitly present in SEDP.
+    pub has_explicit_ownership: bool,
+    /// Whether PID_OWNERSHIP_STRENGTH was present (implies EXCLUSIVE).
+    pub has_ownership_strength: bool,
 }
 
 impl EndpointInfo {
@@ -152,6 +156,9 @@ impl EndpointInfo {
     ///     type_object: None,
     ///     unicast_locators: vec![],
     ///     user_data: None,
+    ///     has_explicit_reliability: false,
+    ///     has_explicit_ownership: false,
+    ///     has_ownership_strength: false,
     /// };
     ///
     /// let endpoint = EndpointInfo::from_sedp(sedp_data, Some(Dialect::Rti));
@@ -168,8 +175,20 @@ impl EndpointInfo {
         participant_bytes[..12].copy_from_slice(&endpoint_guid.as_bytes()[..12]);
         let participant_guid = GUID::from_bytes(participant_bytes);
 
-        // Apply QoS: use explicit PIDs if present, otherwise get dialect-specific defaults
-        let qos = if let Some(qos) = sedp_data.qos {
+        // Apply QoS: use explicit PIDs if present, otherwise get dialect-specific defaults.
+        // DDS spec: DataWriter defaults to RELIABLE, DataReader defaults to BEST_EFFORT.
+        // If the SEDP QoS is present but PID_RELIABILITY was not explicitly set,
+        // the reliability field is at its Rust default (BestEffort), which is wrong
+        // for writers. Apply the spec default based on endpoint kind.
+        let qos = if let Some(mut qos) = sedp_data.qos {
+            // If reliability is still at default and this is a writer,
+            // apply the DDS spec default (RELIABLE for writers).
+            if qos.reliability == crate::dds::qos::Reliability::BestEffort
+                && kind == EndpointKind::Writer
+                && !sedp_data.has_explicit_reliability
+            {
+                qos.reliability = crate::dds::qos::Reliability::Reliable;
+            }
             log::debug!("[ENDPOINT] Using QoS from SEDP PIDs: reliability={:?}, durability={:?}, history={:?}",
                       qos.reliability, qos.durability, qos.history);
             qos
@@ -177,7 +196,12 @@ impl EndpointInfo {
             // Get dialect-specific defaults (or DDS spec defaults if no dialect)
             let dialect = dialect.unwrap_or(Dialect::Hybrid);
             let encoder = get_encoder(dialect);
-            let default_qos = encoder.default_qos();
+            let mut default_qos = encoder.default_qos();
+            // DDS spec: DataWriter defaults to RELIABLE (Sec.2.2.3.12).
+            // When no QoS PIDs are present, apply spec defaults based on kind.
+            if kind == EndpointKind::Writer {
+                default_qos.reliability = crate::dds::qos::Reliability::Reliable;
+            }
             log::debug!("[ENDPOINT] No QoS PIDs in SEDP - applying {} defaults (reliability={:?}, durability={:?}, history={:?})",
                       encoder.name(), default_qos.reliability, default_qos.durability, default_qos.history);
             default_qos
@@ -191,6 +215,8 @@ impl EndpointInfo {
             qos,
             kind,
             type_object: sedp_data.type_object,
+            has_explicit_ownership: sedp_data.has_explicit_ownership,
+            has_ownership_strength: sedp_data.has_ownership_strength,
         }
     }
 }

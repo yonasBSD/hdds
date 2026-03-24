@@ -503,18 +503,18 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                         1 => Some(crate::dds::qos::Ownership::exclusive()),
                         _ => None,
                     };
-                    log::debug!("[SEDP-QOS] [?] PID_OWNERSHIP parsed: kind={} (0=SHARED, 1=EXCLUSIVE) -> {:?}",
-                              ownership_kind, qos_ownership);
+                    if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() {
+                        eprintln!("[SEDP] PID_OWNERSHIP={}", ownership_kind);
+                    }
                 }
             }
             PID_OWNERSHIP_STRENGTH => {
                 if length >= 4 {
                     let strength = read_i32(buf, offset, is_little_endian);
                     qos_ownership_strength = Some(strength);
-                    log::debug!(
-                        "[SEDP-QOS] [?] PID_OWNERSHIP_STRENGTH parsed: value={}",
-                        strength
-                    );
+                    if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() {
+                        eprintln!("[SEDP] PID_OWNERSHIP_STRENGTH={}", strength);
+                    }
                 }
             }
             PID_DEADLINE => {
@@ -848,6 +848,9 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
         participant_guid: final_participant_guid, // v110: Always populated (explicit or derived)
         endpoint_guid,
         qos_hash,
+        has_explicit_reliability: qos_reliability.is_some(),
+        has_explicit_ownership: qos_ownership.is_some(),
+        has_ownership_strength: qos_ownership_strength.is_some(),
         qos, // v61: Return actual QoS parsed from PIDs!
         type_object,
         unicast_locators, // v143: Now parsed from PID_UNICAST_LOCATOR for OpenDDS interop

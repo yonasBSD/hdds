@@ -44,7 +44,8 @@ pub(super) struct AcknackContext {
 pub(super) struct ReaderHeartbeatHandler {
     heartbeat_rx: Mutex<HeartbeatRx>,
     nack_scheduler: Arc<Mutex<NackScheduler>>,
-    last_seen: Mutex<u64>,
+    /// Per-writer last-seen sequence number (keyed by 16-byte writer GUID).
+    last_seen: Mutex<std::collections::HashMap<[u8; 16], u64>>,
     /// ACKNACK context (None for intra-process mode)
     acknack_ctx: Option<AcknackContext>,
     /// ACKNACK counter (monotonically increasing per RTPS spec)
@@ -56,7 +57,7 @@ impl ReaderHeartbeatHandler {
         Self {
             heartbeat_rx: Mutex::new(HeartbeatRx::new()),
             nack_scheduler,
-            last_seen: Mutex::new(0),
+            last_seen: Mutex::new(std::collections::HashMap::new()),
             acknack_ctx: None,
             acknack_count: AtomicU32::new(1),
         }
@@ -73,7 +74,7 @@ impl ReaderHeartbeatHandler {
         Self {
             heartbeat_rx: Mutex::new(HeartbeatRx::new()),
             nack_scheduler,
-            last_seen: Mutex::new(0),
+            last_seen: Mutex::new(std::collections::HashMap::new()),
             acknack_ctx: Some(AcknackContext {
                 our_guid_prefix,
                 reader_entity_id,
@@ -158,6 +159,11 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
             }
         };
 
+        // Build per-writer key for state tracking
+        let mut writer_key = [0u8; 16];
+        writer_key[..12].copy_from_slice(&hb.writer_guid_prefix);
+        writer_key[12..].copy_from_slice(&hb.writer_entity_id);
+
         let reader_last_seen = {
             let guard = match self.last_seen.lock() {
                 Ok(lock) => lock,
@@ -166,7 +172,7 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
                     err.into_inner()
                 }
             };
-            *guard
+            guard.get(&writer_key).copied().unwrap_or(0)
         };
 
         let mut heartbeat_rx = match self.heartbeat_rx.lock() {
@@ -249,12 +255,9 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
             // sent to the metatraffic channel. Resolve via DiscoveryFsm, falling
             // back to source_addr if the peer is not yet discovered.
             let (send_result, dest) = if let Some(addr) = source_addr {
-                let dest = resolve_metatraffic_dest(
-                    &writer_guid_prefix,
-                    addr,
-                    &ctx.discovery_fsm,
-                );
-                let res = ctx.transport
+                let dest = resolve_metatraffic_dest(&writer_guid_prefix, addr, &ctx.discovery_fsm);
+                let res = ctx
+                    .transport
                     .send_to_endpoint(&acknack_packet, &dest)
                     .map(|_| ());
                 (res, Some(dest))
@@ -279,7 +282,8 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
         }
 
         if let Ok(mut guard) = self.last_seen.lock() {
-            *guard = cmp::max(*guard, hb.last_seq);
+            let entry = guard.entry(writer_key).or_insert(0);
+            *entry = cmp::max(*entry, hb.last_seq);
         }
     }
 }
