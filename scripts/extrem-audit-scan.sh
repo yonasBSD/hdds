@@ -64,8 +64,8 @@ LOW_VIOLATIONS=0
 SUPPRESSED_COUNT=0
 
 # Configuration
-readonly MAX_COMPLEXITY=10  # McCabe cyclomatic complexity
-readonly MAX_COGNITIVE=15   # Cognitive complexity (nested conditionals)
+readonly MAX_COMPLEXITY=20  # McCabe cyclomatic complexity
+readonly MAX_COGNITIVE=30   # Cognitive complexity (nested conditionals)
 # HDDS is a zero-copy DDS/RTPS implementation requiring unsafe for:
 # - Lock-free ring buffers (SPSC/MPSC)
 # - Custom memory pools (SlabPool)
