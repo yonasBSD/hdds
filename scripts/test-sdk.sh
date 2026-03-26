@@ -52,6 +52,12 @@ C_BIN="/tmp/hdds_xtest_c"
 CPP_BIN="/tmp/hdds_xtest_cpp"
 PY_CMD="python3 $CROSS_DIR/test.py"
 
+# Network: ensure HDDS binds to the right interface (avoid docker bridges)
+if [[ -z "${HDDS_INTERFACE:-}" ]]; then
+    HDDS_INTERFACE=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K[0-9.]+' || true)
+    export HDDS_INTERFACE
+fi
+
 # Test config
 readonly NUM_SAMPLES=5
 readonly TOPIC_BASE="XLangTest"
