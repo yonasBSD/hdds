@@ -659,6 +659,24 @@ impl ShapeType {
     }
 }
 
+/// Decode a ShapeType key hash back to the color string.
+/// ShapeType key = CDR Big-Endian of the color field. For short strings
+/// (serialized <= 16 bytes), the key is zero-padded (no MD5).
+fn color_from_key_hash(key_hash: &[u8; 16]) -> String {
+    let str_len = u32::from_be_bytes([key_hash[0], key_hash[1], key_hash[2], key_hash[3]]) as usize;
+    if str_len > 1 && str_len <= 12 && 4 + str_len <= 16 {
+        let color_bytes = &key_hash[4..4 + str_len - 1];
+        if let Ok(s) = std::str::from_utf8(color_bytes) {
+            return s.to_string();
+        }
+    }
+    // MD5 hash or invalid — fall back to hex
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}",
+        key_hash[0], key_hash[1], key_hash[2], key_hash[3]
+    )
+}
+
 /// Minimal MD5 for key hashing (only needed for color strings > 11 chars)
 fn md5_hash(data: &[u8]) -> [u8; 16] {
     // Use the md-5 crate if available, otherwise fall back to a simple implementation
@@ -1515,6 +1533,13 @@ fn run_publisher(
     let base_topic = options.topic_name.as_ref().unwrap();
     let color = options.color.as_deref().unwrap_or("BLUE");
 
+    // Publisher entity for coherent sets / ordered access (DDS 2.2.2.4.2.6)
+    let publisher = if options.coherent_set_enabled || options.ordered_access_enabled {
+        Some(participant.create_publisher(qos.clone())?)
+    } else {
+        None
+    };
+
     // Create topics and writers for each topic index
     let mut writers: Vec<hdds::dds::DataWriter<ShapeType>> = Vec::new();
     let mut topic_names: Vec<String> = Vec::new();
@@ -1605,8 +1630,9 @@ fn run_publisher(
             && n % options.coherent_set_sample_count == 0
         {
             println!("Started Coherent Set");
-            // TODO: call publisher.begin_coherent_changes() when we have access
-            // to the Publisher entity. Current API creates writer directly from topic.
+            if let Some(ref pub_entity) = publisher {
+                let _ = pub_entity.begin_coherent_changes();
+            }
         }
 
         // Write to all topics x all instances
@@ -1644,7 +1670,9 @@ fn run_publisher(
             && n % options.coherent_set_sample_count == options.coherent_set_sample_count - 1
         {
             println!("Finished Coherent Set");
-            // TODO: call publisher.end_coherent_changes()
+            if let Some(ref pub_entity) = publisher {
+                let _ = pub_entity.end_coherent_changes();
+            }
         }
 
         n += 1;
@@ -1693,6 +1721,13 @@ fn run_subscriber(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let qos = options.build_qos();
     let base_topic = options.topic_name.as_ref().unwrap();
+
+    // Subscriber entity for coherent access / ordered access (DDS 2.2.2.4.2.7)
+    let subscriber = if options.coherent_set_enabled || options.ordered_access_enabled {
+        Some(participant.create_subscriber(qos.clone())?)
+    } else {
+        None
+    };
 
     let mut readers: Vec<hdds::dds::DataReader<ShapeType>> = Vec::new();
     let mut topic_names: Vec<String> = Vec::new();
@@ -1776,8 +1811,9 @@ fn run_subscriber(
     while !ALL_DONE.load(Ordering::SeqCst) {
         // FIX #6: coherent sets — begin_access
         if options.coherent_set_enabled || options.ordered_access_enabled {
-            // TODO: call subscriber.begin_access() when HDDS provides Subscriber entity
-            // C++ uses printf (always visible), not logger — pexpect may match these
+            if let Some(ref sub_entity) = subscriber {
+                let _ = sub_entity.begin_access();
+            }
             if options.coherent_set_enabled {
                 println!("Reading coherent sets, iteration {}", n);
             }
@@ -1828,22 +1864,19 @@ fn run_subscriber(
                         "NOT_ALIVE_DISPOSED_INSTANCE_STATE"
                     }
                 };
-                // Print key hash as hex for instance identification
+                let color = color_from_key_hash(&event.key_hash);
                 println!(
-                    "{:<10} [{:02x}{:02x}{:02x}{:02x}] {}",
-                    topic_names[idx],
-                    event.key_hash[0],
-                    event.key_hash[1],
-                    event.key_hash[2],
-                    event.key_hash[3],
-                    state_str
+                    "{:<10} {:<10} {}",
+                    topic_names[idx], color, state_str
                 );
             }
         }
 
-        // FIX #6: coherent sets — end_access
+        // Coherent sets / ordered access — end_access
         if options.coherent_set_enabled || options.ordered_access_enabled {
-            // TODO: call subscriber.end_access()
+            if let Some(ref sub_entity) = subscriber {
+                let _ = sub_entity.end_access();
+            }
         }
 
         n += 1;

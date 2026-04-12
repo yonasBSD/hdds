@@ -689,6 +689,7 @@ impl<T: DDS> WriterBuilder<T> {
             deadline_missed_total: std::sync::atomic::AtomicU32::new(0),
             #[cfg(feature = "security")]
             security,
+            written_instances: std::sync::Mutex::new(std::collections::HashSet::new()),
             _phantom: core::marker::PhantomData,
         })
     }

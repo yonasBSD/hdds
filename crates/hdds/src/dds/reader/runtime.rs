@@ -9,12 +9,15 @@ use crate::dds::{qos::History, BindToken, QoS, Result, StatusCondition, StatusMa
 use crate::engine::subscriber::DisposeKind;
 use crate::engine::TopicRegistry;
 use crate::protocol::builder;
+use crate::qos::time_based_filter::TimeBasedFilterChecker;
 use crate::reliability::{NackScheduler, ReliableMetrics};
 use crate::telemetry;
 use crate::telemetry::metrics::current_time_ns;
 use crate::transport::UdpTransport;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 /// A typed DDS DataReader that subscribes to samples on a topic.
 ///
@@ -88,6 +91,10 @@ pub struct DataReader<T: DDS> {
     /// Deadline tracker for detecting requested deadline missed events (DDS spec 2.2.2.4.2.12).
     deadline_tracker: Mutex<crate::qos::deadline::ReaderDeadlineTracker>,
     deadline_missed_total: AtomicU32,
+    /// Per-instance TIME_BASED_FILTER enforcement (DDS spec 2.2.2.4.2.11).
+    time_filter_checkers: Mutex<HashMap<InstanceHandle, TimeBasedFilterChecker>>,
+    /// Lifespan duration for sample expiration (DDS spec 2.2.2.4.2.20).
+    lifespan_duration: Duration,
     /// Shared dispose event queue from ReaderSubscriber (P1.2).
     dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     _phantom: core::marker::PhantomData<T>,
@@ -110,8 +117,9 @@ impl<T: DDS> DataReader<T> {
         #[cfg(feature = "security")] security: Option<Arc<crate::security::SecurityPluginSuite>>,
         dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     ) -> Self {
-        // Capture deadline period before moving qos into struct
+        // Capture QoS values before moving qos into struct
         let deadline_period = qos.deadline.period;
+        let lifespan_dur = qos.lifespan.duration;
 
         // Determine cache size from history QoS
         let cache_size = match qos.history {
@@ -138,6 +146,8 @@ impl<T: DDS> DataReader<T> {
                 deadline_period,
             )),
             deadline_missed_total: AtomicU32::new(0),
+            time_filter_checkers: Mutex::new(HashMap::new()),
+            lifespan_duration: lifespan_dur,
             dispose_events,
             _phantom: core::marker::PhantomData,
         }
@@ -477,6 +487,42 @@ impl<T: DDS> DataReader<T> {
                 Ok(data) => {
                     // Compute instance handle from @key fields
                     let instance_handle = InstanceHandle::new(data.compute_key());
+
+                    // Lifespan check: discard samples older than lifespan duration.
+                    // Uses reception timestamp (sufficient on LAN where jitter << lifespan).
+                    let max_lifespan = Duration::from_secs(u64::MAX);
+                    if self.lifespan_duration != max_lifespan {
+                        let age_ns = current_time_ns().saturating_sub(entry.timestamp_ns);
+                        if Duration::from_nanos(age_ns) > self.lifespan_duration {
+                            log::debug!(
+                                "[READER] lifespan expired topic='{}' seq={}",
+                                self.topic, entry.seq
+                            );
+                            continue;
+                        }
+                    }
+
+                    // TIME_BASED_FILTER: per-instance minimum separation (DDS 2.2.2.4.2.11).
+                    if !self.qos.time_based_filter.is_disabled() {
+                        let mut checkers = self
+                            .time_filter_checkers
+                            .lock()
+                            .unwrap_or_else(|e| e.into_inner());
+                        let checker = checkers
+                            .entry(instance_handle)
+                            .or_insert_with(|| {
+                                TimeBasedFilterChecker::new(self.qos.time_based_filter)
+                            });
+                        if !checker.should_accept() {
+                            log::debug!(
+                                "[READER] time_based_filter reject topic='{}' seq={}",
+                                self.topic, entry.seq
+                            );
+                            continue;
+                        }
+                        checker.mark_accepted();
+                    }
+
                     let cached = CachedSample::with_instance(
                         data,
                         entry.seq as u64,

@@ -110,6 +110,8 @@ pub struct DataWriter<T: DDS> {
     /// Security plugin suite for encryption (DDS Security v1.1)
     #[cfg(feature = "security")]
     pub(super) security: Option<Arc<crate::security::SecurityPluginSuite>>,
+    /// Instance keys written by this writer (for auto-unregister on Drop).
+    pub(super) written_instances: Mutex<std::collections::HashSet<[u8; 16]>>,
     pub(super) _phantom: core::marker::PhantomData<T>,
 }
 
@@ -255,6 +257,16 @@ impl<T: DDS> DataWriter<T> {
     pub fn write(&self, msg: &T) -> Result<()> {
         // Check offered deadline before writing (DDS spec: fire callback on miss)
         self.check_offered_deadline();
+
+        // Track instance key for auto-unregister on Drop (DDS 2.2.2.4.1.9).
+        if T::has_key() {
+            let key = msg.compute_key();
+            let _ = self
+                .written_instances
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(key);
+        }
 
         let write_start_ns = current_time_ns();
         let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
@@ -752,6 +764,33 @@ impl<T: DDS> DataWriter<T> {
         Ok(())
     }
 
+    /// Send a lifecycle change using a pre-computed key hash (no instance data needed).
+    fn send_key_lifecycle_change(
+        &self,
+        key_hash: &[u8; 16],
+        status_info: crate::protocol::builder::StatusInfoKind,
+    ) -> Result<()> {
+        let Some(ref transport) = self.transport else {
+            return Ok(());
+        };
+        let Some(ctx) = self.rtps_endpoint else {
+            return Ok(());
+        };
+        let seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
+        let packet = crate::protocol::builder::build_dispose_packet_with_context(
+            &ctx,
+            &self.topic,
+            seq,
+            key_hash,
+            status_info,
+        );
+        if packet.is_empty() {
+            return Err(Error::BufferTooSmall);
+        }
+        self.send_packet_to_endpoints(transport, &packet)
+            .map_err(|_| Error::TransportError)
+    }
+
     pub fn stats(&self) -> WriterStats {
         WriterStats::default()
     }
@@ -1127,5 +1166,34 @@ impl<T: DDS> DataWriter<T> {
             );
             send_multicast(packets)
         }
+    }
+}
+
+/// Auto-unregister all written instances when a DataWriter is dropped.
+///
+/// DDS spec Section 2.2.2.4.1.9: when a DataWriter is deleted, all instances
+/// it has written are automatically unregistered. Remote readers will transition
+/// these instances to NOT_ALIVE_NO_WRITERS_INSTANCE_STATE.
+impl<T: DDS> Drop for DataWriter<T> {
+    fn drop(&mut self) {
+        let instances = self
+            .written_instances
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        if instances.is_empty() {
+            return;
+        }
+        for key_hash in &instances {
+            let _ = self.send_key_lifecycle_change(
+                key_hash,
+                crate::protocol::builder::StatusInfoKind::Unregistered,
+            );
+        }
+        log::debug!(
+            "[writer] Drop: auto-unregistered {} instances for topic '{}'",
+            instances.len(),
+            self.topic
+        );
     }
 }
