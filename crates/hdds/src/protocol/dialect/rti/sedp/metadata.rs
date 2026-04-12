@@ -200,23 +200,45 @@ pub fn write_expects_inline_qos(
 // RTI validates that vendor PIDs come from its own vendor ID (0x0101).
 // When HDDS (vendor 0x01AA) sends vendor PIDs, RTI rejects the SEDP.
 
-/// Write PID_DATA_REPRESENTATION (0x0073) - XCDR1 only.
+/// Write PID_DATA_REPRESENTATION (0x0073) from the offered QoS.
 ///
-/// RTI 7.x default data representation is XCDR1 (0x0000).
-/// Format: seq_len (u32=1) + representation_id (u16=0x0000) + padding (u16).
-pub fn write_data_representation(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
-    if *offset + 12 > buf.len() {
+/// Honors `qos.data_representation` exactly:
+/// - If the list is non-empty, writes those representation IDs in order.
+/// - If the list is empty (or no QoS provided), advertises **both** XCDR1
+///   (0x0000) and XCDR2 (0x0002) for maximum interoperability.
+///
+/// Layout: `seq_len (u32) + N * u16 + pad` aligned to 4 bytes.
+pub fn write_data_representation(
+    qos: Option<&crate::protocol::dialect::QosProfile>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> EncodeResult<()> {
+    // Build the representation list
+    let reprs: &[u16] = match qos {
+        Some(q) if !q.data_representation.is_empty() => &q.data_representation,
+        _ => &[0x0000u16, 0x0002u16],
+    };
+
+    let seq_len = reprs.len() as u32;
+    let payload_len = 4 + reprs.len() * 2; // seq_len(4) + N * u16
+    let padded_len = (payload_len + 3) & !3;
+    if *offset + 4 + padded_len > buf.len() {
         return Err(EncodeError::BufferTooSmall);
     }
 
     buf[*offset..*offset + 2].copy_from_slice(&0x0073u16.to_le_bytes()); // PID_DATA_REPRESENTATION
-    buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes()); // payload length
-    *offset += 4;
-
-    buf[*offset..*offset + 4].copy_from_slice(&1u32.to_le_bytes()); // sequence length = 1
-    buf[*offset + 4..*offset + 6].copy_from_slice(&0x0000u16.to_le_bytes()); // XCDR1
-    buf[*offset + 6..*offset + 8].copy_from_slice(&[0x00, 0x00]); // padding
-    *offset += 8;
+    buf[*offset + 2..*offset + 4].copy_from_slice(&(padded_len as u16).to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&seq_len.to_le_bytes());
+    let mut pos = *offset + 8;
+    for &r in reprs {
+        buf[pos..pos + 2].copy_from_slice(&r.to_le_bytes());
+        pos += 2;
+    }
+    while pos < *offset + 4 + padded_len {
+        buf[pos] = 0;
+        pos += 1;
+    }
+    *offset = pos;
 
     Ok(())
 }

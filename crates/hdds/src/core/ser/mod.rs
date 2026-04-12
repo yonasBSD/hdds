@@ -53,7 +53,15 @@ impl fmt::Display for SerError {
 impl std::error::Error for SerError {}
 
 impl From<SerError> for crate::dds::Error {
-    fn from(_: SerError) -> Self {
+    fn from(err: SerError) -> Self {
+        // Preserve BufferTooSmall distinction so callers can grow and retry.
+        // Cursor signals buffer exhaustion via WriteFailed with reason
+        // "buffer too small".
+        if let SerError::WriteFailed { ref reason, .. } = err {
+            if reason.contains("buffer too small") {
+                return crate::dds::Error::BufferTooSmall;
+            }
+        }
         crate::dds::Error::SerializationError
     }
 }

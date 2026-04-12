@@ -281,10 +281,26 @@ impl<T: DDS> DataWriter<T> {
             return self.write_intra_process_fast(msg, seq, write_start_ns);
         }
 
-        // Buffer sized to fit max RTPS DATA submessage payload (~64KB)
-        // RTPS submessage length field is u16, limiting single DATA payload to ~65KB
-        let mut tmp_buf = vec![0u8; 65536];
-        let serialized_len = msg.encode_cdr2(&mut tmp_buf)?;
+        // Buffer must fit the ENTIRE serialized payload, not a single DATA
+        // submessage. Samples larger than DEFAULT_MAX_UNFRAGMENTED_SIZE are
+        // split into DATA_FRAG packets by build_data_frag_packets() later,
+        // so the serialized blob can be arbitrarily large. Start at 64 KB
+        // (covers typical samples with no realloc) and double on BufferTooSmall
+        // up to a 16 MB cap to support LargeData-style payloads.
+        const MAX_SERIALIZED_SIZE: usize = 16 * 1024 * 1024;
+        let (tmp_buf, serialized_len) = {
+            let mut size = 65_536usize;
+            loop {
+                let mut buf = vec![0u8; size];
+                match msg.encode_cdr2(&mut buf) {
+                    Ok(len) => break (buf, len),
+                    Err(Error::BufferTooSmall) if size < MAX_SERIALIZED_SIZE => {
+                        size = (size * 2).min(MAX_SERIALIZED_SIZE);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
 
         log::debug!(
             "[writer] write() seq={} reader_count={} has_local_readers={}",

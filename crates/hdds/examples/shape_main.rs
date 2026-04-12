@@ -1375,18 +1375,25 @@ impl ShapeOptions {
             qos = qos.partition_single(partition);
         }
 
-        if self.coherent_set_enabled || self.ordered_access_enabled {
-            match self.coherent_access_scope {
-                AccessScope::Instance => {
-                    qos = qos.presentation_instance();
-                }
-                AccessScope::Topic => {
-                    qos = qos.presentation_topic_coherent();
-                }
-                AccessScope::Group => {
-                    qos = qos.presentation_group_coherent_ordered();
-                }
-            }
+        // Presentation QoS: only set when the user provided --coherent, --ordered,
+        // or --access-scope. Honor the exact combination (do not bundle flags into
+        // a preset, or --ordered --access-scope i would silently become
+        // coherent=false/ordered=false and the test would fail).
+        if self.coherent_set_enabled
+            || self.ordered_access_enabled
+            || self.coherent_access_scope_set
+        {
+            let scope = match self.coherent_access_scope {
+                AccessScope::Instance => hdds::dds::qos::PresentationAccessScope::Instance,
+                AccessScope::Topic => hdds::dds::qos::PresentationAccessScope::Topic,
+                AccessScope::Group => hdds::dds::qos::PresentationAccessScope::Group,
+            };
+            let presentation = hdds::dds::qos::Presentation::new(
+                scope,
+                self.coherent_set_enabled,
+                self.ordered_access_enabled,
+            );
+            qos = qos.presentation(presentation);
         }
 
         qos

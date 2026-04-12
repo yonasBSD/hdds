@@ -141,6 +141,24 @@ impl Presentation {
         }
     }
 
+    /// Check if this (offered) presentation is compatible with a requested one.
+    ///
+    /// DDS v1.4 Sec.2.2.3.6, Table 2.60: the writer's access_scope must be
+    /// greater or equal to the reader's, and if the reader requests
+    /// coherent_access or ordered_access the writer must offer them.
+    pub fn is_compatible_with(&self, requested: &Presentation) -> bool {
+        if self.access_scope < requested.access_scope {
+            return false;
+        }
+        if requested.coherent_access && !self.coherent_access {
+            return false;
+        }
+        if requested.ordered_access && !self.ordered_access {
+            return false;
+        }
+        true
+    }
+
     /// Check if policy uses INSTANCE scope.
     pub fn is_instance_scope(&self) -> bool {
         self.access_scope == PresentationAccessScope::Instance

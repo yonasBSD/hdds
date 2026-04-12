@@ -19,6 +19,7 @@
 //! ```
 
 use crate::core::discovery::multicast::DiscoveryFsm;
+use crate::dds::qos::Durability;
 use crate::engine::HeartbeatHandler;
 use crate::protocol::builder::build_acknack_packet_with_final;
 use crate::reliability::{HeartbeatMsg, HeartbeatRx, NackScheduler};
@@ -46,6 +47,11 @@ pub(super) struct ReaderHeartbeatHandler {
     nack_scheduler: Arc<Mutex<NackScheduler>>,
     /// Per-writer last-seen sequence number (keyed by 16-byte writer GUID).
     last_seen: Mutex<std::collections::HashMap<[u8; 16], u64>>,
+    /// Reader's requested durability — controls how `last_seen` is initialized
+    /// for newly discovered writers. With VOLATILE, the reader does not want
+    /// historical samples and must clamp to the writer's current `last_seq`
+    /// instead of NACKing back to seq 1.
+    durability: Durability,
     /// ACKNACK context (None for intra-process mode)
     acknack_ctx: Option<AcknackContext>,
     /// ACKNACK counter (monotonically increasing per RTPS spec)
@@ -53,11 +59,12 @@ pub(super) struct ReaderHeartbeatHandler {
 }
 
 impl ReaderHeartbeatHandler {
-    pub fn new(nack_scheduler: Arc<Mutex<NackScheduler>>) -> Self {
+    pub fn new(nack_scheduler: Arc<Mutex<NackScheduler>>, durability: Durability) -> Self {
         Self {
             heartbeat_rx: Mutex::new(HeartbeatRx::new()),
             nack_scheduler,
             last_seen: Mutex::new(std::collections::HashMap::new()),
+            durability,
             acknack_ctx: None,
             acknack_count: AtomicU32::new(1),
         }
@@ -66,6 +73,7 @@ impl ReaderHeartbeatHandler {
     /// Create with ACKNACK sending capability for cross-process RELIABLE.
     pub fn with_acknack_context(
         nack_scheduler: Arc<Mutex<NackScheduler>>,
+        durability: Durability,
         our_guid_prefix: [u8; 12],
         reader_entity_id: [u8; 4],
         transport: Arc<UdpTransport>,
@@ -75,6 +83,7 @@ impl ReaderHeartbeatHandler {
             heartbeat_rx: Mutex::new(HeartbeatRx::new()),
             nack_scheduler,
             last_seen: Mutex::new(std::collections::HashMap::new()),
+            durability,
             acknack_ctx: Some(AcknackContext {
                 our_guid_prefix,
                 reader_entity_id,
@@ -164,15 +173,39 @@ impl HeartbeatHandler for ReaderHeartbeatHandler {
         writer_key[..12].copy_from_slice(&hb.writer_guid_prefix);
         writer_key[12..].copy_from_slice(&hb.writer_entity_id);
 
+        // Initialize per-writer baseline.
+        // - VOLATILE: clamp to writer's current last_seq on first heartbeat so we
+        //   never NACK historical samples (DDS spec 2.2.3.4 — late joiners do
+        //   not receive samples written before they matched).
+        // - TRANSIENT_LOCAL+: start at writer's first available seq - 1 so we
+        //   request the full available history.
         let reader_last_seen = {
-            let guard = match self.last_seen.lock() {
+            let mut guard = match self.last_seen.lock() {
                 Ok(lock) => lock,
                 Err(err) => {
                     log::debug!("[Reader::handle_heartbeat] last_seen lock poisoned, recovering");
                     err.into_inner()
                 }
             };
-            guard.get(&writer_key).copied().unwrap_or(0)
+            match guard.get(&writer_key).copied() {
+                Some(seen) => seen,
+                None => {
+                    let seed = match self.durability {
+                        Durability::Volatile => hb.last_seq,
+                        _ => hb.first_seq.saturating_sub(1),
+                    };
+                    log::debug!(
+                        "[HB] new writer {:02x?} dur={:?} hb=[{}, {}] seeding last_seen={}",
+                        &writer_key[..4],
+                        self.durability,
+                        hb.first_seq,
+                        hb.last_seq,
+                        seed
+                    );
+                    guard.insert(writer_key, seed);
+                    seed
+                }
+            }
         };
 
         let mut heartbeat_rx = match self.heartbeat_rx.lock() {

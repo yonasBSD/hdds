@@ -207,8 +207,24 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
         }
     }
 
-    // 9. TimeBasedFilter - reader-side filtering only, no compatibility check
-    // 10. ResourceLimits - local configuration, no compatibility check
+    // 9. Presentation (DDS v1.4 Sec.2.2.3.6, Table 2.60)
+    // RxO policy: writer access_scope must be >= reader access_scope
+    // (GROUP > TOPIC > INSTANCE), and if the reader requests coherent_access
+    // or ordered_access, the writer must offer them.
+    if !writer_qos
+        .presentation
+        .is_compatible_with(&reader_qos.presentation)
+    {
+        log::debug!(
+            "[MATCH-QOS] Presentation mismatch (writer={:?}, reader={:?})",
+            writer_qos.presentation,
+            reader_qos.presentation
+        );
+        return false;
+    }
+
+    // 10. TimeBasedFilter - reader-side filtering only, no compatibility check
+    // 11. ResourceLimits - local configuration, no compatibility check
 
     true
 }
@@ -253,6 +269,13 @@ pub(super) fn first_incompatible_policy(reader_qos: &QoS, writer_qos: &QoS) -> u
         if !has_common {
             return 23; // DATA_REPRESENTATION
         }
+    }
+    // Presentation mismatch
+    if !writer_qos
+        .presentation
+        .is_compatible_with(&reader_qos.presentation)
+    {
+        return 2; // PRESENTATION
     }
     0 // Unknown — partition mismatch or truly compatible
 }
@@ -638,5 +661,136 @@ mod tests {
             ..QoS::default()
         };
         assert!(!is_compatible(&reader, &writer));
+    }
+
+    // Presentation QoS tests (DDS v1.4 Sec.2.2.3.6, Table 2.60)
+    // Mirrors OMG Test_OrderedAccess_{1,2,5,9} and Test_CoherentSets_{1,2,5,9}.
+    use crate::dds::qos::{Presentation, PresentationAccessScope};
+
+    fn make_qos(p: Presentation) -> QoS {
+        QoS {
+            presentation: p,
+            ..QoS::default()
+        }
+    }
+
+    #[test]
+    fn test_presentation_instance_writer_topic_reader_incompatible() {
+        // OrderedAccess_1 pattern: writer INSTANCE+ordered, reader TOPIC+ordered
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Instance,
+            false,
+            true,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            false,
+            true,
+        ));
+        assert!(!is_compatible(&reader, &writer));
+        assert_eq!(first_incompatible_policy(&reader, &writer), 2);
+    }
+
+    #[test]
+    fn test_presentation_instance_writer_group_reader_incompatible() {
+        // OrderedAccess_2 pattern
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Instance,
+            false,
+            true,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Group,
+            false,
+            true,
+        ));
+        assert!(!is_compatible(&reader, &writer));
+    }
+
+    #[test]
+    fn test_presentation_topic_writer_group_reader_incompatible() {
+        // OrderedAccess_5 pattern
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            false,
+            true,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Group,
+            false,
+            true,
+        ));
+        assert!(!is_compatible(&reader, &writer));
+    }
+
+    #[test]
+    fn test_presentation_writer_missing_ordered_incompatible() {
+        // OrderedAccess_9 pattern: writer TOPIC no-ordered, reader TOPIC+ordered
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            false,
+            false,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            false,
+            true,
+        ));
+        assert!(!is_compatible(&reader, &writer));
+    }
+
+    #[test]
+    fn test_presentation_coherent_instance_writer_topic_reader_incompatible() {
+        // CoherentSets_1 pattern
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Instance,
+            true,
+            false,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            true,
+            false,
+        ));
+        assert!(!is_compatible(&reader, &writer));
+    }
+
+    #[test]
+    fn test_presentation_writer_missing_coherent_incompatible() {
+        // CoherentSets_9 pattern: writer TOPIC no-coherent, reader TOPIC+coherent
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            false,
+            false,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Topic,
+            true,
+            false,
+        ));
+        assert!(!is_compatible(&reader, &writer));
+    }
+
+    #[test]
+    fn test_presentation_group_writer_instance_reader_compatible() {
+        // Writer offers more than requested: OK
+        let writer = make_qos(Presentation::new(
+            PresentationAccessScope::Group,
+            true,
+            true,
+        ));
+        let reader = make_qos(Presentation::new(
+            PresentationAccessScope::Instance,
+            false,
+            false,
+        ));
+        assert!(is_compatible(&reader, &writer));
+    }
+
+    #[test]
+    fn test_presentation_both_default_compatible() {
+        let writer = make_qos(Presentation::default());
+        let reader = make_qos(Presentation::default());
+        assert!(is_compatible(&reader, &writer));
     }
 }

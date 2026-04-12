@@ -294,6 +294,7 @@ impl<T: DDS> ReaderBuilder<T> {
                         );
                             Arc::new(ReaderHeartbeatHandler::with_acknack_context(
                                 Arc::clone(&scheduler),
+                                qos.durability,
                                 our_guid_prefix,
                                 reader_entity_id,
                                 xport.clone(),
@@ -302,7 +303,10 @@ impl<T: DDS> ReaderBuilder<T> {
                         }
                         _ => {
                             // Fallback: no ACKNACK capability (intra-process mode)
-                            Arc::new(ReaderHeartbeatHandler::new(Arc::clone(&scheduler)))
+                            Arc::new(ReaderHeartbeatHandler::new(
+                                Arc::clone(&scheduler),
+                                qos.durability,
+                            ))
                         }
                     };
                 registry.register_heartbeat_handler(handler);
