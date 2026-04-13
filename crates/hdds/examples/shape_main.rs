@@ -1872,10 +1872,7 @@ fn run_subscriber(
                     }
                 };
                 let color = color_from_key_hash(&event.key_hash);
-                println!(
-                    "{:<10} {:<10} {}",
-                    topic_names[idx], color, state_str
-                );
+                println!("{:<10} {:<10} {}", topic_names[idx], color, state_str);
             }
         }
 

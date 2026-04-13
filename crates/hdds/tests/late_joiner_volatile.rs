@@ -99,10 +99,7 @@ fn test_volatile_late_joiner_no_historical_samples() {
     drain.join().expect("drain join");
 
     let samples = received.lock().unwrap().clone();
-    assert!(
-        !samples.is_empty(),
-        "subscriber received nothing"
-    );
+    assert!(!samples.is_empty(), "subscriber received nothing");
 
     // Strict monotonic invariant per DDS spec for VOLATILE: every received
     // sample's value must be greater than or equal to the previous one.

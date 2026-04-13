@@ -496,7 +496,8 @@ impl<T: DDS> DataReader<T> {
                         if Duration::from_nanos(age_ns) > self.lifespan_duration {
                             log::debug!(
                                 "[READER] lifespan expired topic='{}' seq={}",
-                                self.topic, entry.seq
+                                self.topic,
+                                entry.seq
                             );
                             continue;
                         }
@@ -508,15 +509,14 @@ impl<T: DDS> DataReader<T> {
                             .time_filter_checkers
                             .lock()
                             .unwrap_or_else(|e| e.into_inner());
-                        let checker = checkers
-                            .entry(instance_handle)
-                            .or_insert_with(|| {
-                                TimeBasedFilterChecker::new(self.qos.time_based_filter)
-                            });
+                        let checker = checkers.entry(instance_handle).or_insert_with(|| {
+                            TimeBasedFilterChecker::new(self.qos.time_based_filter)
+                        });
                         if !checker.should_accept() {
                             log::debug!(
                                 "[READER] time_based_filter reject topic='{}' seq={}",
-                                self.topic, entry.seq
+                                self.topic,
+                                entry.seq
                             );
                             continue;
                         }

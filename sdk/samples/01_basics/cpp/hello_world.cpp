@@ -60,9 +60,15 @@ void run_subscriber(hdds::Participant& participant) {
 
     std::cout << "Waiting for messages (Ctrl+C to exit)..." << std::endl;
 
+    // Bound the loop by total elapsed time rather than a strict sample count
+    // so a late match that costs us the first message does not hang the
+    // sample forever. The smoke test relies on this exit path.
     int received = 0;
-    while (received < 10) {
+    int consecutive_timeouts = 0;
+    constexpr int kMaxConsecutiveTimeouts = 2;
+    while (received < 10 && consecutive_timeouts < kMaxConsecutiveTimeouts) {
         if (waitset.wait(5s)) {
+            consecutive_timeouts = 0;
             // Typed API: no need to re-specify <HelloWorld> -- reader already knows the type
             while (auto msg = reader.take()) {
                 std::cout << "  Received: " << msg->message << " (id=" << msg->id << ")" << std::endl;
@@ -76,11 +82,12 @@ void run_subscriber(hdds::Participant& participant) {
             //       if (msg.decode_cdr2_le(data->data(), data->size()) > 0) { ... }
             //   }
         } else {
+            consecutive_timeouts++;
             std::cout << "  (timeout - no messages)" << std::endl;
         }
     }
 
-    std::cout << "Done receiving." << std::endl;
+    std::cout << "Done receiving. Got " << received << " messages." << std::endl;
 }
 
 int main(int argc, char** argv) {
