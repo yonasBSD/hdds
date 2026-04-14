@@ -84,7 +84,11 @@ Participant& Participant::operator=(Participant&& other) noexcept {
 std::unique_ptr<DataWriter> Participant::create_writer_raw(
     const std::string& topic_name) {
 
-    HddsDataWriter* h = hdds_writer_create(handle_, topic_name.c_str());
+    // Mirror create_reader_raw: always go through the explicit-type C entry
+    // point so raw writers and raw readers agree on the "RawBytes" type name
+    // for SEDP matching, regardless of which side is created first.
+    HddsDataWriter* h = hdds_writer_create_with_type(
+        handle_, topic_name.c_str(), "RawBytes", nullptr);
 
     if (!h) {
         throw Error("Failed to create writer for topic: " + topic_name);
@@ -97,8 +101,8 @@ std::unique_ptr<DataWriter> Participant::create_writer_raw(
     const std::string& topic_name,
     const QoS& qos) {
 
-    HddsDataWriter* h = hdds_writer_create_with_qos(
-        handle_, topic_name.c_str(), qos.c_handle());
+    HddsDataWriter* h = hdds_writer_create_with_type(
+        handle_, topic_name.c_str(), "RawBytes", qos.c_handle());
 
     if (!h) {
         throw Error("Failed to create writer for topic: " + topic_name);
@@ -110,7 +114,12 @@ std::unique_ptr<DataWriter> Participant::create_writer_raw(
 std::unique_ptr<DataReader> Participant::create_reader_raw(
     const std::string& topic_name) {
 
-    HddsDataReader* h = hdds_reader_create(handle_, topic_name.c_str());
+    // Route through hdds_reader_create_with_type with the explicit "RawBytes"
+    // type name so the SEDP announcement carries the same type as raw writers
+    // do (otherwise the reader matches via topic name but the internal type
+    // resolution diverges and the stream silently stalls).
+    HddsDataReader* h = hdds_reader_create_with_type(
+        handle_, topic_name.c_str(), "RawBytes", nullptr);
 
     if (!h) {
         throw Error("Failed to create reader for topic: " + topic_name);
@@ -123,8 +132,10 @@ std::unique_ptr<DataReader> Participant::create_reader_raw(
     const std::string& topic_name,
     const QoS& qos) {
 
-    HddsDataReader* h = hdds_reader_create_with_qos(
-        handle_, topic_name.c_str(), qos.c_handle());
+    // See the note above on create_reader_raw(topic_name): force the explicit
+    // type-name path so raw writers and raw readers always agree on "RawBytes".
+    HddsDataReader* h = hdds_reader_create_with_type(
+        handle_, topic_name.c_str(), "RawBytes", qos.c_handle());
 
     if (!h) {
         throw Error("Failed to create reader for topic: " + topic_name);
