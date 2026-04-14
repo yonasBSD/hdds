@@ -62,12 +62,14 @@ void run_subscriber(hdds::Participant& participant) {
 
     // Bound the loop by total elapsed time rather than a strict sample count
     // so a late match that costs us the first message does not hang the
-    // sample forever. The smoke test relies on this exit path.
+    // sample forever. Poll in 2s chunks and exit after 3 empty polls so the
+    // subscriber always terminates well within the smoke test's 15s outer
+    // timeout even when publishing takes ~6s and we miss the first sample.
     int received = 0;
     int consecutive_timeouts = 0;
-    constexpr int kMaxConsecutiveTimeouts = 2;
+    constexpr int kMaxConsecutiveTimeouts = 3;
     while (received < 10 && consecutive_timeouts < kMaxConsecutiveTimeouts) {
-        if (waitset.wait(5s)) {
+        if (waitset.wait(2s)) {
             consecutive_timeouts = 0;
             // Typed API: no need to re-specify <HelloWorld> -- reader already knows the type
             while (auto msg = reader.take()) {
