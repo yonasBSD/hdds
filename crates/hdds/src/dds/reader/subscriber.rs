@@ -46,7 +46,7 @@ struct SeenSeqs {
 }
 
 impl SeenSeqs {
-    const WINDOW: usize = 256;
+    const WINDOW: usize = 4096;
 
     fn admit(&mut self, seq: u64) -> bool {
         if seq > self.high {
@@ -267,7 +267,6 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
                 return;
             }
         }
-
         let msg = match T::decode_cdr2(data) {
             Ok(m) => m,
             Err(_e) => {
