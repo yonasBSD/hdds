@@ -110,7 +110,7 @@ impl FilterEvaluator {
                 let param_str = params
                     .get(*idx)
                     .ok_or(FilterError::ParameterOutOfRange(*idx))?;
-                // Try to parse as number first, then fall back to string
+                // Try to parse as number first, then fall back to string.
                 if let Ok(n) = param_str.parse::<i64>() {
                     Ok(FieldValue::Integer(n))
                 } else if let Ok(f) = param_str.parse::<f64>() {
@@ -120,7 +120,23 @@ impl FilterEvaluator {
                 } else if param_str.eq_ignore_ascii_case("false") {
                     Ok(FieldValue::Boolean(false))
                 } else {
-                    Ok(FieldValue::String(param_str.clone()))
+                    // DDS 1.4 Annex B SQL-like: string parameters are
+                    // supplied quoted ('foo') or unquoted (foo). Strip a
+                    // single pair of matching single or double quotes so
+                    // `color = 'RED'` matches a sample whose color field is
+                    // the bare string "RED".
+                    let stripped = if (param_str.starts_with('\'') && param_str.ends_with('\''))
+                        || (param_str.starts_with('"') && param_str.ends_with('"'))
+                    {
+                        if param_str.len() >= 2 {
+                            &param_str[1..param_str.len() - 1]
+                        } else {
+                            param_str.as_str()
+                        }
+                    } else {
+                        param_str.as_str()
+                    };
+                    Ok(FieldValue::String(stripped.to_string()))
                 }
             }
 
