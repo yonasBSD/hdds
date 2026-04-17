@@ -16,9 +16,9 @@
 //! - PID_DURABILITY_SERVICE (0x001e) - Durability service QoS
 
 use super::super::super::constants::{
-    PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE, PID_HISTORY, PID_LIVELINESS,
-    PID_OWNERSHIP, PID_OWNERSHIP_STRENGTH, PID_PARTITION, PID_PRESENTATION, PID_RELIABILITY,
-    PID_RESOURCE_LIMITS, PID_TIME_BASED_FILTER,
+    PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE, PID_HISTORY, PID_LIFESPAN,
+    PID_LIVELINESS, PID_OWNERSHIP, PID_OWNERSHIP_STRENGTH, PID_PARTITION, PID_PRESENTATION,
+    PID_RELIABILITY, PID_RESOURCE_LIMITS, PID_TIME_BASED_FILTER,
 };
 use super::super::super::types::ParseError;
 use crate::dds::qos::{Durability, History, PresentationAccessScope, QoS, Reliability};
@@ -140,6 +140,39 @@ pub fn write_deadline(
     };
 
     buf[*offset..*offset + 2].copy_from_slice(&PID_DEADLINE.to_le_bytes());
+    buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
+    buf[*offset + 4..*offset + 8].copy_from_slice(&seconds.to_le_bytes());
+    buf[*offset + 8..*offset + 12].copy_from_slice(&fraction.to_le_bytes());
+    *offset += 12;
+
+    Ok(())
+}
+
+/// Write PID_LIFESPAN (0x002b) - 8 bytes.
+/// Format: duration (Duration_t = 2xu32).
+/// Default: INFINITE (DDS spec: seconds=0x7FFFFFFF, nanosec=0xFFFFFFFF).
+pub fn write_lifespan(
+    qos: Option<&QoS>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), ParseError> {
+    if *offset + 12 > buf.len() {
+        return Err(ParseError::BufferTooSmall);
+    }
+
+    let (seconds, fraction) = if let Some(qos) = qos {
+        if qos.lifespan.is_infinite() {
+            (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
+        } else {
+            let secs = qos.lifespan.duration.as_secs();
+            let nanos = qos.lifespan.duration.subsec_nanos();
+            (u32::try_from(secs).unwrap_or(u32::MAX), nanos)
+        }
+    } else {
+        (0x7FFF_FFFFu32, 0xFFFF_FFFFu32) // INFINITE
+    };
+
+    buf[*offset..*offset + 2].copy_from_slice(&PID_LIFESPAN.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&seconds.to_le_bytes());
     buf[*offset + 8..*offset + 12].copy_from_slice(&fraction.to_le_bytes());

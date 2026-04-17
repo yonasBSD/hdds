@@ -425,6 +425,13 @@ pub struct QosProfile {
     pub ownership_strength: i32, // Only meaningful when ownership_kind=1 (EXCLUSIVE)
     pub partition_names: Vec<String>,
     pub data_representation: Vec<u16>, // 0x0000=XCDR1, 0x0002=XCDR2; empty=default(both)
+    // Lifespan: 0x7FFF_FFFF / 0xFFFF_FFFF = INFINITE (default)
+    pub lifespan_sec: u32,
+    pub lifespan_nsec: u32,
+    // Presentation (DDS v1.4 Sec.2.2.3.6): 0=INSTANCE, 1=TOPIC, 2=GROUP
+    pub presentation_access_scope: u32,
+    pub presentation_coherent: bool,
+    pub presentation_ordered: bool,
 }
 
 impl QosProfile {

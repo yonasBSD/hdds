@@ -367,6 +367,22 @@ pub fn build_sedp_rtps_packet(
             )
         };
 
+        let (lifespan_secs, lifespan_nanos) = if q.lifespan.is_infinite() {
+            (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
+        } else {
+            (
+                u32::try_from(q.lifespan.duration.as_secs()).unwrap_or(u32::MAX),
+                q.lifespan.duration.subsec_nanos(),
+            )
+        };
+
+        use crate::dds::qos::PresentationAccessScope;
+        let presentation_scope = match q.presentation.access_scope {
+            PresentationAccessScope::Instance => 0u32,
+            PresentationAccessScope::Topic => 1u32,
+            PresentationAccessScope::Group => 2u32,
+        };
+
         QosProfile {
             reliability_kind: match q.reliability {
                 Reliability::BestEffort => 1, // BEST_EFFORT
@@ -387,6 +403,11 @@ pub fn build_sedp_rtps_packet(
             ownership_strength: q.ownership_strength.value,
             deadline_period_sec: deadline_secs,
             deadline_period_nsec: deadline_nanos,
+            lifespan_sec: lifespan_secs,
+            lifespan_nsec: lifespan_nanos,
+            presentation_access_scope: presentation_scope,
+            presentation_coherent: q.presentation.coherent_access,
+            presentation_ordered: q.presentation.ordered_access,
             partition_names: q.partition.names.clone(),
             data_representation: q.data_representation.clone(),
             ..Default::default()

@@ -378,12 +378,24 @@ impl<T: DDS> ReaderBuilder<T> {
         #[cfg(feature = "security")]
         let security = participant.as_ref().and_then(|p| p.security());
 
+        // Shared effective lifespan, tightened by the match-notification
+        // registry when a remote writer announces a finite Lifespan.
+        let lifespan_nanos = {
+            use std::sync::atomic::AtomicU64;
+            let initial = if qos.lifespan.is_infinite() {
+                u64::MAX
+            } else {
+                u64::try_from(qos.lifespan.duration.as_nanos()).unwrap_or(u64::MAX)
+            };
+            Arc::new(AtomicU64::new(initial))
+        };
+
         // Register match notification (on_subscription_matched + on_requested_incompatible_qos)
         let match_token = if let (Some(ref p), Some(ref l)) = (&participant, &listener) {
             if let Some(ref reg) = p.match_registry {
                 let l_match = Arc::clone(l);
                 let l_incompat = Arc::clone(l);
-                Some(reg.register_reader_with_incompatible(
+                Some(reg.register_reader_with_lifespan(
                     topic.clone(),
                     qos.clone(),
                     move |total, total_change, current, current_change, last_handle| {
@@ -406,6 +418,7 @@ impl<T: DDS> ReaderBuilder<T> {
                             },
                         );
                     })),
+                    Arc::clone(&lifespan_nanos),
                 ))
             } else {
                 None
@@ -429,6 +442,7 @@ impl<T: DDS> ReaderBuilder<T> {
             #[cfg(feature = "security")]
             security,
             dispose_events,
+            lifespan_nanos,
         ))
     }
 }

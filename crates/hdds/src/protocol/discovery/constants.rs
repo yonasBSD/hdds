@@ -45,6 +45,7 @@ pub(super) const PID_PARTITION: u16 = 0x0029;
 pub(super) const PID_TIME_BASED_FILTER: u16 = 0x0004;
 pub(super) const PID_DURABILITY_SERVICE: u16 = 0x001E; // DDS v1.4 Sec.2.2.3.5
 pub(super) const PID_PRESENTATION: u16 = 0x0021; // DDS v1.4 Sec.2.2.3.6
+pub(super) const PID_LIFESPAN: u16 = 0x002B; // DDS v1.4 Sec.2.2.3.16
 
 // SEDP locator parameters - required for user data delivery
 pub(super) const PID_UNICAST_LOCATOR: u16 = 0x002f;

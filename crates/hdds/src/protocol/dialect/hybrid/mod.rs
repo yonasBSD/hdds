@@ -115,7 +115,7 @@ impl DialectEncoder for HybridEncoder {
                 _ => with_history.ownership_shared(),
             };
             // Deadline
-            let mut result =
+            let with_deadline =
                 if q.deadline_period_sec == 0x7FFF_FFFF && q.deadline_period_nsec == 0xFFFF_FFFF {
                     with_ownership // infinite deadline (default)
                 } else {
@@ -123,6 +123,29 @@ impl DialectEncoder for HybridEncoder {
                         + (q.deadline_period_nsec as u64) / 1_000_000;
                     with_ownership.deadline_millis(millis)
                 };
+            // Lifespan
+            let with_lifespan = if q.lifespan_sec == 0x7FFF_FFFF
+                && q.lifespan_nsec == 0xFFFF_FFFF
+                || (q.lifespan_sec == 0 && q.lifespan_nsec == 0)
+            {
+                with_deadline // infinite lifespan (default)
+            } else {
+                let millis =
+                    (q.lifespan_sec as u64) * 1000 + (q.lifespan_nsec as u64) / 1_000_000;
+                with_deadline.lifespan_millis(millis)
+            };
+            // Presentation
+            let mut result = with_lifespan;
+            let scope = match q.presentation_access_scope {
+                1 => crate::dds::qos::PresentationAccessScope::Topic,
+                2 => crate::dds::qos::PresentationAccessScope::Group,
+                _ => crate::dds::qos::PresentationAccessScope::Instance,
+            };
+            result.presentation = crate::dds::qos::Presentation::new(
+                scope,
+                q.presentation_coherent,
+                q.presentation_ordered,
+            );
             // Partition
             if !q.partition_names.is_empty() {
                 result.partition = crate::qos::partition::Partition::new(q.partition_names.clone());

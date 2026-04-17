@@ -141,6 +141,7 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
 
     // Additional QoS policies
     qos::write_deadline(sedp_data.qos.as_ref(), buf, &mut offset)?;
+    qos::write_lifespan(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_ownership(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_ownership_strength(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_liveliness(buf, &mut offset)?;

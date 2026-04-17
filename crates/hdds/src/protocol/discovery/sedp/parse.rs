@@ -16,7 +16,7 @@ use crate::core::discovery::GUID;
 use crate::protocol::discovery::constants::{
     CDR2_BE, CDR2_LE, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PID_BUILTIN_ENDPOINT_SET,
     PID_DATA_REPRESENTATION, PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE,
-    PID_ENDPOINT_GUID, PID_HISTORY, PID_METATRAFFIC_UNICAST_LOCATOR, PID_OWNERSHIP,
+    PID_ENDPOINT_GUID, PID_HISTORY, PID_LIFESPAN, PID_METATRAFFIC_UNICAST_LOCATOR, PID_OWNERSHIP,
     PID_OWNERSHIP_STRENGTH, PID_PARTICIPANT_GUID, PID_PARTICIPANT_LEASE_DURATION, PID_PARTITION,
     PID_PRESENTATION, PID_RELIABILITY, PID_SENTINEL, PID_TOPIC_NAME, PID_TYPE_NAME,
     PID_TYPE_OBJECT, PID_TYPE_OBJECT_LB, PID_UNICAST_LOCATOR, PID_USER_DATA,
@@ -332,6 +332,7 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
     let mut qos_ownership: Option<crate::dds::qos::Ownership> = None;
     let mut qos_ownership_strength: Option<i32> = None;
     let mut qos_deadline: Option<crate::dds::qos::Deadline> = None;
+    let mut qos_lifespan: Option<crate::dds::qos::Lifespan> = None;
 
     // Partition QoS
     let mut qos_partition_names: Vec<String> = Vec::new();
@@ -532,6 +533,24 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                         seconds,
                         fraction,
                         qos_deadline
+                    );
+                }
+            }
+            PID_LIFESPAN => {
+                if length >= 8 {
+                    let seconds = read_u32(buf, offset, is_little_endian);
+                    let fraction = read_u32(buf, offset + 4, is_little_endian);
+                    qos_lifespan = Some(if seconds >= 0x7FFF_FFFF {
+                        crate::dds::qos::Lifespan::infinite()
+                    } else {
+                        let nanos = (seconds as u64) * 1_000_000_000 + (fraction as u64);
+                        crate::dds::qos::Lifespan::new(std::time::Duration::from_nanos(nanos))
+                    });
+                    log::debug!(
+                        "[SEDP-QOS] [?] PID_LIFESPAN parsed: {}s + {} frac -> {:?}",
+                        seconds,
+                        fraction,
+                        qos_lifespan
                     );
                 }
             }
@@ -782,6 +801,7 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
         || qos_ownership.is_some()
         || qos_ownership_strength.is_some()
         || qos_deadline.is_some()
+        || qos_lifespan.is_some()
         || !qos_partition_names.is_empty()
         || !qos_data_representation.is_empty()
     {
@@ -812,6 +832,9 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
         }
         if let Some(deadline) = qos_deadline {
             qos_obj.deadline = deadline;
+        }
+        if let Some(lifespan) = qos_lifespan {
+            qos_obj.lifespan = lifespan;
         }
         if !qos_partition_names.is_empty() {
             qos_obj.partition = crate::qos::partition::Partition::new(qos_partition_names);

@@ -42,6 +42,11 @@ struct MatchEntry {
     matched_remotes: Mutex<HashSet<GUID>>,
     total_count: AtomicU32,
     incompatible_count: AtomicU32,
+    /// For local Readers: when a remote Writer with a finite Lifespan
+    /// matches, tighten this atomic to `min(current, writer_lifespan_nanos)`
+    /// so the reader filters samples using the writer-announced lifespan
+    /// even when the reader did not request a lifespan of its own.
+    reader_lifespan_nanos: Option<Arc<AtomicU64>>,
 }
 
 /// Token returned when registering a match callback.
@@ -97,6 +102,17 @@ impl MatchNotificationRegistry {
         qos: QoS,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
     ) -> MatchToken {
+        self.register_writer_with_incompatible(topic, qos, callback, None)
+    }
+
+    /// Register a local writer with both match and incompatible QoS callbacks.
+    pub fn register_writer_with_incompatible(
+        self: &Arc<Self>,
+        topic: String,
+        qos: QoS,
+        callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
+        incompatible_callback: Option<IncompatibleCallback>,
+    ) -> MatchToken {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = MatchEntry {
             id,
@@ -104,10 +120,11 @@ impl MatchNotificationRegistry {
             qos: qos.clone(),
             kind: LocalKind::Writer,
             callback: Box::new(callback),
-            incompatible_callback: None,
+            incompatible_callback,
             matched_remotes: Mutex::new(HashSet::new()),
             total_count: AtomicU32::new(0),
             incompatible_count: AtomicU32::new(0),
+            reader_lifespan_nanos: None,
         };
         {
             let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
@@ -120,13 +137,35 @@ impl MatchNotificationRegistry {
         }
     }
 
-    /// Register a local reader with both match and incompatible QoS callbacks.
-    pub fn register_reader_with_incompatible(
+    /// Register a local reader and additionally hand in an `AtomicU64` that
+    /// will be tightened (min) whenever a compatible remote writer announces
+    /// a finite Lifespan via SEDP. Used by the DataReader runtime so that
+    /// writer-announced lifespans filter samples even when the reader did
+    /// not request a lifespan of its own.
+    pub fn register_reader_with_lifespan(
         self: &Arc<Self>,
         topic: String,
         qos: QoS,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
         incompatible_callback: Option<IncompatibleCallback>,
+        reader_lifespan_nanos: Arc<AtomicU64>,
+    ) -> MatchToken {
+        self.register_reader_full(
+            topic,
+            qos,
+            callback,
+            incompatible_callback,
+            Some(reader_lifespan_nanos),
+        )
+    }
+
+    fn register_reader_full(
+        self: &Arc<Self>,
+        topic: String,
+        qos: QoS,
+        callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
+        incompatible_callback: Option<IncompatibleCallback>,
+        reader_lifespan_nanos: Option<Arc<AtomicU64>>,
     ) -> MatchToken {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let entry = MatchEntry {
@@ -139,6 +178,7 @@ impl MatchNotificationRegistry {
             matched_remotes: Mutex::new(HashSet::new()),
             total_count: AtomicU32::new(0),
             incompatible_count: AtomicU32::new(0),
+            reader_lifespan_nanos,
         };
         {
             let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
@@ -177,12 +217,55 @@ impl MatchNotificationRegistry {
                 LocalKind::Reader => Matcher::is_compatible(local_qos, &remote.qos),
             };
             if compatible {
-                self.notify_entry(entry_id, remote.endpoint_guid);
+                let writer_lifespan_nanos =
+                    if kind == LocalKind::Reader && !remote.qos.lifespan.is_infinite() {
+                        Some(
+                            u64::try_from(remote.qos.lifespan.duration.as_nanos())
+                                .unwrap_or(u64::MAX),
+                        )
+                    } else {
+                        None
+                    };
+                self.notify_entry(entry_id, remote.endpoint_guid, writer_lifespan_nanos);
+            } else {
+                // Incompatible QoS discovered during catch-up (the remote
+                // endpoint was cached BEFORE the local entry registered).
+                // Fire on_requested_incompatible_qos / on_offered_incompatible_qos
+                // so listeners see the mismatch even in this ordering.
+                let policy_id = match kind {
+                    LocalKind::Writer => {
+                        Matcher::first_incompatible_policy(&remote.qos, local_qos)
+                    }
+                    LocalKind::Reader => {
+                        Matcher::first_incompatible_policy(local_qos, &remote.qos)
+                    }
+                };
+                if policy_id != 0 {
+                    self.fire_incompat(entry_id, policy_id);
+                }
             }
         }
     }
 
-    fn notify_entry(&self, entry_id: u64, remote_guid: GUID) {
+    fn fire_incompat(&self, entry_id: u64, policy_id: u32) {
+        let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
+        for entry in entries.iter() {
+            if entry.id == entry_id {
+                if let Some(ref cb) = entry.incompatible_callback {
+                    let total = entry.incompatible_count.fetch_add(1, Ordering::Relaxed) + 1;
+                    cb(total, 1, policy_id);
+                }
+                return;
+            }
+        }
+    }
+
+    fn notify_entry(
+        &self,
+        entry_id: u64,
+        remote_guid: GUID,
+        writer_lifespan_nanos: Option<u64>,
+    ) {
         let entries = self.entries.read().unwrap_or_else(|e| e.into_inner());
         for entry in entries.iter() {
             if entry.id == entry_id {
@@ -194,6 +277,22 @@ impl MatchNotificationRegistry {
                     let total = entry.total_count.fetch_add(1, Ordering::Relaxed) + 1;
                     let current = matched.len() as u32;
                     drop(matched);
+                    if let (Some(writer_nanos), Some(ref nanos_cell)) =
+                        (writer_lifespan_nanos, entry.reader_lifespan_nanos.as_ref())
+                    {
+                        let mut cur = nanos_cell.load(Ordering::Relaxed);
+                        while writer_nanos < cur {
+                            match nanos_cell.compare_exchange_weak(
+                                cur,
+                                writer_nanos,
+                                Ordering::Relaxed,
+                                Ordering::Relaxed,
+                            ) {
+                                Ok(_) => break,
+                                Err(observed) => cur = observed,
+                            }
+                        }
+                    }
                     (entry.callback)(total, 1, current, 1, Some(remote_guid));
                 }
                 return;
@@ -260,6 +359,32 @@ impl DiscoveryListener for MatchNotificationRegistry {
                     let total = entry.total_count.fetch_add(1, Ordering::Relaxed) + 1;
                     let current = matched.len() as u32;
                     drop(matched);
+                    // Lifespan propagation: a local Reader matched with a
+                    // remote Writer announcing a finite Lifespan — tighten
+                    // the reader's effective lifespan so samples are
+                    // filtered even when the reader did not set one itself.
+                    if entry.kind == LocalKind::Reader {
+                        if let Some(ref nanos_cell) = entry.reader_lifespan_nanos {
+                            if !endpoint.qos.lifespan.is_infinite() {
+                                let writer_nanos = u64::try_from(
+                                    endpoint.qos.lifespan.duration.as_nanos(),
+                                )
+                                .unwrap_or(u64::MAX);
+                                let mut cur = nanos_cell.load(Ordering::Relaxed);
+                                while writer_nanos < cur {
+                                    match nanos_cell.compare_exchange_weak(
+                                        cur,
+                                        writer_nanos,
+                                        Ordering::Relaxed,
+                                        Ordering::Relaxed,
+                                    ) {
+                                        Ok(_) => break,
+                                        Err(observed) => cur = observed,
+                                    }
+                                }
+                            }
+                        }
+                    }
                     (entry.callback)(total, 1, current, 1, Some(endpoint.endpoint_guid));
                 }
             } else if let Some(ref incompat_cb) = entry.incompatible_callback {
@@ -268,7 +393,17 @@ impl DiscoveryListener for MatchNotificationRegistry {
                 let policy_id = if !ownership_ok {
                     5 // OWNERSHIP
                 } else {
-                    Matcher::first_incompatible_policy(&entry.qos, &remote_qos_for_compat)
+                    // first_incompatible_policy expects (reader_qos, writer_qos)
+                    match entry.kind {
+                        LocalKind::Reader => Matcher::first_incompatible_policy(
+                            &entry.qos,
+                            &remote_qos_for_compat,
+                        ),
+                        LocalKind::Writer => Matcher::first_incompatible_policy(
+                            &remote_qos_for_compat,
+                            &entry.qos,
+                        ),
+                    }
                 };
                 // policy_id 0 = no real QoS incompatibility found (partition mismatch
                 // or unknown). Partition mismatch is not an INCOMPATIBLE_QOS event.

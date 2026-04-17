@@ -15,9 +15,8 @@ use crate::telemetry;
 use crate::telemetry::metrics::current_time_ns;
 use crate::transport::UdpTransport;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 /// A typed DDS DataReader that subscribes to samples on a topic.
 ///
@@ -93,8 +92,15 @@ pub struct DataReader<T: DDS> {
     deadline_missed_total: AtomicU32,
     /// Per-instance TIME_BASED_FILTER enforcement (DDS spec 2.2.2.4.2.11).
     time_filter_checkers: Mutex<HashMap<InstanceHandle, TimeBasedFilterChecker>>,
-    /// Lifespan duration for sample expiration (DDS spec 2.2.2.4.2.20).
-    lifespan_duration: Duration,
+    /// Effective lifespan for sample expiration (DDS spec 2.2.2.4.2.20).
+    ///
+    /// Stored as nanoseconds in an `Arc<AtomicU64>`; `u64::MAX` means
+    /// "infinite / disabled". Initialized from the reader's own QoS, then
+    /// tightened to `min(self, writer_lifespan)` whenever a writer matches
+    /// so that writer-announced lifespans filter samples even when the
+    /// reader did not request a lifespan of its own. The `Arc` is shared
+    /// with the match-notification registry which performs the tightening.
+    lifespan_nanos: Arc<AtomicU64>,
     /// Shared dispose event queue from ReaderSubscriber (P1.2).
     dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
     _phantom: core::marker::PhantomData<T>,
@@ -116,10 +122,10 @@ impl<T: DDS> DataReader<T> {
         match_token: Option<crate::dds::match_notification::MatchToken>,
         #[cfg(feature = "security")] security: Option<Arc<crate::security::SecurityPluginSuite>>,
         dispose_events: Arc<Mutex<Vec<DisposeEvent>>>,
+        lifespan_nanos: Arc<AtomicU64>,
     ) -> Self {
         // Capture QoS values before moving qos into struct
         let deadline_period = qos.deadline.period;
-        let lifespan_dur = qos.lifespan.duration;
 
         // Determine cache size from history QoS
         let cache_size = match qos.history {
@@ -147,7 +153,7 @@ impl<T: DDS> DataReader<T> {
             )),
             deadline_missed_total: AtomicU32::new(0),
             time_filter_checkers: Mutex::new(HashMap::new()),
-            lifespan_duration: lifespan_dur,
+            lifespan_nanos,
             dispose_events,
             _phantom: core::marker::PhantomData,
         }
@@ -488,12 +494,13 @@ impl<T: DDS> DataReader<T> {
                     // Compute instance handle from @key fields
                     let instance_handle = InstanceHandle::new(data.compute_key());
 
-                    // Lifespan check: discard samples older than lifespan duration.
+                    // Lifespan check: discard samples older than the effective
+                    // lifespan (`min(self_qos, any matched writer QoS)`).
                     // Uses reception timestamp (sufficient on LAN where jitter << lifespan).
-                    let max_lifespan = Duration::from_secs(u64::MAX);
-                    if self.lifespan_duration != max_lifespan {
+                    let lifespan_nanos = self.lifespan_nanos.load(Ordering::Relaxed);
+                    if lifespan_nanos != u64::MAX {
                         let age_ns = current_time_ns().saturating_sub(entry.timestamp_ns);
-                        if Duration::from_nanos(age_ns) > self.lifespan_duration {
+                        if age_ns > lifespan_nanos {
                             log::debug!(
                                 "[READER] lifespan expired topic='{}' seq={}",
                                 self.topic,

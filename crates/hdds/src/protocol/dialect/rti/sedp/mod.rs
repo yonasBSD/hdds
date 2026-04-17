@@ -115,7 +115,7 @@ pub fn build_sedp(data: &SedpEndpointData) -> EncodeResult<Vec<u8>> {
     qos::write_latency_budget(&mut buf, &mut offset)?;
     qos::write_liveliness(&mut buf, &mut offset)?;
     qos::write_reliability(data.qos, &mut buf, &mut offset)?;
-    qos::write_lifespan(&mut buf, &mut offset)?;
+    qos::write_lifespan(data.qos, &mut buf, &mut offset)?;
     qos::write_user_data(&mut buf, &mut offset)?;
     qos::write_ownership(data.qos, &mut buf, &mut offset)?;
     qos::write_ownership_strength(data.qos, &mut buf, &mut offset)?;

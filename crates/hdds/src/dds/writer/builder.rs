@@ -29,6 +29,12 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 fn validate_resource_limits(limits: &crate::qos::ResourceLimits) -> Result<()> {
+    // Skip the `per_instance * max_instances <= max_samples` cross-check when
+    // either factor is effectively LENGTH_UNLIMITED (`usize::MAX`). The DDS
+    // spec treats these as "no limit" and the product overflows trivially.
+    if limits.max_instances == usize::MAX || limits.max_samples_per_instance == usize::MAX {
+        return Ok(());
+    }
     let required = limits
         .max_samples_per_instance
         .checked_mul(limits.max_instances)
@@ -174,7 +180,10 @@ fn derive_history_and_limits(
                         "History::KeepLast requires depth > 0".to_string(),
                     ));
                 }
-                resource_limits.max_samples = depth as usize;
+                // DDS spec 2.2.2.4.2.2: KEEP_LAST `depth` applies PER INSTANCE.
+                // Only cap the per-instance limit; leave the global cap at its
+                // default (or user value) so multi-instance topics aren't
+                // starved by a global cap of `depth`.
                 resource_limits.max_samples_per_instance = depth as usize;
                 history_policy = crate::qos::History::KeepLast(depth);
             }
@@ -427,6 +436,16 @@ impl<T: DDS> WriterBuilder<T> {
             ) => None,
         };
 
+        // Propagate LIFESPAN QoS to the history cache so expired samples are
+        // pruned automatically and cannot be retransmitted (DDS 2.2.2.4.2.20).
+        if let Some(ref cache) = history_cache {
+            if !self.qos.lifespan.is_infinite() {
+                let nanos =
+                    u64::try_from(self.qos.lifespan.duration.as_nanos()).unwrap_or(u64::MAX);
+                cache.set_lifespan_nanos(nanos);
+            }
+        }
+
         let heartbeat_tx = match self.qos.reliability {
             super::super::qos::Reliability::Reliable => Some(RefCell::new(HeartbeatTx::new())),
             super::super::qos::Reliability::BestEffort => None,
@@ -643,12 +662,13 @@ impl<T: DDS> WriterBuilder<T> {
             (&self.participant, &self.listener)
         {
             if let Some(ref reg) = participant.match_registry {
-                let listener = Arc::clone(listener);
-                Some(reg.register_writer(
+                let l_match = Arc::clone(listener);
+                let l_incompat = Arc::clone(listener);
+                Some(reg.register_writer_with_incompatible(
                     self.topic.clone(),
                     self.qos.clone(),
                     move |total, total_change, current, current_change, last_handle| {
-                        listener.on_publication_matched(
+                        l_match.on_publication_matched(
                             crate::dds::listener::PublicationMatchedStatus {
                                 total_count: total,
                                 total_count_change: total_change,
@@ -658,6 +678,20 @@ impl<T: DDS> WriterBuilder<T> {
                             },
                         );
                     },
+                    Some(Box::new(move |_total, _total_change, policy_id| {
+                        let policy_name = match policy_id {
+                            2 => "PRESENTATION",
+                            5 => "OWNERSHIP",
+                            7 => "DURABILITY",
+                            11 => "RELIABILITY",
+                            13 => "DEADLINE",
+                            14 => "DURABILITY_SERVICE",
+                            21 => "LIVELINESS",
+                            23 => "DATA_REPRESENTATION",
+                            _ => "UNKNOWN",
+                        };
+                        l_incompat.on_offered_incompatible_qos(policy_id, policy_name);
+                    })),
                 ))
             } else {
                 None

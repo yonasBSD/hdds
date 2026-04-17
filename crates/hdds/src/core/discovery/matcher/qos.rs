@@ -211,9 +211,22 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
     // RxO policy: writer access_scope must be >= reader access_scope
     // (GROUP > TOPIC > INSTANCE), and if the reader requests coherent_access
     // or ordered_access, the writer must offer them.
-    if !writer_qos
-        .presentation
-        .is_compatible_with(&reader_qos.presentation)
+    //
+    // Gate on "at least one side is non-default": vendors frequently omit
+    // PID_PRESENTATION from SEDP, and some (notably RTI) send it with a
+    // different byte layout than the one we parse. Applying the check when
+    // BOTH sides look like the default (INSTANCE, coherent=false,
+    // ordered=false) fires false-positive INCOMPATIBLE_QOS on perfectly
+    // normal pairs like Test_Domain_0 / Test_Reliability_0. Only applying
+    // it when someone actually *asked* for coherent/ordered/non-instance
+    // keeps the DDS 2.2.3.6 semantics without regressing basic tests.
+    let default_presentation = crate::dds::qos::Presentation::instance();
+    let writer_non_default = writer_qos.presentation != default_presentation;
+    let reader_non_default = reader_qos.presentation != default_presentation;
+    if (writer_non_default || reader_non_default)
+        && !writer_qos
+            .presentation
+            .is_compatible_with(&reader_qos.presentation)
     {
         log::debug!(
             "[MATCH-QOS] Presentation mismatch (writer={:?}, reader={:?})",
@@ -270,10 +283,17 @@ pub(super) fn first_incompatible_policy(reader_qos: &QoS, writer_qos: &QoS) -> u
             return 23; // DATA_REPRESENTATION
         }
     }
-    // Presentation mismatch
-    if !writer_qos
-        .presentation
-        .is_compatible_with(&reader_qos.presentation)
+    // Presentation mismatch — same guard as is_compatible() above: only
+    // report when at least one side is non-default, to avoid flagging
+    // default-default pairs as incompatible when the remote vendor omits
+    // PID_PRESENTATION or sends it with a layout we don't fully parse.
+    let default_presentation = crate::dds::qos::Presentation::instance();
+    let writer_non_default = writer_qos.presentation != default_presentation;
+    let reader_non_default = reader_qos.presentation != default_presentation;
+    if (writer_non_default || reader_non_default)
+        && !writer_qos
+            .presentation
+            .is_compatible_with(&reader_qos.presentation)
     {
         return 2; // PRESENTATION
     }

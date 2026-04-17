@@ -336,16 +336,25 @@ pub fn write_latency_budget(buf: &mut [u8], offset: &mut usize) -> EncodeResult<
 }
 
 /// Write PID_LIFESPAN (0x002b) - 8 bytes
-pub fn write_lifespan(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
+pub fn write_lifespan(
+    qos: Option<&QosProfile>,
+    buf: &mut [u8],
+    offset: &mut usize,
+) -> EncodeResult<()> {
     if *offset + 12 > buf.len() {
         return Err(EncodeError::BufferTooSmall);
     }
 
+    let (seconds, fraction) = if let Some(q) = qos {
+        (q.lifespan_sec, q.lifespan_nsec)
+    } else {
+        (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
+    };
+
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_LIFESPAN.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
-    // Duration = INFINITE
-    buf[*offset + 4..*offset + 8].copy_from_slice(&0x7FFF_FFFFu32.to_le_bytes()); // seconds
-    buf[*offset + 8..*offset + 12].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()); // fraction
+    buf[*offset + 4..*offset + 8].copy_from_slice(&seconds.to_le_bytes());
+    buf[*offset + 8..*offset + 12].copy_from_slice(&fraction.to_le_bytes());
     *offset += 12;
 
     Ok(())

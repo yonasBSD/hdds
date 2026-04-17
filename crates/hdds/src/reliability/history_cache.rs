@@ -45,6 +45,11 @@ pub struct HistoryCache {
     /// Maximum samples per instance for keyed topics.
     /// LENGTH_UNLIMITED means no limit.
     max_samples_per_instance: usize,
+    /// LIFESPAN QoS: samples older than this are pruned automatically on
+    /// every cache read (`get`, `get_all_samples`, `snapshot_payloads`) so
+    /// expired samples cannot be retransmitted.  `u64::MAX` means INFINITE
+    /// (disabled), which is the default.  Set via `set_lifespan_nanos`.
+    lifespan_nanos: std::sync::atomic::AtomicU64,
 }
 
 impl HistoryCache {
@@ -73,6 +78,7 @@ impl HistoryCache {
             history_kind,
             max_instances: limits.max_instances,
             max_samples_per_instance: limits.max_samples_per_instance,
+            lifespan_nanos: std::sync::atomic::AtomicU64::new(u64::MAX),
         }
     }
 
@@ -93,6 +99,7 @@ impl HistoryCache {
             history_kind,
             max_instances: LENGTH_UNLIMITED,
             max_samples_per_instance: LENGTH_UNLIMITED,
+            lifespan_nanos: std::sync::atomic::AtomicU64::new(u64::MAX),
         }
     }
 
@@ -117,6 +124,25 @@ impl HistoryCache {
             history_kind,
             max_instances,
             max_samples_per_instance,
+            lifespan_nanos: std::sync::atomic::AtomicU64::new(u64::MAX),
+        }
+    }
+
+    /// Configure LIFESPAN QoS for automatic expired-sample pruning.
+    ///
+    /// `u64::MAX` disables pruning (INFINITE lifespan).
+    pub fn set_lifespan_nanos(&self, nanos: u64) {
+        self.lifespan_nanos
+            .store(nanos, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Prune samples older than the configured LIFESPAN. No-op if disabled.
+    fn prune_by_lifespan(&self) {
+        let nanos = self
+            .lifespan_nanos
+            .load(std::sync::atomic::Ordering::Relaxed);
+        if nanos != u64::MAX {
+            self.prune_expired(nanos);
         }
     }
 
@@ -188,6 +214,7 @@ impl HistoryCache {
 
     /// Get message by sequence number.
     pub fn get(&self, seq: u64) -> Option<Vec<u8>> {
+        self.prune_by_lifespan();
         let ring = match self.ring.lock() {
             Ok(lock) => lock,
             Err(e) => {
@@ -247,6 +274,7 @@ impl HistoryCache {
 
     /// Snapshot all cached samples for late-joiner delivery.
     pub fn get_all_samples(&self) -> Vec<(u64, SlabHandle, usize)> {
+        self.prune_by_lifespan();
         let ring = match self.ring.lock() {
             Ok(lock) => lock,
             Err(e) => {
@@ -259,6 +287,7 @@ impl HistoryCache {
 
     /// Snapshot all cached payloads (seq + bytes) for late-joiner replay.
     pub fn snapshot_payloads(&self) -> Vec<(u64, Vec<u8>)> {
+        self.prune_by_lifespan();
         let ring = match self.ring.lock() {
             Ok(lock) => lock,
             Err(e) => {
@@ -280,6 +309,7 @@ impl HistoryCache {
     /// Returns only the most recent `max_replay_samples` samples.
     /// If `max_replay_samples` is LENGTH_UNLIMITED, returns all cached samples.
     pub fn snapshot_payloads_limited(&self, max_replay_samples: usize) -> Vec<(u64, Vec<u8>)> {
+        self.prune_by_lifespan();
         let ring = match self.ring.lock() {
             Ok(lock) => lock,
             Err(e) => {
@@ -342,6 +372,45 @@ impl HistoryCache {
             .count()
     }
 
+    /// Remove samples whose age (now - insertion time) exceeds `max_age_nanos`.
+    ///
+    /// Used by DataWriter to enforce LIFESPAN QoS (DDS 2.2.2.4.2.20): expired
+    /// samples MUST NOT be retransmitted to readers. Samples are removed from
+    /// the front of the FIFO (oldest first) and stop as soon as a non-expired
+    /// sample is found, since entries are inserted in monotonic-timestamp order.
+    ///
+    /// Returns the number of samples removed.
+    pub fn prune_expired(&self, max_age_nanos: u64) -> usize {
+        if max_age_nanos == u64::MAX {
+            return 0;
+        }
+        let mut removed = 0;
+        let now = current_time_ns();
+        let cutoff = now.saturating_sub(max_age_nanos);
+        let mut ring = match self.ring.lock() {
+            Ok(lock) => lock,
+            Err(e) => {
+                log::debug!("[HistoryCache::prune_expired] Lock poisoned, recovering");
+                e.into_inner()
+            }
+        };
+
+        while let Some(front) = ring.front() {
+            if front.ts_ns < cutoff {
+                let Some(entry) = ring.pop_front() else {
+                    unreachable!("front() returned Some, pop_front must succeed")
+                };
+                self.slabs.release(entry.slab);
+                self.quota_bytes.fetch_sub(entry.len, Ordering::Relaxed);
+                removed += 1;
+            } else {
+                break;
+            }
+        }
+
+        removed
+    }
+
     /// Remove all samples acknowledged by all readers (seqs <= acked_seq).
     ///
     /// Returns the number of samples removed.
@@ -373,6 +442,7 @@ impl HistoryCache {
 
     /// Get oldest sequence number in cache.
     pub fn oldest_seq(&self) -> Option<u64> {
+        self.prune_by_lifespan();
         let ring = match self.ring.lock() {
             Ok(lock) => lock,
             Err(e) => {

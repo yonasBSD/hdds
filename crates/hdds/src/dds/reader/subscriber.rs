@@ -32,6 +32,49 @@ pub(super) struct DisposeEvent {
     pub seq: u64,
 }
 
+/// Sliding window of recently admitted remote sequences.
+///
+/// Drops duplicates so a writer that resends the same seq (e.g. intra-process
+/// loopback collision + UDP delivery, or a late transient retransmit that
+/// already reached the reader) doesn't deliver a sample twice.
+#[derive(Debug, Default)]
+struct SeenSeqs {
+    /// Highest seq admitted so far.
+    high: u64,
+    /// Recent window of admitted seqs (covers out-of-order retransmits).
+    recent: std::collections::VecDeque<u64>,
+}
+
+impl SeenSeqs {
+    const WINDOW: usize = 256;
+
+    fn admit(&mut self, seq: u64) -> bool {
+        if seq > self.high {
+            self.high = seq;
+            self.recent.push_back(seq);
+            if self.recent.len() > Self::WINDOW {
+                self.recent.pop_front();
+            }
+            return true;
+        }
+        // seq <= high: may be a duplicate or an out-of-order retransmit.
+        // Admit only if not already in the recent window AND within window range.
+        let floor = self.high.saturating_sub(Self::WINDOW as u64);
+        if seq < floor {
+            // Too old — conservatively drop (was already expired from window).
+            return false;
+        }
+        if self.recent.iter().any(|&s| s == seq) {
+            return false;
+        }
+        self.recent.push_back(seq);
+        if self.recent.len() > Self::WINDOW {
+            self.recent.pop_front();
+        }
+        true
+    }
+}
+
 #[derive(Debug, Clone)]
 struct SeqWindow {
     /// Base sequence number (first remote sequence observed).
@@ -156,6 +199,8 @@ pub(super) struct ReaderSubscriber<T: DDS> {
     pub(super) status_condition: Arc<StatusCondition>,
     pub(super) participant_guard: Option<Arc<GuardCondition>>,
     seq_window: Mutex<SeqWindow>,
+    /// Recently admitted remote sequences (duplicate suppression).
+    seen_seqs: Mutex<SeenSeqs>,
     /// Optional content filter (for ContentFilteredTopic)
     pub(super) content_filter: Option<FilterEvaluator>,
     /// Optional listener for data callbacks
@@ -192,6 +237,7 @@ impl<T: DDS> ReaderSubscriber<T> {
             status_condition,
             participant_guard,
             seq_window: Mutex::new(SeqWindow::new()),
+            seen_seqs: Mutex::new(SeenSeqs::default()),
             content_filter,
             listener,
             dispose_events,
@@ -202,6 +248,26 @@ impl<T: DDS> ReaderSubscriber<T> {
 
 impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
     fn on_data(&self, _topic: &str, remote_seq: u64, data: &[u8]) {
+        // Drop duplicate remote sequences. Per RTPS spec a DataWriter MUST
+        // assign a monotonically increasing sequence number per sample, so
+        // repeats are retransmits that were already delivered. Without this
+        // guard, a writer that (buggy-ly or not) resends a sample under
+        // the same seq delivers the payload twice — breaking `test_reliability_no_losses_w_instances`.
+        {
+            let mut seen = match self.seen_seqs.lock() {
+                Ok(lock) => lock,
+                Err(e) => e.into_inner(),
+            };
+            if !seen.admit(remote_seq) {
+                log::debug!(
+                    "[READER-SUB] dropping duplicate remote_seq={} topic='{}'",
+                    remote_seq,
+                    self.topic
+                );
+                return;
+            }
+        }
+
         let msg = match T::decode_cdr2(data) {
             Ok(m) => m,
             Err(_e) => {
@@ -253,13 +319,24 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
             listener.on_data_available(&msg);
         }
 
-        // Buffer sized to fit max RTPS DATA submessage payload (~64KB)
-        let mut tmp_buf = vec![0u8; 65536];
-        let serialized_len = match msg.encode_cdr2(&mut tmp_buf) {
-            Ok(len) => len,
-            Err(_e) => {
-                log::debug!("[READER-SUB] re-encode failed: {:?}", _e);
-                return;
+        // Grow-and-retry re-encoding buffer: start at 64KB (covers typical
+        // RTPS DATA payload) and double on BufferTooSmall up to 16MB to
+        // support DATA_FRAG reassembled payloads (e.g. 100KB LargeData).
+        const MAX_RE_ENCODE_SIZE: usize = 16 * 1024 * 1024;
+        let (tmp_buf, serialized_len) = {
+            let mut size = 65_536usize;
+            loop {
+                let mut buf = vec![0u8; size];
+                match msg.encode_cdr2(&mut buf) {
+                    Ok(len) => break (buf, len),
+                    Err(crate::dds::Error::BufferTooSmall) if size < MAX_RE_ENCODE_SIZE => {
+                        size = (size * 2).min(MAX_RE_ENCODE_SIZE);
+                    }
+                    Err(_e) => {
+                        log::debug!("[READER-SUB] re-encode failed: {:?}", _e);
+                        return;
+                    }
+                }
             }
         };
 
