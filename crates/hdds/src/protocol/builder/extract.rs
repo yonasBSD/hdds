@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 // Copyright (c) 2025-2026 naskel.com
 
-use super::helpers::validate_rtps_data_packet;
+use super::helpers::{find_data_submsg_offset, validate_rtps_data_packet};
 use crate::protocol::constants::{RTPS_MAGIC, RTPS_SUBMSG_DATA};
 
 /// Extract CDR2 payload from RTPS DATA packet.
@@ -9,10 +9,14 @@ pub fn extract_data_payload(rtps_packet: &[u8]) -> Option<&[u8]> {
     if !validate_rtps_data_packet(rtps_packet, 40) {
         return None;
     }
+    let data_off = find_data_submsg_offset(rtps_packet)?;
 
-    let _submessage_len = u16::from_le_bytes([rtps_packet[18], rtps_packet[19]]) as usize;
-    let octets_to_qos = u16::from_le_bytes([rtps_packet[22], rtps_packet[23]]) as usize;
-    let qos_offset = 24 + octets_to_qos;
+    // octetsToInlineQos is at (data_off + 4 [submsg header] + 2 [extraFlags]) = data_off + 6
+    let octets_to_qos = u16::from_le_bytes([
+        rtps_packet[data_off + 6],
+        rtps_packet[data_off + 7],
+    ]) as usize;
+    let qos_offset = data_off + 8 + octets_to_qos;
 
     if rtps_packet.len() < qos_offset + 4 {
         return None;
@@ -60,16 +64,20 @@ pub fn extract_inline_qos(rtps_packet: &[u8]) -> Option<&[u8]> {
     if !validate_rtps_data_packet(rtps_packet, 44) {
         return None;
     }
+    let data_off = find_data_submsg_offset(rtps_packet)?;
 
     // Check InlineQos flag (bit 1 of submessage flags)
-    let flags = rtps_packet[21];
+    let flags = rtps_packet[data_off + 1];
     if flags & 0x02 == 0 {
         return None; // No inline QoS present
     }
 
-    // octetsToInlineQos at offset 26-27 (after RTPS header + submsg header + extraFlags)
-    let octets_to_inline_qos = u16::from_le_bytes([rtps_packet[26], rtps_packet[27]]) as usize;
-    let qos_offset = 28 + octets_to_inline_qos;
+    // octetsToInlineQos at (data_off + 4 [hdr] + 2 [extraFlags]) = data_off + 6
+    let octets_to_inline_qos = u16::from_le_bytes([
+        rtps_packet[data_off + 6],
+        rtps_packet[data_off + 7],
+    ]) as usize;
+    let qos_offset = data_off + 8 + octets_to_inline_qos;
 
     if qos_offset >= rtps_packet.len() {
         return None;
@@ -109,19 +117,25 @@ pub fn extract_sequence_number(rtps_packet: &[u8]) -> Option<u64> {
     if !validate_rtps_data_packet(rtps_packet, 44) {
         return None;
     }
+    let data_off = find_data_submsg_offset(rtps_packet)?;
 
-    // writerSN starts at offset 36 (after writerEntityId)
+    // Relative to data_off: hdr(4) + extraFlags(2) + octetsToInlineQos(2) +
+    // readerEntityId(4) + writerEntityId(4) = 16 → writerSN at data_off + 16
+    let sn_base = data_off + 16;
+    if sn_base + 8 > rtps_packet.len() {
+        return None;
+    }
     let seq_high = u32::from_le_bytes([
-        rtps_packet[36],
-        rtps_packet[37],
-        rtps_packet[38],
-        rtps_packet[39],
+        rtps_packet[sn_base],
+        rtps_packet[sn_base + 1],
+        rtps_packet[sn_base + 2],
+        rtps_packet[sn_base + 3],
     ]);
     let seq_low = u32::from_le_bytes([
-        rtps_packet[40],
-        rtps_packet[41],
-        rtps_packet[42],
-        rtps_packet[43],
+        rtps_packet[sn_base + 4],
+        rtps_packet[sn_base + 5],
+        rtps_packet[sn_base + 6],
+        rtps_packet[sn_base + 7],
     ]);
 
     // RTPS SequenceNumber_t: value = high * 2^32 + low
@@ -208,8 +222,11 @@ pub fn is_key_only_data(rtps_packet: &[u8]) -> bool {
     if !super::helpers::validate_rtps_data_packet(rtps_packet, 24) {
         return false;
     }
-    // DATA submessage flags at offset 21 (second byte of submessage header)
-    let flags = rtps_packet[21];
+    let Some(data_off) = find_data_submsg_offset(rtps_packet) else {
+        return false;
+    };
+    // DATA submessage flags at (data_off + 1)
+    let flags = rtps_packet[data_off + 1];
     flags & 0x08 != 0 // Bit 3 = K flag
 }
 

@@ -6,7 +6,18 @@ use super::helpers::build_inline_qos_with_topic;
 // - Now using DialectEncoder for DATA/GAP submessages
 use crate::protocol::constants::*;
 use crate::protocol::dialect::{get_encoder, Dialect};
+use crate::protocol::rtps::encode_info_ts;
 use std::ops::Range;
+
+/// Current wall-clock as (sec, frac) where frac is 2^-32 seconds (RTPS v2.5 §9.3.2).
+fn now_rtps_timestamp() -> (u32, u32) {
+    let d = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let sec = d.as_secs().min(u32::MAX as u64) as u32;
+    let frac = (((d.subsec_nanos() as u64) << 32) / 1_000_000_000) as u32;
+    (sec, frac)
+}
 
 /// RTPS endpoint context used when building DATA packets.
 ///
@@ -25,13 +36,21 @@ pub struct RtpsEndpointContext {
     pub encapsulation_kind: u16,
 }
 
-/// Byte offset of readerEntityId within a standard RTPS DATA packet.
+/// Byte offset of readerEntityId within a standard RTPS DATA packet built
+/// by `build_data_packet_with_context` / `build_single_data_frag_packet` /
+/// `build_dispose_packet_with_context`.
 ///
-/// Layout: RTPS header (20) + submsg header (4) + extraFlags (2) +
-/// octetsToInlineQos (2) = offset 28.
+/// Layout: RTPS header (20) + INFO_TS (12) + DATA submsg header (4) +
+/// extraFlags (2) + octetsToInlineQos (2) = offset 40.
 /// Used by `send_packet_to_endpoints()` to patch per-reader entity IDs
 /// for cross-vendor interop (RTPS v2.3 Sec.8.3.7.2).
-pub const READER_ENTITY_ID_OFFSET: usize = 28;
+///
+/// **INVARIANT**: every DATA-carrying builder in this crate MUST emit an
+/// `INFO_TS` submessage immediately after the RTPS header, so that
+/// `find_data_submsg_offset(bytes) + 20 == READER_ENTITY_ID_OFFSET` holds.
+/// Guarded by `tests::builders_honor_reader_entity_id_offset`. When adding
+/// a new DATA-emitting builder, extend that test to cover it.
+pub const READER_ENTITY_ID_OFFSET: usize = 40;
 
 /// Build RTPS DATA packet with topic name and sequence number.
 ///
@@ -314,12 +333,21 @@ pub fn build_data_packet_with_context(
     //                       + inline_qos + payload
     let submsg_body_len = 20 + inline_qos.len() + encapsulated_payload.len();
 
-    // Build RTPS header (20 bytes) + DATA submessage
-    let mut packet = Vec::with_capacity(20 + 4 + submsg_body_len);
+    // INFO_TS carries the writer's source_timestamp. RTPS v2.5 §8.3.7.9 + §8.7.2.2.5:
+    // without it, source_timestamp is TIME_INVALID and lifespan filtering is undefined.
+    // Connext (and the OMG Lifespan tests) need it to compute per-sample expiry.
+    let (ts_sec, ts_frac) = now_rtps_timestamp();
+    let info_ts = encode_info_ts(ts_sec, ts_frac);
+
+    // Build RTPS header (20 bytes) + INFO_TS (12 bytes) + DATA submessage
+    let mut packet = Vec::with_capacity(20 + info_ts.len() + 4 + submsg_body_len);
     packet.extend_from_slice(RTPS_MAGIC);
     packet.extend_from_slice(&[RTPS_VERSION_MAJOR, RTPS_VERSION_MINOR]);
     packet.extend_from_slice(&HDDS_VENDOR_ID);
     packet.extend_from_slice(&ctx.guid_prefix);
+
+    // INFO_TS submessage (12 bytes) — applies to subsequent submessages in this packet
+    packet.extend_from_slice(&info_ts);
 
     // DATA submessage header (4 bytes)
     packet.push(0x15); // DATA submessage ID
@@ -460,12 +488,17 @@ fn build_single_data_frag_packet(
     data_size: u32,
     fragment_data: &[u8],
 ) -> Vec<u8> {
-    // Build RTPS header (20 bytes)
-    let mut packet = Vec::with_capacity(20 + 40 + fragment_data.len());
+    let (ts_sec, ts_frac) = now_rtps_timestamp();
+    let info_ts = encode_info_ts(ts_sec, ts_frac);
+
+    // Build RTPS header (20) + INFO_TS (12) + DATA_FRAG
+    let mut packet = Vec::with_capacity(20 + info_ts.len() + 40 + fragment_data.len());
     packet.extend_from_slice(RTPS_MAGIC);
     packet.extend_from_slice(&[RTPS_VERSION_MAJOR, RTPS_VERSION_MINOR]);
     packet.extend_from_slice(&HDDS_VENDOR_ID);
     packet.extend_from_slice(&ctx.guid_prefix);
+
+    packet.extend_from_slice(&info_ts);
 
     // Use DialectEncoder for DATA_FRAG submessage
     let encoder = get_encoder(Dialect::Hybrid);
@@ -530,12 +563,21 @@ pub fn build_dispose_packet_with_context(
     //                       + inline_qos + key_payload
     let submsg_body_len = 20 + inline_qos.len() + key_payload.len();
 
-    // Build RTPS header (20 bytes) + DATA submessage
-    let mut packet = Vec::with_capacity(20 + 4 + submsg_body_len);
+    // Align with the regular DATA path: prepend INFO_TS so that
+    // send_packet_to_endpoints()'s readerEntityId patch lands at the right
+    // offset (READER_ENTITY_ID_OFFSET = 40, which assumes a leading INFO_TS).
+    let (ts_sec, ts_frac) = now_rtps_timestamp();
+    let info_ts = encode_info_ts(ts_sec, ts_frac);
+
+    // Build RTPS header (20 bytes) + INFO_TS (12 bytes) + DATA submessage
+    let mut packet = Vec::with_capacity(20 + info_ts.len() + 4 + submsg_body_len);
     packet.extend_from_slice(RTPS_MAGIC);
     packet.extend_from_slice(&[RTPS_VERSION_MAJOR, RTPS_VERSION_MINOR]);
     packet.extend_from_slice(&HDDS_VENDOR_ID);
     packet.extend_from_slice(&ctx.guid_prefix);
+
+    // INFO_TS submessage (12 bytes)
+    packet.extend_from_slice(&info_ts);
 
     // DATA submessage header (4 bytes)
     packet.push(0x15); // DATA submessage ID
