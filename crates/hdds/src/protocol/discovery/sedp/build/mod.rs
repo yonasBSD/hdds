@@ -91,15 +91,17 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
     // NOTE: Removed PID_PRODUCT_VERSION (0x8000) - RTI rejects vendor PIDs from non-RTI vendors
     // metadata::write_product_version(buf, &mut offset)?;
 
-    // Data representation - write from QoS if specified, otherwise advertise BOTH.
+    // Data representation - write from QoS if specified, otherwise advertise XCDR2 only.
+    // HDDS serializes XCDR2 exclusively (no encode_cdr1 path), so advertising XCDR1
+    // would be a lie that RTI Connext catches and reports as INCOMPATIBLE_QOS policy 23.
     if let Some(ref qos) = sedp_data.qos {
         if !qos.data_representation.is_empty() {
             metadata::write_data_representation_list(&qos.data_representation, buf, &mut offset)?;
         } else {
-            metadata::write_data_representation_both(buf, &mut offset)?;
+            metadata::write_data_representation_xcdr2(buf, &mut offset)?;
         }
     } else {
-        metadata::write_data_representation_both(buf, &mut offset)?;
+        metadata::write_data_representation_xcdr2(buf, &mut offset)?;
     }
 
     // Additional metadata (commented out for minimal profile)

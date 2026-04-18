@@ -204,8 +204,8 @@ pub fn write_expects_inline_qos(
 ///
 /// Honors `qos.data_representation` exactly:
 /// - If the list is non-empty, writes those representation IDs in order.
-/// - If the list is empty (or no QoS provided), advertises **both** XCDR1
-///   (0x0000) and XCDR2 (0x0002) for maximum interoperability.
+/// - If the list is empty (or no QoS provided), advertises XCDR2 (0x0002) only,
+///   matching the writer's encoding (HDDS has no XCDR1 encode path).
 ///
 /// Layout: `seq_len (u32) + N * u16 + pad` aligned to 4 bytes.
 pub fn write_data_representation(
@@ -216,7 +216,7 @@ pub fn write_data_representation(
     // Build the representation list
     let reprs: &[u16] = match qos {
         Some(q) if !q.data_representation.is_empty() => &q.data_representation,
-        _ => &[0x0000u16, 0x0002u16],
+        _ => &[0x0002u16],
     };
 
     let seq_len = reprs.len() as u32;
