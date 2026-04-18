@@ -99,7 +99,9 @@ pub fn write_deadline(
     }
 
     let (seconds, fraction) = if let Some(q) = qos {
-        (q.deadline_period_sec, q.deadline_period_nsec)
+        // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
+        let frac = (((q.deadline_period_nsec as u64) << 32) / 1_000_000_000) as u32;
+        (q.deadline_period_sec, frac)
     } else {
         (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
     };

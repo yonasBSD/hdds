@@ -525,7 +525,9 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                     qos_deadline = Some(if seconds >= 0x7FFF_FFFF {
                         crate::dds::qos::Deadline::infinite()
                     } else {
-                        let nanos = (seconds as u64) * 1_000_000_000 + (fraction as u64);
+                        // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds.
+                        let frac_nanos = ((fraction as u64) * 1_000_000_000) >> 32;
+                        let nanos = (seconds as u64) * 1_000_000_000 + frac_nanos;
                         crate::dds::qos::Deadline::new(std::time::Duration::from_nanos(nanos))
                     });
                     log::debug!(
@@ -543,7 +545,9 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                     qos_lifespan = Some(if seconds >= 0x7FFF_FFFF {
                         crate::dds::qos::Lifespan::infinite()
                     } else {
-                        let nanos = (seconds as u64) * 1_000_000_000 + (fraction as u64);
+                        // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds.
+                        let frac_nanos = ((fraction as u64) * 1_000_000_000) >> 32;
+                        let nanos = (seconds as u64) * 1_000_000_000 + frac_nanos;
                         crate::dds::qos::Lifespan::new(std::time::Duration::from_nanos(nanos))
                     });
                     log::debug!(

@@ -132,8 +132,10 @@ pub fn write_deadline(
             (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
         } else {
             let secs = qos.deadline.period.as_secs();
-            let nanos = qos.deadline.period.subsec_nanos();
-            (u32::try_from(secs).unwrap_or(u32::MAX), nanos)
+            let nanos = qos.deadline.period.subsec_nanos() as u64;
+            // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
+            let frac = ((nanos << 32) / 1_000_000_000) as u32;
+            (u32::try_from(secs).unwrap_or(u32::MAX), frac)
         }
     } else {
         (0x7FFF_FFFFu32, 0xFFFF_FFFFu32) // INFINITE
@@ -165,8 +167,10 @@ pub fn write_lifespan(
             (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
         } else {
             let secs = qos.lifespan.duration.as_secs();
-            let nanos = qos.lifespan.duration.subsec_nanos();
-            (u32::try_from(secs).unwrap_or(u32::MAX), nanos)
+            let nanos = qos.lifespan.duration.subsec_nanos() as u64;
+            // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
+            let frac = ((nanos << 32) / 1_000_000_000) as u32;
+            (u32::try_from(secs).unwrap_or(u32::MAX), frac)
         }
     } else {
         (0x7FFF_FFFFu32, 0xFFFF_FFFFu32) // INFINITE
