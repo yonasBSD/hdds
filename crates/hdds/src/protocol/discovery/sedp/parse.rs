@@ -147,15 +147,16 @@ fn parse_durability_service(
     }
 
     let cleanup_secs = read_u32(buf, offset, is_little_endian);
-    let cleanup_ns = read_u32(buf, offset + 4, is_little_endian);
+    let cleanup_fraction = read_u32(buf, offset + 4, is_little_endian);
     // history_kind at offset+8 (not used directly, DurabilityService uses KEEP_LAST)
     let history_depth = read_u32(buf, offset + 12, is_little_endian);
     let max_samples = read_i32(buf, offset + 16, is_little_endian);
     let max_instances = read_i32(buf, offset + 20, is_little_endian);
     let max_samples_per_instance = read_i32(buf, offset + 24, is_little_endian);
 
-    // Convert Duration_t to microseconds
-    let cleanup_delay_us = (cleanup_secs as u64) * 1_000_000 + (cleanup_ns as u64) / 1_000;
+    // Convert RTPS Duration_t to microseconds (RTPS v2.5 §9.3.2: fraction is 2^-32 sec).
+    let cleanup_fraction_us = ((cleanup_fraction as u64) * 1_000_000) >> 32;
+    let cleanup_delay_us = (cleanup_secs as u64) * 1_000_000 + cleanup_fraction_us;
 
     let ds = crate::dds::qos::DurabilityService::new(
         cleanup_delay_us,

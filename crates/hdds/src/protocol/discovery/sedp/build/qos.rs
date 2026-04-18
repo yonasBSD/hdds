@@ -48,7 +48,8 @@ pub fn write_reliability(
     buf[*offset + 2..*offset + 4].copy_from_slice(&12u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&reliability_kind.to_le_bytes());
     buf[*offset + 8..*offset + 12].copy_from_slice(&0u32.to_le_bytes()); // max_blocking_time.sec = 0
-    buf[*offset + 12..*offset + 16].copy_from_slice(&100_000_000u32.to_le_bytes()); // max_blocking_time.nanosec = 100ms
+    // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds. 100 ms = 0.1 * 2^32 ~= 0x1999999A.
+    buf[*offset + 12..*offset + 16].copy_from_slice(&0x1999_999Au32.to_le_bytes());
     *offset += 16;
 
     Ok(())
@@ -390,11 +391,11 @@ pub fn write_durability_service(
 
     let ds = qos.map(|q| q.durability_service).unwrap_or_default();
 
-    // Convert cleanup delay from microseconds to Duration_t (seconds + nanoseconds)
+    // Convert cleanup delay from microseconds to RTPS Duration_t.
+    // RTPS v2.5 §9.3.2: fraction is 2^-32 seconds, not nanoseconds.
     let cleanup_secs = (ds.service_cleanup_delay_us / 1_000_000).min(u32::MAX as u64) as u32;
-    // Modulo guarantees < 1_000_000, multiply by 1000 guarantees < 1_000_000_000 (fits in u32)
-    let cleanup_ns =
-        ((ds.service_cleanup_delay_us % 1_000_000) * 1_000).min(u32::MAX as u64) as u32;
+    let cleanup_ns_u64 = (ds.service_cleanup_delay_us % 1_000_000) * 1_000;
+    let cleanup_fraction = ((cleanup_ns_u64 << 32) / 1_000_000_000) as u32;
 
     // History kind: KEEP_LAST=0 (DurabilityService always uses KEEP_LAST)
     let history_kind = 0u32;
@@ -402,7 +403,7 @@ pub fn write_durability_service(
     buf[*offset..*offset + 2].copy_from_slice(&PID_DURABILITY_SERVICE.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&28u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&cleanup_secs.to_le_bytes());
-    buf[*offset + 8..*offset + 12].copy_from_slice(&cleanup_ns.to_le_bytes());
+    buf[*offset + 8..*offset + 12].copy_from_slice(&cleanup_fraction.to_le_bytes());
     buf[*offset + 12..*offset + 16].copy_from_slice(&history_kind.to_le_bytes());
     buf[*offset + 16..*offset + 20].copy_from_slice(&ds.history_depth.to_le_bytes());
     buf[*offset + 20..*offset + 24].copy_from_slice(&ds.max_samples.to_le_bytes());
