@@ -399,7 +399,18 @@ pub fn build_data_frag_packets(
     payload: &[u8],
     fragment_size: usize,
 ) -> Vec<Vec<u8>> {
-    let total_size = payload.len();
+    // Prepend the CDR encapsulation header (4 bytes) like the non-fragmented
+    // DATA path does. The encapsulation is part of the serialized sample, so
+    // it must appear once at the start of fragment 1 -- without this Connext
+    // reads the first 4 bytes of the first fragment as the encapsulation kind,
+    // finds a garbage value (e.g. 0xbc86), and aborts reassembly with
+    // "ShapeType:color deserialization error" on every LargeData sample.
+    let enc_bytes = ctx.encapsulation_kind.to_be_bytes();
+    let mut encapsulated = Vec::with_capacity(4 + payload.len());
+    encapsulated.extend_from_slice(&[enc_bytes[0], enc_bytes[1], 0x00, 0x00]);
+    encapsulated.extend_from_slice(payload);
+
+    let total_size = encapsulated.len();
 
     // Don't fragment small payloads
     if total_size <= DEFAULT_MAX_UNFRAGMENTED_SIZE {
@@ -416,7 +427,7 @@ pub fn build_data_frag_packets(
     for frag_idx in 0..num_fragments {
         let start = frag_idx * fragment_size;
         let end = (start + fragment_size).min(total_size);
-        let frag_data = &payload[start..end];
+        let frag_data = &encapsulated[start..end];
 
         // Fragment numbering starts at 1 per RTPS spec
         // Clamp to u32::MAX per RTPS DataFrag.fragmentStartingNum

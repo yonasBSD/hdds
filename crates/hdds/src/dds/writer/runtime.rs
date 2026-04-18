@@ -395,33 +395,83 @@ impl<T: DDS> DataWriter<T> {
                 // v208: Send multiple HEARTBEAT_FRAGs to improve reliability
                 // RTPS v2.3 Sec.8.3.7.6 recommends periodic heartbeats for fragment recovery.
                 // We send 3 HBFs with 10ms spacing to handle transient packet loss.
+                //
+                // Must NOT go through send_packet_to_endpoints(): that helper
+                // patches byte 28 of the packet as the reader entity id, but
+                // in a HEARTBEAT_FRAG byte 28 falls inside the INFO_DST dest
+                // GUID prefix -- patching it corrupts the destination and
+                // Connext silently drops the submessage, never issues a
+                // NACK_FRAG, and fragmented samples past seq 16 are left
+                // half-reassembled. Build a per-reader HBF targeting the
+                // reader's entity id + participant prefix instead.
                 if result.is_ok() {
                     // Clamp to u32::MAX per RTPS HeartbeatFrag.lastFragmentNum
                     let num_fragments_u32 = num_fragments.min(u32::MAX as usize) as u32;
 
                     for i in 0..3 {
                         let hbf_count = HEARTBEAT_FRAG_COUNT.fetch_add(1, Ordering::Relaxed);
-                        let hbf_packet = builder::build_heartbeat_frag_packet(
-                            ctx.guid_prefix,
-                            [0; 12],      // Broadcast to all readers (will use INFO_DST)
-                            [0, 0, 0, 0], // ENTITYID_UNKNOWN for multicast
-                            ctx.writer_entity_id,
-                            seq,
-                            num_fragments_u32,
-                            hbf_count,
-                        );
-                        // Send HEARTBEAT_FRAG to same endpoints as DATA_FRAG
-                        if let Err(e) = self.send_packet_to_endpoints(transport, &hbf_packet) {
-                            log::debug!("[writer] Failed to send HEARTBEAT_FRAG: {}", e);
-                        } else {
-                            log::trace!(
-                                "[writer] Sent HEARTBEAT_FRAG {}/3 for seq={} lastFrag={} count={}",
-                                i + 1,
-                                seq,
-                                num_fragments,
-                                hbf_count
-                            );
+
+                        let mut hbf_delivered = false;
+                        if let (Some(ref fsm), Some(ref reg)) =
+                            (&self.discovery_fsm, &self.endpoint_registry)
+                        {
+                            let readers = fsm.find_readers_for_topic(&self.topic);
+                            let local_prefix = self.rtps_endpoint.map(|c| c.guid_prefix);
+                            for reader in &readers {
+                                if let Some(local_pfx) = local_prefix {
+                                    if reader.participant_guid.as_bytes()[..12] == local_pfx {
+                                        continue;
+                                    }
+                                }
+                                let mut dest_prefix = [0u8; 12];
+                                dest_prefix
+                                    .copy_from_slice(&reader.participant_guid.as_bytes()[..12]);
+                                let mut pguid_bytes = [0u8; 16];
+                                pguid_bytes[..12].copy_from_slice(&dest_prefix);
+                                pguid_bytes[12..16].copy_from_slice(&RTPS_ENTITYID_PARTICIPANT);
+                                let participant_key = GUID::from_bytes(pguid_bytes);
+                                let dest = reg
+                                    .get_reader_locator(&reader.endpoint_guid)
+                                    .or_else(|| reg.get(&participant_key));
+                                if let Some(endpoint) = dest {
+                                    let hbf_packet = builder::build_heartbeat_frag_packet(
+                                        ctx.guid_prefix,
+                                        dest_prefix,
+                                        reader.endpoint_guid.entity_id,
+                                        ctx.writer_entity_id,
+                                        seq,
+                                        num_fragments_u32,
+                                        hbf_count,
+                                    );
+                                    if transport
+                                        .send_user_data_unicast(&hbf_packet, &endpoint)
+                                        .is_ok()
+                                    {
+                                        hbf_delivered = true;
+                                    }
+                                }
+                            }
                         }
+                        if !hbf_delivered {
+                            // Fallback: broadcast HBF (ENTITYID_UNKNOWN reader).
+                            let hbf_packet = builder::build_heartbeat_frag_packet(
+                                ctx.guid_prefix,
+                                [0; 12],
+                                [0, 0, 0, 0],
+                                ctx.writer_entity_id,
+                                seq,
+                                num_fragments_u32,
+                                hbf_count,
+                            );
+                            let _ = transport.send_user_data_multicast(&hbf_packet);
+                        }
+                        log::trace!(
+                            "[writer] Sent HEARTBEAT_FRAG {}/3 for seq={} lastFrag={} count={}",
+                            i + 1,
+                            seq,
+                            num_fragments,
+                            hbf_count
+                        );
                     }
                 }
 
