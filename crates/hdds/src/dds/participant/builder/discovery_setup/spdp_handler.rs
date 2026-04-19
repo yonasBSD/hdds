@@ -78,6 +78,11 @@ fn completed_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
 /// discovery HEARTBEATs). That goal is satisfied by responding **once** per
 /// peer; subsequent SPDPs from the same peer are already covered by our own
 /// periodic SPDP announcer, so suppressing them is safe.
+///
+/// **Scope note:** this dedup set gates only the immediate SPDP *unicast
+/// response*. The SEDP re-announce path has its own independent dedup via
+/// `COMPLETED_PEERS` / `ACTIVE_RETRIES` (v210 / v232 above); do not assume
+/// membership here implies anything about the SEDP side, and vice versa.
 fn responded_spdp_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
     static RESPONDED_SPDP_PEERS: OnceLock<Mutex<HashSet<[u8; 12]>>> = OnceLock::new();
     RESPONDED_SPDP_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
