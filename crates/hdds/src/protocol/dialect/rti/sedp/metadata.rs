@@ -246,11 +246,18 @@ pub fn write_data_representation(
 /// Write PID_TYPE_CONSISTENCY_ENFORCEMENT (0x0074) - 8 byte payload.
 ///
 /// Encodes a TypeConsistencyEnforcementQosPolicy per DDS-XTypes v1.3
-/// (OMG formal/2020-02-04), section 7.6.3.5:
+/// (OMG formal/2020-02-04) section 7.6.3.5. The IDL enum in that section
+/// orders the kind values as:
 ///
 /// ```text
+/// @bit_bound(16)
+/// enum TypeConsistencyKind {
+///     DISALLOW_TYPE_COERCION, // = 0 (strict — pre-XTypes default)
+///     ALLOW_TYPE_COERCION     // = 1 (permissive — XTypes default)
+/// };
+///
 /// struct TypeConsistencyEnforcementQosPolicy {
-///     TypeConsistencyKind kind;            // uint16: 0=ALLOW, 1=DISALLOW
+///     TypeConsistencyKind kind;
 ///     boolean ignore_sequence_bounds;
 ///     boolean ignore_string_bounds;
 ///     boolean ignore_member_names;
@@ -259,15 +266,17 @@ pub fn write_data_representation(
 /// };
 /// ```
 ///
-/// The prior encoding copied FastDDS bytes `01 00 01 01 00 00 00 00`
-/// which is actually the DataRepresentationQosPolicy layout (sequence of
-/// XCDR kinds) in the wrong PID. Connext parses PID 0x0074 strictly as
-/// TypeConsistencyEnforcement, so those bytes read as
-/// `kind=DISALLOW_TYPE_COERCION, ignore_sequence_bounds=true,
-/// ignore_string_bounds=true` — a contradictory mixed policy.
+/// Wire layout (8 bytes, LE): `kind(u16) ignore_seq(u8) ignore_str(u8)
+/// ignore_names(u8) prevent_widening(u8) force_validation(u8) padding(u8)`.
 ///
-/// Emit the permissive spec default instead: ALLOW_TYPE_COERCION with
-/// every ignore flag false — the most widely compatible setting.
+/// Emit the permissive interop default used by FastDDS and the HDDS
+/// dormant dialects (`discovery/sedp/build/metadata.rs` +
+/// `opendds/sedp/metadata.rs`): `ALLOW_TYPE_COERCION` with
+/// `ignore_sequence_bounds = ignore_string_bounds = true`. Hex: `01 00
+/// 01 01 00 00 00 00`. Relaxing sequence/string bounds avoids matching
+/// failures when peers advertise nominally-equivalent bounded types
+/// with slightly different caps (common in real-world shape_main
+/// scenarios); the remaining flags stay at their strict defaults.
 pub fn write_type_consistency(buf: &mut [u8], offset: &mut usize) -> EncodeResult<()> {
     if *offset + 12 > buf.len() {
         return Err(EncodeError::BufferTooSmall);
@@ -275,15 +284,17 @@ pub fn write_type_consistency(buf: &mut [u8], offset: &mut usize) -> EncodeResul
 
     buf[*offset..*offset + 2].copy_from_slice(&pids::PID_TYPE_CONSISTENCY.to_le_bytes());
     buf[*offset + 2..*offset + 4].copy_from_slice(&8u16.to_le_bytes());
-    // TypeConsistencyEnforcement default per DDS-XTypes 1.3 section 7.6.3.5:
-    //   kind = ALLOW_TYPE_COERCION (0x0000)
-    //   ignore_sequence_bounds = false
-    //   ignore_string_bounds   = false
-    //   ignore_member_names    = false
-    //   prevent_type_widening  = false
-    //   force_type_validation  = false
+    // TypeConsistencyEnforcement per DDS-XTypes 1.3 §7.6.3.5, encoded to
+    // the FastDDS-interoperable permissive profile `01 00 01 01 00 00 00 00`:
+    //   kind                    = ALLOW_TYPE_COERCION (u16 LE = 0x0001)
+    //   ignore_sequence_bounds  = true
+    //   ignore_string_bounds    = true
+    //   ignore_member_names     = false
+    //   prevent_type_widening   = false
+    //   force_type_validation   = false
     //   (1 byte padding to reach the declared 8-byte payload length)
-    buf[*offset + 4..*offset + 12].copy_from_slice(&[0x00; 8]);
+    buf[*offset + 4..*offset + 12]
+        .copy_from_slice(&[0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00]);
     *offset += 12;
 
     Ok(())
@@ -295,22 +306,46 @@ mod tests {
 
     /// Lock the wire payload for PID_TYPE_CONSISTENCY_ENFORCEMENT.
     ///
+    /// Expected bytes: `74 00 08 00 01 00 01 01 00 00 00 00`.
+    /// - `74 00`      = PID_TYPE_CONSISTENCY_ENFORCEMENT (LE u16 = 0x0074)
+    /// - `08 00`      = payload length (LE u16 = 8)
+    /// - `01 00`      = `kind` = ALLOW_TYPE_COERCION (DDS-XTypes 1.3 §7.6.3.5 enum value 1)
+    /// - `01`         = `ignore_sequence_bounds` = true
+    /// - `01`         = `ignore_string_bounds` = true
+    /// - `00`         = `ignore_member_names` = false
+    /// - `00`         = `prevent_type_widening` = false
+    /// - `00`         = `force_type_validation` = false
+    /// - `00`         = padding
+    ///
     /// If this test breaks, check whether the change is an intentional
-    /// TypeConsistencyEnforcement policy change (DDS-XTypes 1.3 §7.6.3.5)
-    /// or an accidental regression back to the FastDDS-copied bytes.
+    /// TypeConsistencyEnforcement policy change (re-read the spec to
+    /// confirm the `kind` enum ordering) or an accidental drift.
     #[test]
-    fn write_type_consistency_emits_permissive_spec_default() {
+    fn write_type_consistency_emits_permissive_profile() {
         let mut buf = [0xFFu8; 16];
         let mut offset = 0usize;
 
         write_type_consistency(&mut buf, &mut offset).expect("encode must succeed");
 
         assert_eq!(offset, 12, "PID header (4 bytes) + payload (8 bytes)");
-        // PID 0x0074 little-endian, length = 8, followed by 8 zero bytes.
         assert_eq!(
             &buf[..12],
-            &[0x74, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00],
+            &[0x74, 0x00, 0x08, 0x00, 0x01, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x00],
         );
+    }
+
+    /// Sanity check: bytes 4..6 decode as a `u16` kind field with value 1
+    /// (ALLOW_TYPE_COERCION). Guards against byte-order confusion because
+    /// `0x00 01` and `0x01 00` both look innocuous in a static array but
+    /// decode to different enum values.
+    #[test]
+    fn write_type_consistency_kind_field_is_allow() {
+        let mut buf = [0u8; 12];
+        let mut offset = 0usize;
+        write_type_consistency(&mut buf, &mut offset).expect("encode must succeed");
+
+        let kind = u16::from_le_bytes([buf[4], buf[5]]);
+        assert_eq!(kind, 1, "kind must decode as ALLOW_TYPE_COERCION (= 1)");
     }
 
     #[test]
