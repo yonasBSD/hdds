@@ -94,70 +94,91 @@ impl DdsBridge {
         &self,
         topic_name: &str,
     ) -> Result<broadcast::Receiver<BridgeSample>, Box<dyn std::error::Error + Send + Sync>> {
-        // Check if already subscribed
+        // Fast path: an existing subscription for this topic — just hand out
+        // another broadcast::Receiver. No DashMap::entry() here to avoid
+        // contending the shard lock with concurrent subscribe() calls.
         if let Some(sub) = self.subscriptions.get(topic_name) {
             debug!("Reusing existing subscription for topic '{}'", topic_name);
             return Ok(sub.sender.subscribe());
         }
 
-        info!("Creating subscription for topic '{}'", topic_name);
+        // Slow path: no entry yet. Use `entry()` so the check-then-insert is
+        // atomic across concurrent subscribe() calls for the *same* topic.
+        // Without this, two near-simultaneous subscribers both saw the
+        // vacant state, both called `create_raw_reader`, both inserted, and
+        // one winner's subscription was silently overwritten — leaving an
+        // orphan DDS reader attached to the participant.
+        match self.subscriptions.entry(topic_name.to_string()) {
+            dashmap::mapref::entry::Entry::Occupied(e) => {
+                debug!(
+                    "Another task created subscription for '{}' between our get() and entry() — reusing",
+                    topic_name
+                );
+                Ok(e.get().sender.subscribe())
+            }
+            dashmap::mapref::entry::Entry::Vacant(v) => {
+                info!("Creating subscription for topic '{}'", topic_name);
 
-        // Try to discover TypeObject for this topic (XTypes dynamic decoding)
-        let type_descriptor = self.discover_type_descriptor(topic_name);
-        if type_descriptor.is_some() {
-            info!(
-                "Discovered TypeObject for '{}' - enabling dynamic CDR decoding",
-                topic_name
-            );
-        } else {
-            debug!(
-                "No TypeObject found for '{}' - using fallback decoding",
-                topic_name
-            );
+                // Try to discover TypeObject for this topic (XTypes dynamic
+                // decoding). Safe to do under the entry lock — it's a read
+                // against the participant's discovery cache, not an
+                // await-point.
+                let type_descriptor = self.discover_type_descriptor(topic_name);
+                if type_descriptor.is_some() {
+                    info!(
+                        "Discovered TypeObject for '{}' - enabling dynamic CDR decoding",
+                        topic_name
+                    );
+                } else {
+                    debug!(
+                        "No TypeObject found for '{}' - using fallback decoding",
+                        topic_name
+                    );
+                }
+
+                // Create DDS raw reader
+                let reader = self.participant.create_raw_reader(topic_name, None)?;
+                let reader = Arc::new(reader);
+
+                // Create broadcast channel for this topic
+                let (tx, rx) = broadcast::channel(256);
+
+                // Insert; the returned RefMut drops at statement end, releasing
+                // the shard lock before we spawn.
+                v.insert(Subscription {
+                    _reader: reader.clone(),
+                    sender: tx.clone(),
+                    _type_descriptor: type_descriptor.clone(),
+                });
+
+                // Spawn task to read from DDS and forward to broadcast.
+                // The task is passed an Arc clone of the subscriptions map so
+                // it can remove its own entry when the last receiver goes
+                // away — this avoids the "zombie reader_task" leak where
+                // unsubscribed topics kept a DDS reader + a tokio task
+                // running for the life of the process.
+                let topic = topic_name.to_string();
+                let tx_clone = tx;
+                let reader_clone = reader;
+                let desc_clone = type_descriptor;
+                let participant_clone = self.participant.clone();
+                let subs_clone = Arc::clone(&self.subscriptions);
+
+                tokio::spawn(async move {
+                    Self::reader_task(
+                        topic,
+                        reader_clone,
+                        tx_clone,
+                        desc_clone,
+                        participant_clone,
+                        subs_clone,
+                    )
+                    .await;
+                });
+
+                Ok(rx)
+            }
         }
-
-        // Create DDS raw reader
-        let reader = self.participant.create_raw_reader(topic_name, None)?;
-        let reader = Arc::new(reader);
-
-        // Create broadcast channel for this topic
-        let (tx, rx) = broadcast::channel(256);
-
-        // Store subscription
-        self.subscriptions.insert(
-            topic_name.to_string(),
-            Subscription {
-                _reader: reader.clone(),
-                sender: tx.clone(),
-                _type_descriptor: type_descriptor.clone(),
-            },
-        );
-
-        // Spawn task to read from DDS and forward to broadcast.
-        // The task is passed an Arc clone of the subscriptions map so it can
-        // remove its own entry when the last receiver goes away — this avoids
-        // the "zombie reader_task" leak where unsubscribed topics kept a
-        // DDS reader + a tokio task running for the life of the process.
-        let topic = topic_name.to_string();
-        let tx_clone = tx;
-        let reader_clone = reader;
-        let desc_clone = type_descriptor;
-        let participant_clone = self.participant.clone();
-        let subs_clone = Arc::clone(&self.subscriptions);
-
-        tokio::spawn(async move {
-            Self::reader_task(
-                topic,
-                reader_clone,
-                tx_clone,
-                desc_clone,
-                participant_clone,
-                subs_clone,
-            )
-            .await;
-        });
-
-        Ok(rx)
     }
 
     /// Try to discover TypeObject for a topic and convert to TypeDescriptor
@@ -202,8 +223,19 @@ impl DdsBridge {
         subscriptions: Arc<DashMap<String, Subscription>>,
     ) {
         /// Number of consecutive idle ticks with zero broadcast receivers
-        /// before the task self-terminates. 10 ms per tick × 30 = 300 ms.
+        /// before the task self-terminates. Deliberately counted in ticks,
+        /// not wall-clock: depending on the adaptive sleep cadence below,
+        /// 30 ticks maps to ~300 ms when hot or ~3 s when cold. Both are
+        /// reasonable grace windows and neither blocks shutdown.
         const RECEIVER_GRACE_TICKS: u32 = 30;
+        /// Consecutive empty polls before we back off to the slow cadence.
+        const IDLE_BACKOFF_TICKS: u32 = 5;
+        /// Fast poll interval while samples are flowing.
+        const ACTIVE_POLL_MS: u64 = 10;
+        /// Slow poll interval when no data has arrived for a while — keeps
+        /// CPU cost low on ARM / embedded hosts where 100 wakeups/s-per-topic
+        /// adds up (7 aircp topics × 100 Hz = 700 wakeups/s).
+        const IDLE_POLL_MS: u64 = 100;
 
         info!(
             "Reader for '{}' started (dynamic decoding: {})",
@@ -213,6 +245,7 @@ impl DdsBridge {
 
         let mut type_descriptor = initial_descriptor;
         let mut idle_ticks: u32 = 0;
+        let mut empty_poll_ticks: u32 = 0;
 
         loop {
             // Self-terminate when no WebSocket clients have been listening
@@ -254,9 +287,11 @@ impl DdsBridge {
             }
 
             // Poll for data
+            let mut samples_in_batch = 0usize;
             match reader.try_take_raw() {
                 Ok(samples) => {
                     for raw_sample in samples {
+                        samples_in_batch += 1;
                         // Convert raw CDR to JSON
                         let json_value = if let Some(ref desc) = type_descriptor {
                             // Use XTypes dynamic decoding
@@ -288,8 +323,22 @@ impl DdsBridge {
                 }
             }
 
-            // Small delay to avoid busy-wait
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+            // Adaptive poll cadence: 10 ms while data is flowing (keep
+            // WebSocket-visible latency sharp), 100 ms once the topic has
+            // been quiet for IDLE_BACKOFF_TICKS ticks (cuts wakeups/s by
+            // 10× per topic on idle workloads, which dominates the CPU
+            // budget on embedded hosts).
+            if samples_in_batch > 0 {
+                empty_poll_ticks = 0;
+            } else {
+                empty_poll_ticks = empty_poll_ticks.saturating_add(1);
+            }
+            let sleep_ms = if empty_poll_ticks < IDLE_BACKOFF_TICKS {
+                ACTIVE_POLL_MS
+            } else {
+                IDLE_POLL_MS
+            };
+            tokio::time::sleep(tokio::time::Duration::from_millis(sleep_ms)).await;
         }
     }
 
@@ -325,8 +374,17 @@ impl DdsBridge {
         Ok(seq)
     }
 
-    /// Unsubscribe from a topic
-    #[allow(dead_code)] // Used by session when client unsubscribes
+    /// Unsubscribe from a topic — force-removes the bridge-side entry.
+    ///
+    /// NOTE: This does NOT directly cancel the associated `reader_task`.
+    /// The task exits via its own grace-period check in `reader_task`
+    /// (see `RECEIVER_GRACE_TICKS`), once the dropped `sender` leads to
+    /// `tx.receiver_count() == 0` for long enough. The normal unsubscribe
+    /// path is `ClientSession::handle_unsubscribe`, which aborts the
+    /// per-session forwarding task — its broadcast receiver drops,
+    /// `reader_task` eventually sees zero receivers, and self-cleans. This
+    /// method is retained for admin / force-cleanup scenarios only.
+    #[allow(dead_code)]
     pub fn unsubscribe(&self, topic_name: &str) {
         if self.subscriptions.remove(topic_name).is_some() {
             info!("Unsubscribed from topic '{}'", topic_name);
