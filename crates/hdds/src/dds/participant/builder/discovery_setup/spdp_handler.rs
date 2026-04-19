@@ -63,6 +63,40 @@ fn completed_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
     COMPLETED_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+/// v250: Tracks peers we have already sent an immediate SPDP unicast response to.
+///
+/// Without this, every SPDP received (including our own unicast responses
+/// bouncing back as incoming packets) triggers a fresh immediate response,
+/// creating a reactive bounce loop with N*(N-1) edges between the N participants
+/// in a domain. Measured symptom: 74290 SPDP frames in 23s (≈3230 SPDP/s) for a
+/// single `Test_LargeData_0` run, vs 434 total RTPS frames for the equivalent
+/// Connext-to-Connext capture — a 277x frame explosion attributable almost
+/// entirely to this feedback loop.
+///
+/// The v132 immediate-SPDP-response exists to accelerate first contact with RTI
+/// (otherwise RTI waits ~200ms for its periodic SPDP before processing our
+/// discovery HEARTBEATs). That goal is satisfied by responding **once** per
+/// peer; subsequent SPDPs from the same peer are already covered by our own
+/// periodic SPDP announcer, so suppressing them is safe.
+fn responded_spdp_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
+    static RESPONDED_SPDP_PEERS: OnceLock<Mutex<HashSet<[u8; 12]>>> = OnceLock::new();
+    RESPONDED_SPDP_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
+}
+
+/// v250: Record that we are about to respond to this peer's SPDP. Returns
+/// `true` if the peer was not already in the set (caller should send the
+/// immediate response), `false` if we have already responded once (caller
+/// should skip).
+///
+/// Handles a poisoned mutex by recovering the inner `HashSet` so discovery
+/// stays best-effort functional even after a panic elsewhere.
+fn mark_peer_responded(peer_prefix: [u8; 12]) -> bool {
+    match responded_spdp_peers().lock() {
+        Ok(mut set) => set.insert(peer_prefix),
+        Err(poisoned) => poisoned.into_inner().insert(peer_prefix),
+    }
+}
+
 /// RAII guard for SEDP retry thread deduplication.
 ///
 /// Ensures only one retry thread runs per peer. When dropped, removes the peer
@@ -285,8 +319,14 @@ pub(super) fn handle_spdp_packet(
             //
             // Without immediate SPDP, some implementations (RTI) wait for periodic SPDP
             // (~200ms) before processing HEARTBEATs, causing 60+ second discovery delays.
+            // v250: Only respond once per peer. Without this dedup, every SPDP
+            // received from a peer triggers another unicast response, which the
+            // peer parses as an incoming SPDP and again triggers a response,
+            // creating a reactive bounce loop that saturates discovery traffic
+            // (see the RESPONDED_SPDP_PEERS doc-comment for the full analysis).
             if encoder.requires_immediate_spdp_response()
                 && !spdp_data.metatraffic_unicast_locators.is_empty()
+                && mark_peer_responded(peer_guid_prefix)
             {
                 send_immediate_spdp_unicast(
                     &our_guid_prefix,
@@ -556,8 +596,14 @@ pub(super) fn handle_spdp_from_fragments(
 
             // v132: Send immediate SPDP unicast response BEFORE handshake HEARTBEATs.
             // (Same logic as non-fragment path)
+            // v250: Only respond once per peer. Without this dedup, every SPDP
+            // received from a peer triggers another unicast response, which the
+            // peer parses as an incoming SPDP and again triggers a response,
+            // creating a reactive bounce loop that saturates discovery traffic
+            // (see the RESPONDED_SPDP_PEERS doc-comment for the full analysis).
             if encoder.requires_immediate_spdp_response()
                 && !spdp_data.metatraffic_unicast_locators.is_empty()
+                && mark_peer_responded(peer_guid_prefix)
             {
                 send_immediate_spdp_unicast(
                     &our_guid_prefix,
@@ -1282,5 +1328,44 @@ fn send_immediate_spdp_unicast(
                 e
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh prefix should be marked as newly responded on the first call
+    /// and as already responded on any subsequent call.
+    #[test]
+    fn mark_peer_responded_is_idempotent_per_peer() {
+        // Use a distinctive prefix that no other test is likely to reuse,
+        // since the underlying HashSet is a process-wide static.
+        let peer = [0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
+
+        assert!(
+            mark_peer_responded(peer),
+            "first call must return true (peer was not in the set)"
+        );
+        assert!(
+            !mark_peer_responded(peer),
+            "second call must return false (peer is already in the set)"
+        );
+        assert!(
+            !mark_peer_responded(peer),
+            "third call must also return false (no bounce)"
+        );
+    }
+
+    /// Different peer prefixes must be tracked independently of one another.
+    #[test]
+    fn mark_peer_responded_distinguishes_peers() {
+        let peer_a = [0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02];
+        let peer_b = [0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
+
+        assert!(mark_peer_responded(peer_a));
+        assert!(mark_peer_responded(peer_b));
+        assert!(!mark_peer_responded(peer_a));
+        assert!(!mark_peer_responded(peer_b));
     }
 }
