@@ -38,8 +38,11 @@ struct Subscription {
 pub struct DdsBridge {
     domain_id: u32,
     participant: Arc<Participant>,
-    /// Active subscriptions: topic_name -> Subscription
-    subscriptions: DashMap<String, Subscription>,
+    /// Active subscriptions: topic_name -> Subscription. Wrapped in `Arc` so
+    /// the per-topic reader task can self-remove its entry on exit (when the
+    /// last WebSocket client for a topic goes away, see `reader_task`'s
+    /// grace-period exit).
+    subscriptions: Arc<DashMap<String, Subscription>>,
     /// Writers for publishing: topic_name -> RawDataWriter (wrapped in Mutex for thread safety)
     writers: DashMap<String, Arc<Mutex<RawDataWriter>>>,
     /// Sequence counter for published messages
@@ -75,7 +78,7 @@ impl DdsBridge {
         Ok(Self {
             domain_id,
             participant,
-            subscriptions: DashMap::new(),
+            subscriptions: Arc::new(DashMap::new()),
             writers: DashMap::new(),
             publish_seq: AtomicU64::new(0),
         })
@@ -130,15 +133,28 @@ impl DdsBridge {
             },
         );
 
-        // Spawn task to read from DDS and forward to broadcast
+        // Spawn task to read from DDS and forward to broadcast.
+        // The task is passed an Arc clone of the subscriptions map so it can
+        // remove its own entry when the last receiver goes away — this avoids
+        // the "zombie reader_task" leak where unsubscribed topics kept a
+        // DDS reader + a tokio task running for the life of the process.
         let topic = topic_name.to_string();
         let tx_clone = tx;
         let reader_clone = reader;
         let desc_clone = type_descriptor;
         let participant_clone = self.participant.clone();
+        let subs_clone = Arc::clone(&self.subscriptions);
 
         tokio::spawn(async move {
-            Self::reader_task(topic, reader_clone, tx_clone, desc_clone, participant_clone).await;
+            Self::reader_task(
+                topic,
+                reader_clone,
+                tx_clone,
+                desc_clone,
+                participant_clone,
+                subs_clone,
+            )
+            .await;
         });
 
         Ok(rx)
@@ -168,13 +184,27 @@ impl DdsBridge {
     ///
     /// If `type_descriptor` is `None` on startup (TypeObject not yet discovered),
     /// the task retries discovery on each poll until successful.
+    ///
+    /// # Lifecycle
+    ///
+    /// The task exits when the last WebSocket client has disconnected from
+    /// this topic for `RECEIVER_GRACE_TICKS` consecutive iterations (~300 ms
+    /// of idle). On exit it removes its own entry from `subscriptions`, so
+    /// a future `subscribe(topic)` call re-creates a fresh reader rather than
+    /// reusing a closed sender. The grace window tolerates brief reconnects
+    /// and per-client task-spawn delays.
     async fn reader_task(
         topic_name: String,
         reader: Arc<RawDataReader>,
         tx: broadcast::Sender<BridgeSample>,
         initial_descriptor: Option<Arc<TypeDescriptor>>,
         participant: Arc<Participant>,
+        subscriptions: Arc<DashMap<String, Subscription>>,
     ) {
+        /// Number of consecutive idle ticks with zero broadcast receivers
+        /// before the task self-terminates. 10 ms per tick × 30 = 300 ms.
+        const RECEIVER_GRACE_TICKS: u32 = 30;
+
         info!(
             "Reader for '{}' started (dynamic decoding: {})",
             topic_name,
@@ -182,8 +212,30 @@ impl DdsBridge {
         );
 
         let mut type_descriptor = initial_descriptor;
+        let mut idle_ticks: u32 = 0;
 
         loop {
+            // Self-terminate when no WebSocket clients have been listening
+            // for RECEIVER_GRACE_TICKS consecutive iterations. This replaces
+            // the previous forever-loop which kept the DDS reader (and this
+            // task) alive for the lifetime of the process even after every
+            // client had disconnected.
+            if tx.receiver_count() == 0 {
+                idle_ticks = idle_ticks.saturating_add(1);
+                if idle_ticks >= RECEIVER_GRACE_TICKS {
+                    info!(
+                        "Reader for '{}' idle {} ticks, self-terminating and removing subscription",
+                        topic_name, idle_ticks
+                    );
+                    // Drop our entry so the next subscribe() creates a fresh
+                    // reader+sender pair rather than handing out a closed one.
+                    subscriptions.remove(&topic_name);
+                    break;
+                }
+            } else {
+                idle_ticks = 0;
+            }
+
             // Lazy TypeObject discovery: retry until we find it
             if type_descriptor.is_none() {
                 if let Ok(topics) = participant.discover_topics() {
@@ -462,6 +514,12 @@ fn base64_encode(data: &[u8]) -> String {
 }
 
 /// Simple base64 decoding
+///
+/// Returns Err on any byte outside the ASCII base64 alphabet (0-127 range
+/// plus `=`). Previously this function used `DECODE[byte as usize]` which
+/// would panic on bytes >= 128 (any non-ASCII input) and silently corrupt
+/// output when the input contained ASCII that wasn't a valid base64 char
+/// (the `-1` sentinel was cast to `u8 = 255` and fed into arithmetic).
 fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
     const DECODE: [i8; 128] = [
         -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -472,8 +530,21 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Sen
         46, 47, 48, 49, 50, 51, -1, -1, -1, -1, -1,
     ];
 
+    // Validated lookup: byte must be ASCII (< 128) AND the table entry must
+    // be non-negative (a real base64 char). `=` padding is stripped earlier.
+    fn lookup(byte: u8, decode: &[i8; 128]) -> Result<u8, String> {
+        if byte >= 128 {
+            return Err(format!("non-ASCII byte 0x{byte:02x} in base64 input"));
+        }
+        let v = decode[byte as usize];
+        if v < 0 {
+            return Err(format!("invalid base64 char 0x{byte:02x}"));
+        }
+        Ok(v as u8)
+    }
+
     let input = input.trim_end_matches('=');
-    let mut result = Vec::new();
+    let mut result = Vec::with_capacity((input.len() * 3) / 4);
 
     let chars: Vec<u8> = input.bytes().collect();
     for chunk in chars.chunks(4) {
@@ -481,16 +552,16 @@ fn base64_decode(input: &str) -> Result<Vec<u8>, Box<dyn std::error::Error + Sen
             break;
         }
 
-        let b0 = DECODE[chunk[0] as usize] as u8;
-        let b1 = DECODE[chunk[1] as usize] as u8;
+        let b0 = lookup(chunk[0], &DECODE)?;
+        let b1 = lookup(chunk[1], &DECODE)?;
         result.push((b0 << 2) | (b1 >> 4));
 
         if chunk.len() > 2 && chunk[2] != b'=' {
-            let b2 = DECODE[chunk[2] as usize] as u8;
+            let b2 = lookup(chunk[2], &DECODE)?;
             result.push((b1 << 4) | (b2 >> 2));
 
             if chunk.len() > 3 && chunk[3] != b'=' {
-                let b3 = DECODE[chunk[3] as usize] as u8;
+                let b3 = lookup(chunk[3], &DECODE)?;
                 result.push((b2 << 6) | b3);
             }
         }
@@ -530,5 +601,52 @@ mod tests {
         let json = raw_cdr_to_json(&cdr);
 
         assert_eq!(json["data"], "test");
+    }
+
+    /// Non-ASCII bytes in base64 input previously panicked via
+    /// `DECODE[byte as usize]` on an array of only 128 entries. The
+    /// validated lookup now returns Err instead.
+    #[test]
+    fn test_base64_decode_rejects_non_ascii() {
+        // UTF-8 "café" — the 'é' is 0xC3 0xA9, both >= 128
+        let input = "caf\u{00e9}";
+        let err = base64_decode(input).expect_err("non-ASCII must error, not panic");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("non-ASCII"),
+            "error should mention non-ASCII, got: {msg}"
+        );
+    }
+
+    /// ASCII characters that aren't part of the base64 alphabet (the
+    /// `-1` sentinel entries in DECODE) previously cast to 255 and silently
+    /// produced garbage output. They now return Err.
+    #[test]
+    fn test_base64_decode_rejects_invalid_ascii() {
+        // '!' (0x21) is ASCII but not a base64 char
+        let err = base64_decode("!A==").expect_err("invalid char must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid base64 char"),
+            "error should mention invalid base64, got: {msg}"
+        );
+    }
+
+    /// Empty input must decode to empty output without panicking.
+    #[test]
+    fn test_base64_decode_empty() {
+        assert_eq!(base64_decode("").unwrap(), Vec::<u8>::new());
+        assert_eq!(base64_decode("====").unwrap(), Vec::<u8>::new());
+    }
+
+    /// Full ASCII-alphabet roundtrip to make sure the validated path still
+    /// accepts every legitimate base64 character.
+    #[test]
+    fn test_base64_all_chars_roundtrip() {
+        // Data that exercises every 6-bit slot of the base64 alphabet.
+        let data: Vec<u8> = (0u8..=255u8).collect();
+        let encoded = base64_encode(&data);
+        let decoded = base64_decode(&encoded).expect("must roundtrip");
+        assert_eq!(data, decoded);
     }
 }

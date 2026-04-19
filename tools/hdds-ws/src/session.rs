@@ -15,14 +15,27 @@ use dashmap::DashMap;
 use futures::{SinkExt, StreamExt};
 use std::sync::Arc;
 use tokio::sync::broadcast;
+use tokio::task::JoinHandle;
 use tracing::{debug, error, info, warn};
 use uuid::Uuid;
+
+/// Per-subscription state held by a session.
+///
+/// Keeps the DDS → WebSocket forwarding task handle alongside the topic
+/// name so that `handle_unsubscribe` can abort the task and drop its
+/// broadcast receiver immediately. Dropping the receiver is what lets the
+/// bridge's `reader_task` observe `receiver_count == 0` and eventually
+/// self-clean its subscription entry (see `bridge.rs::reader_task`).
+struct SubscriptionEntry {
+    topic: String,
+    task: JoinHandle<()>,
+}
 
 /// A WebSocket client session
 pub struct ClientSession {
     bridge: Arc<DdsBridge>,
-    /// Active subscriptions: subscription_id -> topic_name
-    subscriptions: DashMap<String, String>,
+    /// Active subscriptions: subscription_id -> entry (topic + forwarding task)
+    subscriptions: DashMap<String, SubscriptionEntry>,
     /// Session ID for logging
     session_id: String,
 }
@@ -104,9 +117,21 @@ impl ClientSession {
             }
         }
 
-        // Cleanup
+        // Cleanup: abort the ws_forward task AND every per-subscription
+        // forwarding task we spawned. Without this, forwarding tasks would
+        // linger after the WebSocket dies until their broadcast channel
+        // happened to close, keeping bridge-side receivers alive and
+        // blocking the bridge's reader_task grace-period exit.
         ws_forward.abort();
-        info!("[{}] Session ended", self.session_id);
+        let sub_count = self.subscriptions.len();
+        for entry in self.subscriptions.iter() {
+            entry.value().task.abort();
+        }
+        self.subscriptions.clear();
+        info!(
+            "[{}] Session ended ({} subscriptions aborted)",
+            self.session_id, sub_count
+        );
 
         Ok(())
     }
@@ -159,7 +184,7 @@ impl ClientSession {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         // Check if already subscribed
         for entry in self.subscriptions.iter() {
-            if entry.value() == topic {
+            if entry.value().topic == topic {
                 let error = ServerMessage::topic_error(
                     ErrorCode::AlreadySubscribed,
                     "Already subscribed to this topic",
@@ -175,7 +200,6 @@ impl ClientSession {
 
         // Generate subscription ID
         let sub_id = format!("sub_{}", &Uuid::new_v4().to_string()[..8]);
-        self.subscriptions.insert(sub_id.clone(), topic.to_string());
 
         // Send confirmation
         let confirm = ServerMessage::Subscribed {
@@ -189,12 +213,17 @@ impl ClientSession {
             self.session_id, topic, sub_id
         );
 
-        // Spawn task to forward samples
+        // Spawn task to forward samples.
+        //
+        // We retain the JoinHandle on the session so `handle_unsubscribe` can
+        // abort it synchronously. Aborting drops the broadcast receiver,
+        // which lets the bridge's reader_task observe `receiver_count == 0`
+        // and eventually self-clean the bridge-side subscription.
         let session_id = self.session_id.clone();
         let topic_name = topic.to_string();
         let sub_id_clone = sub_id.clone();
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
                     Ok(sample) => {
@@ -223,25 +252,44 @@ impl ClientSession {
             }
         });
 
+        self.subscriptions.insert(
+            sub_id.clone(),
+            SubscriptionEntry {
+                topic: topic.to_string(),
+                task,
+            },
+        );
+
         Ok(())
     }
 
     /// Handle unsubscribe request
+    ///
+    /// Finds the subscription entry for the given topic, aborts the
+    /// forwarding task (which drops its broadcast receiver), and removes
+    /// the entry from the session map. The bridge-side reader_task detects
+    /// the receiver loss via `tx.receiver_count() == 0` on its next tick
+    /// and self-cleans after a short grace window.
     async fn handle_unsubscribe(
         &self,
         topic: &str,
         tx: tokio::sync::mpsc::Sender<ServerMessage>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        // Find and remove subscription
-        let mut found = false;
-        self.subscriptions.retain(|_k, v| {
-            if v == topic {
-                found = true;
-                false // Remove this entry
-            } else {
-                true
+        // Collect sub_ids matching this topic. We can't remove inside iter().
+        let matching_ids: Vec<String> = self
+            .subscriptions
+            .iter()
+            .filter(|e| e.value().topic == topic)
+            .map(|e| e.key().clone())
+            .collect();
+
+        let found = !matching_ids.is_empty();
+        for sub_id in matching_ids {
+            if let Some((_k, entry)) = self.subscriptions.remove(&sub_id) {
+                // Aborting the task drops the broadcast receiver it owned.
+                entry.task.abort();
             }
-        });
+        }
 
         if found {
             let confirm = ServerMessage::Unsubscribed {
