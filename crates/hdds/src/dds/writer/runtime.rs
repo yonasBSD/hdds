@@ -539,11 +539,17 @@ impl<T: DDS> DataWriter<T> {
 
         if let Some(ref cache) = self.history_cache {
             if let Err(e) = cache.insert(seq, &tmp_buf[..serialized_len]) {
-                log::debug!(
-                    "[writer] History cache insert failed for seq {}: {}",
+                log::warn!(
+                    "[writer] History cache insert failed for topic='{}' seq={} payload_len={}: {} \
+                     -- sample will not be retransmittable (likely slab pool exhaustion or ResourceLimits cap)",
+                    self.topic,
                     seq,
+                    serialized_len,
                     e
                 );
+                if let Some(m) = telemetry::get_metrics_opt() {
+                    m.increment_cache_insert_errors(1);
+                }
             }
         }
 
