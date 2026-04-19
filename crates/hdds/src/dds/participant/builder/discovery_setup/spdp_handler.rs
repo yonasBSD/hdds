@@ -26,12 +26,11 @@ use crate::protocol::dialect::{get_encoder, Dialect};
 use crate::protocol::discovery::constants::{CDR2_LE, CDR_LE, PID_METATRAFFIC_UNICAST_LOCATOR};
 use crate::protocol::discovery::{parse_spdp, parse_spdp_partial, ParseError, SedpData, SpdpData};
 use crate::transport::UdpTransport;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
 
 use super::super::entity_registry::SedpAnnouncementsCache;
 
@@ -64,18 +63,7 @@ fn completed_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
     COMPLETED_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-/// v251: TTL for RESPONDED_SPDP_PEERS entries.
-///
-/// An entry not refreshed (i.e. no SPDP seen from this peer) for this long is
-/// considered stale and gets lazily evicted on the next `mark_peer_responded`
-/// call. Chosen to comfortably cover active peers (announce every 3 s) while
-/// bounding memory in long-running processes with peer churn. Value is large
-/// relative to the SPDP announce interval so benign scheduling jitter cannot
-/// evict a live peer.
-const PEER_SEEN_TTL: Duration = Duration::from_secs(60);
-
-/// v250: Tracks peers we have already sent an immediate SPDP unicast response
-/// to, along with the instant of the most recent SPDP we observed from them.
+/// v250: Tracks peers we have already sent an immediate SPDP unicast response to.
 ///
 /// Without this, every SPDP received (including our own unicast responses
 /// bouncing back as incoming packets) triggers a fresh immediate response,
@@ -91,72 +79,27 @@ const PEER_SEEN_TTL: Duration = Duration::from_secs(60);
 /// peer; subsequent SPDPs from the same peer are already covered by our own
 /// periodic SPDP announcer, so suppressing them is safe.
 ///
-/// **v251 lease tracking:** each entry stores the timestamp of the last SPDP
-/// observed for the peer. `mark_peer_responded` lazily evicts entries older
-/// than [`PEER_SEEN_TTL`]. This bounds memory in processes that see steady
-/// peer churn (previously: 12 B/peer leak over process lifetime) and lets a
-/// peer that disappeared for more than the TTL get the 200 ms immediate-SPDP
-/// boost again on rejoin. Explicit dispose signals (lease=0 in a received
-/// SPDP) short-circuit the TTL via [`forget_peer`].
-///
 /// **Scope note:** this dedup set gates only the immediate SPDP *unicast
 /// response*. The SEDP re-announce path has its own independent dedup via
 /// `COMPLETED_PEERS` / `ACTIVE_RETRIES` (v210 / v232 above); do not assume
-/// membership here implies anything about the SEDP side, and vice versa. In
-/// particular, `forget_peer` only clears the SPDP-response gate; it does not
-/// re-open the SEDP retry path for the same peer.
-fn responded_spdp_peers() -> &'static Mutex<HashMap<[u8; 12], Instant>> {
-    static RESPONDED_SPDP_PEERS: OnceLock<Mutex<HashMap<[u8; 12], Instant>>> = OnceLock::new();
-    RESPONDED_SPDP_PEERS.get_or_init(|| Mutex::new(HashMap::new()))
+/// membership here implies anything about the SEDP side, and vice versa.
+fn responded_spdp_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
+    static RESPONDED_SPDP_PEERS: OnceLock<Mutex<HashSet<[u8; 12]>>> = OnceLock::new();
+    RESPONDED_SPDP_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-/// v251: Pure, testable core of the mark-responded-with-TTL logic.
+/// v250: Record that we are about to respond to this peer's SPDP. Returns
+/// `true` if the peer was not already in the set (caller should send the
+/// immediate response), `false` if we have already responded once (caller
+/// should skip).
 ///
-/// Evicts entries whose `last_seen` is older than `ttl` (lazy GC on every
-/// call, amortized O(1) per call in steady state), then inserts / refreshes
-/// the entry for `peer_prefix` at `now`. Returns `true` iff the peer was
-/// absent or just evicted — i.e. the caller should send the immediate
-/// unicast response. Returns `false` on refresh of an already-tracked peer.
-fn mark_peer_responded_at(
-    map: &mut HashMap<[u8; 12], Instant>,
-    peer_prefix: [u8; 12],
-    now: Instant,
-    ttl: Duration,
-) -> bool {
-    map.retain(|_, last_seen| now.duration_since(*last_seen) < ttl);
-    map.insert(peer_prefix, now).is_none()
-}
-
-/// v250/v251: Record that we observed an SPDP from this peer. Returns `true`
-/// if the caller should send the immediate unicast response (new peer, or
-/// peer that had expired from the set), `false` if we have already responded
-/// within [`PEER_SEEN_TTL`].
-///
-/// Handles a poisoned mutex by recovering the inner map so discovery stays
-/// best-effort functional even after a panic elsewhere.
+/// Handles a poisoned mutex by recovering the inner `HashSet` so discovery
+/// stays best-effort functional even after a panic elsewhere.
 fn mark_peer_responded(peer_prefix: [u8; 12]) -> bool {
-    let mut map = responded_spdp_peers()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    mark_peer_responded_at(&mut map, peer_prefix, Instant::now(), PEER_SEEN_TTL)
-}
-
-/// v251: Pure, testable core of the forget logic.
-fn forget_peer_at(map: &mut HashMap<[u8; 12], Instant>, peer_prefix: &[u8; 12]) {
-    map.remove(peer_prefix);
-}
-
-/// v251: Drop the peer from RESPONDED_SPDP_PEERS so the next SPDP from it
-/// gets a fresh immediate unicast response. Used when the peer explicitly
-/// signals shutdown (SPDP with `lease_duration_ms == 0`), so that a
-/// restart-and-rejoin cycle does not lose the 200 ms RTI-immediate boost.
-///
-/// Idempotent and best-effort: does nothing if the peer is not tracked.
-fn forget_peer(peer_prefix: [u8; 12]) {
-    let mut map = responded_spdp_peers()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    forget_peer_at(&mut map, &peer_prefix);
+    match responded_spdp_peers().lock() {
+        Ok(mut set) => set.insert(peer_prefix),
+        Err(poisoned) => poisoned.into_inner().insert(peer_prefix),
+    }
 }
 
 /// RAII guard for SEDP retry thread deduplication.
@@ -366,23 +309,6 @@ pub(super) fn handle_spdp_packet(
             if peer_guid_prefix == our_guid_prefix {
                 log::debug!("[SPDP-FILTER] [!]  Ignoring our own SPDP (multicast loopback)");
                 return; // Exit handler early
-            }
-
-            // v251: Dispose hint. A remote SPDP carrying lease_duration_ms == 0
-            // is a best-effort signal that the peer is shutting down (the
-            // spec-authoritative dispose path lives at the DATA K-flag layer,
-            // which is not plumbed down to this handler). Drop the peer from
-            // RESPONDED_SPDP_PEERS so a later restart+rejoin gets the 200 ms
-            // immediate-SPDP boost again, then skip the handshake/SEDP work
-            // we would otherwise do for a peer that is going away.
-            if spdp_data.lease_duration_ms == 0 {
-                log::debug!(
-                    "[SPDP] Peer {:02x}{:02x}..{:02x}{:02x} lease=0; forgetting and skipping handshake",
-                    peer_guid_prefix[0], peer_guid_prefix[1],
-                    peer_guid_prefix[10], peer_guid_prefix[11]
-                );
-                forget_peer(peer_guid_prefix);
-                return;
             }
 
             // Get dialect encoder for this peer
@@ -668,17 +594,6 @@ pub(super) fn handle_spdp_from_fragments(
                     "[SPDP-FILTER] [!]  Ignoring our own SPDP fragment (multicast loopback)"
                 );
                 return; // Exit handler early
-            }
-
-            // v251: Dispose hint — see the non-fragment path for the full rationale.
-            if spdp_data.lease_duration_ms == 0 {
-                log::debug!(
-                    "[SPDP-FRAG] Peer {:02x}{:02x}..{:02x}{:02x} lease=0; forgetting and skipping handshake",
-                    peer_guid_prefix[0], peer_guid_prefix[1],
-                    peer_guid_prefix[10], peer_guid_prefix[11]
-                );
-                forget_peer(peer_guid_prefix);
-                return;
             }
 
             // Get dialect encoder for this peer
@@ -1431,9 +1346,7 @@ mod tests {
     fn mark_peer_responded_is_idempotent_per_peer() {
         // Use a distinctive prefix that no other test is likely to reuse,
         // since the underlying HashSet is a process-wide static.
-        let peer = [
-            0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-        ];
+        let peer = [0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01];
 
         assert!(
             mark_peer_responded(peer),
@@ -1452,103 +1365,12 @@ mod tests {
     /// Different peer prefixes must be tracked independently of one another.
     #[test]
     fn mark_peer_responded_distinguishes_peers() {
-        let peer_a = [
-            0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02,
-        ];
-        let peer_b = [
-            0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03,
-        ];
+        let peer_a = [0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02];
+        let peer_b = [0x7F, 0xED, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
 
         assert!(mark_peer_responded(peer_a));
         assert!(mark_peer_responded(peer_b));
         assert!(!mark_peer_responded(peer_a));
         assert!(!mark_peer_responded(peer_b));
-    }
-
-    /// v251: an entry not refreshed for longer than the TTL must be evicted on
-    /// the next call, and the peer should re-signal "respond".
-    #[test]
-    fn mark_peer_responded_at_expires_after_ttl() {
-        let mut map: HashMap<[u8; 12], Instant> = HashMap::new();
-        let peer = [
-            0x7F, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
-        ];
-        let ttl = Duration::from_secs(1);
-        let t0 = Instant::now();
-
-        assert!(
-            mark_peer_responded_at(&mut map, peer, t0, ttl),
-            "fresh peer must return true"
-        );
-        assert!(
-            !mark_peer_responded_at(&mut map, peer, t0 + Duration::from_millis(500), ttl),
-            "peer seen 500ms ago (within 1s TTL) must return false"
-        );
-        assert!(
-            mark_peer_responded_at(&mut map, peer, t0 + Duration::from_secs(2), ttl),
-            "peer last seen 2s ago (past 1s TTL) must be evicted and return true"
-        );
-    }
-
-    /// v251: a peer that keeps announcing within the TTL window stays tracked
-    /// indefinitely — the "last seen" timestamp is refreshed on every call.
-    #[test]
-    fn mark_peer_responded_at_refreshes_last_seen_on_active_peer() {
-        let mut map: HashMap<[u8; 12], Instant> = HashMap::new();
-        let peer = [
-            0x7F, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
-        ];
-        let ttl = Duration::from_secs(1);
-        let t0 = Instant::now();
-
-        assert!(mark_peer_responded_at(&mut map, peer, t0, ttl));
-        // 3 refreshes spaced 500 ms apart, all within TTL — map never evicts.
-        for i in 1..=3u32 {
-            let t = t0 + Duration::from_millis(500 * u64::from(i));
-            assert!(
-                !mark_peer_responded_at(&mut map, peer, t, ttl),
-                "refresh #{i} within TTL must return false"
-            );
-        }
-        // Confirm refresh genuinely moved last_seen forward: almost-TTL from the
-        // most recent refresh still counts as tracked.
-        let last_refresh = t0 + Duration::from_millis(500 * 3);
-        assert!(
-            !mark_peer_responded_at(
-                &mut map,
-                peer,
-                last_refresh + ttl - Duration::from_millis(1),
-                ttl
-            ),
-            "almost-TTL from last refresh must still return false (refresh worked)"
-        );
-    }
-
-    /// v251: an explicit forget (dispose signal) clears the entry even while
-    /// it was still within TTL, so the next SPDP gets a fresh response.
-    #[test]
-    fn forget_peer_at_allows_immediate_rerespond() {
-        let mut map: HashMap<[u8; 12], Instant> = HashMap::new();
-        let peer = [
-            0x7F, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x20,
-        ];
-        let ttl = Duration::from_secs(60);
-        let t0 = Instant::now();
-
-        assert!(mark_peer_responded_at(&mut map, peer, t0, ttl));
-        assert!(!mark_peer_responded_at(
-            &mut map,
-            peer,
-            t0 + Duration::from_millis(100),
-            ttl
-        ));
-
-        // Simulate dispose: forget the peer well within TTL.
-        forget_peer_at(&mut map, &peer);
-
-        assert!(
-            mark_peer_responded_at(&mut map, peer, t0 + Duration::from_millis(200), ttl),
-            "post-forget mark must return true (fresh response on rejoin)"
-        );
     }
 }
