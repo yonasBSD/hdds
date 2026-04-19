@@ -751,7 +751,12 @@ mod tests {
 
         let (history, limits) = derive_history_and_limits(&qos).expect("history derivation");
         assert!(matches!(history, crate::qos::History::KeepLast(5)));
-        assert_eq!(limits.max_samples, 5);
+        // DDS spec 2.2.2.4.2.2: KEEP_LAST depth applies PER INSTANCE; the
+        // global cap is left at the user value so multi-instance topics are
+        // not starved. See derive_history_and_limits, non-durable branch.
+        // (Test assertion updated to match the spec-correct logic introduced
+        // in f9615d7, which had left this assertion on the pre-fix value of 5.)
+        assert_eq!(limits.max_samples, base_limits().max_samples);
         assert_eq!(limits.max_samples_per_instance, 5);
     }
 
