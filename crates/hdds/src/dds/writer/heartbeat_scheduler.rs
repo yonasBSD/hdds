@@ -47,6 +47,22 @@ pub struct HeartbeatSchedulerState {
     pub stop: AtomicBool,
     /// Heartbeat counter (monotonically increasing per RTPS spec)
     pub count: AtomicU32,
+    /// v252: For VOLATILE writers, sequence number snapshotted at the time the
+    /// first reader matched via SEDP. Subsequent HEARTBEATs use `max(cache.
+    /// oldest, first_eligible_seq + 1)` as `firstSN` so the matched reader
+    /// never NACKs for samples that existed before it subscribed. 0 means
+    /// "not yet set" (either no match has fired, or the writer is not
+    /// VOLATILE and this field is intentionally left unused).
+    ///
+    /// Known limitation: this is a single writer-wide floor, not per-reader.
+    /// For a late-joining second VOLATILE reader, we currently advertise the
+    /// floor captured at the first match; samples produced between first and
+    /// second match are visible to the second reader. Passing per-reader
+    /// state requires a StatefulWriter refactor (RTPS 8.4.7) tracked for a
+    /// follow-up session. In the single-reader case — which covers the
+    /// `Test_Durability_16` scenario and the common point-to-point topology
+    /// — the current floor is spec-correct.
+    pub first_eligible_seq: AtomicU64,
 }
 
 impl HeartbeatSchedulerState {
@@ -56,6 +72,7 @@ impl HeartbeatSchedulerState {
             last_seq: AtomicU64::new(0),
             stop: AtomicBool::new(false),
             count: AtomicU32::new(1),
+            first_eligible_seq: AtomicU64::new(0),
         }
     }
 
@@ -77,6 +94,30 @@ impl HeartbeatSchedulerState {
     /// Get and increment the heartbeat counter.
     pub fn next_count(&self) -> u32 {
         self.count.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// v252: CAS-set `first_eligible_seq` on the first call only. Subsequent
+    /// calls (with a non-zero current value) are no-ops, so the floor is
+    /// captured at the moment of the *first* reader match event and never
+    /// slides further. Returns `true` if this call installed the value.
+    pub fn bump_first_eligible(&self, value: u64) -> bool {
+        self.first_eligible_seq
+            .compare_exchange(0, value, Ordering::AcqRel, Ordering::Relaxed)
+            .is_ok()
+    }
+
+    /// v252: Compute the `firstSN` to advertise in HEARTBEAT, respecting the
+    /// VOLATILE floor when present. When `first_eligible_seq` is 0 (never
+    /// set), returns `cache_oldest` unchanged (VOLATILE writers pre-match, or
+    /// non-VOLATILE writers). Otherwise returns `max(cache_oldest,
+    /// first_eligible + 1)` so the reader never sees historical seqs.
+    pub fn heartbeat_first_seq(&self, cache_oldest: u64) -> u64 {
+        let floor = self.first_eligible_seq.load(Ordering::Acquire);
+        if floor == 0 {
+            cache_oldest
+        } else {
+            cache_oldest.max(floor + 1)
+        }
     }
 }
 
@@ -180,7 +221,9 @@ fn heartbeat_loop(
             continue;
         }
 
-        let first_seq = history_cache.oldest_seq().unwrap_or(1);
+        let cache_oldest = history_cache.oldest_seq().unwrap_or(1);
+        // v252: Apply VOLATILE firstSN floor captured at first match (if any).
+        let first_seq = state.heartbeat_first_seq(cache_oldest);
         let count = state.next_count();
 
         // Build and send HEARTBEAT
@@ -233,5 +276,60 @@ mod tests {
         assert_eq!(state.next_count(), 1);
         assert_eq!(state.next_count(), 2);
         assert_eq!(state.next_count(), 3);
+    }
+
+    /// v252: `bump_first_eligible` installs the VOLATILE floor on the first
+    /// call only; subsequent bumps must not slide the value.
+    #[test]
+    fn bump_first_eligible_is_first_match_wins() {
+        let state = HeartbeatSchedulerState::new();
+        assert_eq!(state.first_eligible_seq.load(Ordering::Acquire), 0);
+
+        assert!(state.bump_first_eligible(32), "first bump must install");
+        assert_eq!(state.first_eligible_seq.load(Ordering::Acquire), 32);
+
+        assert!(
+            !state.bump_first_eligible(100),
+            "second bump must be a no-op even with a larger value"
+        );
+        assert_eq!(
+            state.first_eligible_seq.load(Ordering::Acquire),
+            32,
+            "floor must stay at the first-match snapshot"
+        );
+
+        assert!(
+            !state.bump_first_eligible(5),
+            "third bump must be a no-op too"
+        );
+        assert_eq!(state.first_eligible_seq.load(Ordering::Acquire), 32);
+    }
+
+    /// v252: without a floor, `heartbeat_first_seq` passes `cache_oldest`
+    /// through; with a floor, it returns `max(cache_oldest, floor + 1)`.
+    #[test]
+    fn heartbeat_first_seq_applies_volatile_floor() {
+        let state = HeartbeatSchedulerState::new();
+        // No floor yet: identity on cache_oldest.
+        assert_eq!(state.heartbeat_first_seq(1), 1);
+        assert_eq!(state.heartbeat_first_seq(50), 50);
+
+        // Floor installed at 32 → first advertised seq must be 33 at minimum.
+        state.bump_first_eligible(32);
+        assert_eq!(
+            state.heartbeat_first_seq(1),
+            33,
+            "cache_oldest=1 must be lifted to floor+1"
+        );
+        assert_eq!(
+            state.heartbeat_first_seq(33),
+            33,
+            "cache_oldest=33 must stay at 33 (tied with floor+1)"
+        );
+        assert_eq!(
+            state.heartbeat_first_seq(50),
+            50,
+            "cache_oldest=50 must stay at 50 (already above floor+1)"
+        );
     }
 }

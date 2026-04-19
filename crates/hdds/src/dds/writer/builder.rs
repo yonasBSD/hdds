@@ -8,7 +8,8 @@
 //! and reliability options before constructing a DataWriter instance.
 
 use super::heartbeat_scheduler::{
-    spawn_heartbeat_scheduler, HeartbeatSchedulerHandle, DEFAULT_HEARTBEAT_PERIOD_MS,
+    spawn_heartbeat_scheduler, HeartbeatSchedulerHandle, HeartbeatSchedulerState,
+    DEFAULT_HEARTBEAT_PERIOD_MS,
 };
 use super::nack::{WriterNackFragHandler, WriterNackHandler};
 use super::runtime::DataWriter;
@@ -25,7 +26,7 @@ use crate::transport::shm::ShmPolicy;
 use crate::transport::UdpTransport;
 use crate::xtypes::CompleteTypeObject;
 use std::cell::RefCell;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 fn validate_resource_limits(limits: &crate::qos::ResourceLimits) -> Result<()> {
@@ -656,6 +657,19 @@ impl<T: DDS> WriterBuilder<T> {
         // Capture deadline period before moving self.qos into the struct
         let deadline_period = self.qos.deadline.period;
 
+        // v252: Capture scheduler state for the VOLATILE firstSN floor. This
+        // lets the match callback (below) snapshot `last_seq` at the moment
+        // the first reader matches, so subsequent HEARTBEATs hide samples
+        // produced before the subscriber existed. See heartbeat_scheduler.rs
+        // `first_eligible_seq` doc-comment for the full rationale and the
+        // known single-reader limitation.
+        let scheduler_state_for_match: Option<Arc<HeartbeatSchedulerState>> =
+            heartbeat_scheduler.as_ref().map(|h| Arc::clone(h.state()));
+        let writer_is_volatile = matches!(
+            self.qos.durability,
+            super::super::qos::Durability::Volatile
+        );
+
         // Register match notification (on_publication_matched) if listener is present.
         // Must happen before self.listener is moved into the DataWriter.
         let match_token = if let (Some(ref participant), Some(ref listener)) =
@@ -664,10 +678,27 @@ impl<T: DDS> WriterBuilder<T> {
             if let Some(ref reg) = participant.match_registry {
                 let l_match = Arc::clone(listener);
                 let l_incompat = Arc::clone(listener);
+                // v252: Clone the Arc into the match closure so the floor is
+                // visible from the SEDP callback thread.
+                let scheduler_state_for_closure = scheduler_state_for_match.clone();
                 Some(reg.register_writer_with_incompatible(
                     self.topic.clone(),
                     self.qos.clone(),
                     move |total, total_change, current, current_change, last_handle| {
+                        // v252: Before the user listener fires, if the writer
+                        // is VOLATILE and we are observing a real match
+                        // (current_count > 0, i.e. at least one reader), take
+                        // the current `last_seq` snapshot and install it as
+                        // the HEARTBEAT floor. The CAS in bump_first_eligible
+                        // ensures only the first match wins; later matches
+                        // are no-ops (see known limitation in the field's
+                        // doc-comment).
+                        if writer_is_volatile && current > 0 {
+                            if let Some(ref state) = scheduler_state_for_closure {
+                                let last_seq = state.last_seq.load(Ordering::Acquire);
+                                let _ = state.bump_first_eligible(last_seq);
+                            }
+                        }
                         l_match.on_publication_matched(
                             crate::dds::listener::PublicationMatchedStatus {
                                 total_count: total,

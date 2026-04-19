@@ -886,8 +886,17 @@ impl<T: DDS> DataWriter<T> {
             return;
         }
 
+        // v252: Compute `firstSN` with the VOLATILE floor from scheduler state.
+        // For RELIABLE writers the scheduler is always present (see builder.rs
+        // spawn site) and owns the shared `first_eligible_seq`. When absent,
+        // we fall back to `cache.oldest_seq()` unchanged.
         let first_seq = if let Some(ref cache) = self.history_cache {
-            cache.oldest_seq().unwrap_or(1)
+            let cache_oldest = cache.oldest_seq().unwrap_or(1);
+            if let Some(ref scheduler) = self._heartbeat_scheduler {
+                scheduler.state().heartbeat_first_seq(cache_oldest)
+            } else {
+                cache_oldest
+            }
         } else {
             1
         };
