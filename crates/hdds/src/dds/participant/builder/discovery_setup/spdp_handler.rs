@@ -26,11 +26,12 @@ use crate::protocol::dialect::{get_encoder, Dialect};
 use crate::protocol::discovery::constants::{CDR2_LE, CDR_LE, PID_METATRAFFIC_UNICAST_LOCATOR};
 use crate::protocol::discovery::{parse_spdp, parse_spdp_partial, ParseError, SedpData, SpdpData};
 use crate::transport::UdpTransport;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::net::Ipv4Addr;
 use std::net::SocketAddr;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use super::super::entity_registry::SedpAnnouncementsCache;
 
@@ -63,43 +64,90 @@ fn completed_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
     COMPLETED_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-/// v250: Tracks peers we have already sent an immediate SPDP unicast response to.
+/// v251: TTL for RESPONDED_SPDP_PEERS entries.
 ///
-/// Without this, every SPDP received (including our own unicast responses
-/// bouncing back as incoming packets) triggers a fresh immediate response,
-/// creating a reactive bounce loop with N*(N-1) edges between the N participants
-/// in a domain. Measured symptom: 74290 SPDP frames in 23s (≈3230 SPDP/s) for a
-/// single `Test_LargeData_0` run, vs 434 total RTPS frames for the equivalent
-/// Connext-to-Connext capture — a 277x frame explosion attributable almost
-/// entirely to this feedback loop.
+/// An entry not refreshed (no SPDP seen from this peer) for longer than this
+/// gets lazily evicted on the next `mark_peer_responded` call. Chosen to
+/// comfortably cover active peers (SPDP announce every 3 s) while bounding
+/// memory in long-running processes that see steady peer churn. The value is
+/// large relative to the 3 s announce interval so benign scheduling jitter
+/// cannot evict a live peer; and small enough to reclaim memory for departed
+/// peers within a minute.
+const PEER_SEEN_TTL: Duration = Duration::from_secs(60);
+
+/// v250/v251: Tracks peers we have already sent an immediate SPDP unicast
+/// response to, along with the instant of the most recent SPDP we observed
+/// from them.
 ///
-/// The v132 immediate-SPDP-response exists to accelerate first contact with RTI
-/// (otherwise RTI waits ~200ms for its periodic SPDP before processing our
-/// discovery HEARTBEATs). That goal is satisfied by responding **once** per
-/// peer; subsequent SPDPs from the same peer are already covered by our own
-/// periodic SPDP announcer, so suppressing them is safe.
+/// Without this dedup, every SPDP received (including our own unicast
+/// responses bouncing back as incoming packets) triggers a fresh immediate
+/// response, creating a reactive bounce loop with N*(N-1) edges between the
+/// N participants in a domain. Measured symptom: 74290 SPDP frames in 23s
+/// (≈3230 SPDP/s) for a single `Test_LargeData_0` run, vs 434 total RTPS
+/// frames for the equivalent Connext-to-Connext capture — a 277x frame
+/// explosion attributable almost entirely to this feedback loop.
+///
+/// The v132 immediate-SPDP-response exists to accelerate first contact with
+/// RTI (otherwise RTI waits ~200ms for its periodic SPDP before processing
+/// our discovery HEARTBEATs). That goal is satisfied by responding **once**
+/// per peer; subsequent SPDPs from the same peer are already covered by our
+/// own periodic SPDP announcer, so suppressing them is safe.
+///
+/// **v251 lease tracking:** each entry stores the timestamp of the last SPDP
+/// observed for that peer. `mark_peer_responded` lazily evicts entries older
+/// than [`PEER_SEEN_TTL`] on every call. This bounds memory in processes
+/// that see steady peer churn (previously: ~12 B/peer leak over process
+/// lifetime) and lets a peer that disappeared for more than the TTL get the
+/// 200 ms immediate-SPDP boost again on rejoin.
 ///
 /// **Scope note:** this dedup set gates only the immediate SPDP *unicast
 /// response*. The SEDP re-announce path has its own independent dedup via
 /// `COMPLETED_PEERS` / `ACTIVE_RETRIES` (v210 / v232 above); do not assume
 /// membership here implies anything about the SEDP side, and vice versa.
-fn responded_spdp_peers() -> &'static Mutex<HashSet<[u8; 12]>> {
-    static RESPONDED_SPDP_PEERS: OnceLock<Mutex<HashSet<[u8; 12]>>> = OnceLock::new();
-    RESPONDED_SPDP_PEERS.get_or_init(|| Mutex::new(HashSet::new()))
+///
+/// **Why no explicit dispose hook (v251 scope decision):** an earlier
+/// iteration added an `if lease_duration_ms == 0 { forget_peer; return }`
+/// short-circuit driven by remote SPDP dispose announcements. Empirically
+/// that regression the OMG batch from 76-79/89 to 41/89 because the
+/// `return` short-circuits a load-bearing `RetryGuard`/`COMPLETED_PEERS`
+/// state update. The RTPS-level authoritative dispose signal is the DATA(p)
+/// K-flag at the reader layer, not lease=0 heuristics here. See
+/// `bug_c78bc2d_dispose_hook_batch.md` in session memory for the full
+/// post-mortem before re-adding any dispose logic to this handler.
+fn responded_spdp_peers() -> &'static Mutex<HashMap<[u8; 12], Instant>> {
+    static RESPONDED_SPDP_PEERS: OnceLock<Mutex<HashMap<[u8; 12], Instant>>> = OnceLock::new();
+    RESPONDED_SPDP_PEERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-/// v250: Record that we are about to respond to this peer's SPDP. Returns
-/// `true` if the peer was not already in the set (caller should send the
-/// immediate response), `false` if we have already responded once (caller
-/// should skip).
+/// v251: Pure, testable core of the mark-responded-with-TTL logic.
 ///
-/// Handles a poisoned mutex by recovering the inner `HashSet` so discovery
-/// stays best-effort functional even after a panic elsewhere.
+/// Evicts entries whose `last_seen` is older than `ttl` (lazy GC on every
+/// call, amortized O(1) per call in steady state), then inserts / refreshes
+/// the entry for `peer_prefix` at `now`. Returns `true` iff the peer was
+/// absent or just evicted — i.e. the caller should send the immediate
+/// unicast response. Returns `false` on refresh of an already-tracked peer.
+fn mark_peer_responded_at(
+    map: &mut HashMap<[u8; 12], Instant>,
+    peer_prefix: [u8; 12],
+    now: Instant,
+    ttl: Duration,
+) -> bool {
+    map.retain(|_, last_seen| now.duration_since(*last_seen) < ttl);
+    map.insert(peer_prefix, now).is_none()
+}
+
+/// v250/v251: Record that we observed an SPDP from this peer. Returns `true`
+/// if the caller should send the immediate unicast response (new peer, or
+/// peer that had expired from the set), `false` if we have already responded
+/// within [`PEER_SEEN_TTL`].
+///
+/// Handles a poisoned mutex by recovering the inner map so discovery stays
+/// best-effort functional even after a panic elsewhere.
 fn mark_peer_responded(peer_prefix: [u8; 12]) -> bool {
-    match responded_spdp_peers().lock() {
-        Ok(mut set) => set.insert(peer_prefix),
-        Err(poisoned) => poisoned.into_inner().insert(peer_prefix),
-    }
+    let mut map = responded_spdp_peers()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    mark_peer_responded_at(&mut map, peer_prefix, Instant::now(), PEER_SEEN_TTL)
 }
 
 /// RAII guard for SEDP retry thread deduplication.
@@ -1372,5 +1420,60 @@ mod tests {
         assert!(mark_peer_responded(peer_b));
         assert!(!mark_peer_responded(peer_a));
         assert!(!mark_peer_responded(peer_b));
+    }
+
+    /// v251: an entry not refreshed for longer than the TTL must be evicted
+    /// on the next call, and the peer should re-signal "respond" as if new.
+    #[test]
+    fn mark_peer_responded_at_expires_after_ttl() {
+        let mut map: HashMap<[u8; 12], Instant> = HashMap::new();
+        let peer = [0x7F, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10];
+        let ttl = Duration::from_secs(1);
+        let t0 = Instant::now();
+
+        assert!(
+            mark_peer_responded_at(&mut map, peer, t0, ttl),
+            "fresh peer must return true"
+        );
+        assert!(
+            !mark_peer_responded_at(&mut map, peer, t0 + Duration::from_millis(500), ttl),
+            "peer seen 500 ms ago (within 1 s TTL) must return false"
+        );
+        assert!(
+            mark_peer_responded_at(&mut map, peer, t0 + Duration::from_secs(2), ttl),
+            "peer last seen 2 s ago (past 1 s TTL) must be evicted and return true"
+        );
+    }
+
+    /// v251: a peer that keeps announcing within the TTL window stays tracked
+    /// indefinitely — the "last seen" timestamp is refreshed on every call.
+    #[test]
+    fn mark_peer_responded_at_refreshes_last_seen_on_active_peer() {
+        let mut map: HashMap<[u8; 12], Instant> = HashMap::new();
+        let peer = [0x7F, 0xEE, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11];
+        let ttl = Duration::from_secs(1);
+        let t0 = Instant::now();
+
+        assert!(mark_peer_responded_at(&mut map, peer, t0, ttl));
+        // Three refreshes spaced 500 ms apart, all within TTL — map never evicts.
+        for i in 1..=3u32 {
+            let t = t0 + Duration::from_millis(500 * u64::from(i));
+            assert!(
+                !mark_peer_responded_at(&mut map, peer, t, ttl),
+                "refresh #{i} within TTL must return false"
+            );
+        }
+        // Confirm the refresh genuinely moved last_seen forward: almost-TTL
+        // from the most recent refresh still counts as tracked.
+        let last_refresh = t0 + Duration::from_millis(500 * 3);
+        assert!(
+            !mark_peer_responded_at(
+                &mut map,
+                peer,
+                last_refresh + ttl - Duration::from_millis(1),
+                ttl
+            ),
+            "almost-TTL from last refresh must still return false (refresh worked)"
+        );
     }
 }
