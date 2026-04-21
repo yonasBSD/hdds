@@ -58,7 +58,9 @@ pub(crate) fn find_data_submsg_offset(rtps_packet: &[u8]) -> Option<usize> {
 #[cfg(test)]
 mod find_data_submsg_offset_tests {
     use super::*;
-    use crate::protocol::constants::{HDDS_VENDOR_ID, RTPS_MAGIC, RTPS_VERSION_MAJOR, RTPS_VERSION_MINOR};
+    use crate::protocol::constants::{
+        HDDS_VENDOR_ID, RTPS_MAGIC, RTPS_VERSION_MAJOR, RTPS_VERSION_MINOR,
+    };
 
     fn rtps_header() -> Vec<u8> {
         let mut v = Vec::with_capacity(20);
@@ -70,7 +72,9 @@ mod find_data_submsg_offset_tests {
     }
 
     fn info_ts_le() -> [u8; 12] {
-        [0x09, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
+        [
+            0x09, 0x01, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ]
     }
 
     fn info_dst_le() -> [u8; 16] {

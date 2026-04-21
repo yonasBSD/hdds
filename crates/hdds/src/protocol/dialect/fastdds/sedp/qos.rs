@@ -47,7 +47,7 @@ pub fn write_reliability(
     buf[*offset + 2..*offset + 4].copy_from_slice(&12u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&kind.to_le_bytes());
     buf[*offset + 8..*offset + 12].copy_from_slice(&0u32.to_le_bytes()); // max_blocking_time.sec
-    // RTPS v2.5 §9.3.2: fraction is 2^-32 sec. 100 ms = 0x1999_999A.
+                                                                         // RTPS v2.5 §9.3.2: fraction is 2^-32 sec. 100 ms = 0x1999_999A.
     buf[*offset + 12..*offset + 16].copy_from_slice(&0x1999_999Au32.to_le_bytes());
     *offset += 16;
 

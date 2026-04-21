@@ -124,14 +124,12 @@ impl DialectEncoder for HybridEncoder {
                     with_ownership.deadline_millis(millis)
                 };
             // Lifespan
-            let with_lifespan = if q.lifespan_sec == 0x7FFF_FFFF
-                && q.lifespan_nsec == 0xFFFF_FFFF
+            let with_lifespan = if q.lifespan_sec == 0x7FFF_FFFF && q.lifespan_nsec == 0xFFFF_FFFF
                 || (q.lifespan_sec == 0 && q.lifespan_nsec == 0)
             {
                 with_deadline // infinite lifespan (default)
             } else {
-                let millis =
-                    (q.lifespan_sec as u64) * 1000 + (q.lifespan_nsec as u64) / 1_000_000;
+                let millis = (q.lifespan_sec as u64) * 1000 + (q.lifespan_nsec as u64) / 1_000_000;
                 with_deadline.lifespan_millis(millis)
             };
             // Presentation

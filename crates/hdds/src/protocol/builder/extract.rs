@@ -12,10 +12,8 @@ pub fn extract_data_payload(rtps_packet: &[u8]) -> Option<&[u8]> {
     let data_off = find_data_submsg_offset(rtps_packet)?;
 
     // octetsToInlineQos is at (data_off + 4 [submsg header] + 2 [extraFlags]) = data_off + 6
-    let octets_to_qos = u16::from_le_bytes([
-        rtps_packet[data_off + 6],
-        rtps_packet[data_off + 7],
-    ]) as usize;
+    let octets_to_qos =
+        u16::from_le_bytes([rtps_packet[data_off + 6], rtps_packet[data_off + 7]]) as usize;
     let qos_offset = data_off + 8 + octets_to_qos;
 
     if rtps_packet.len() < qos_offset + 4 {
@@ -73,10 +71,8 @@ pub fn extract_inline_qos(rtps_packet: &[u8]) -> Option<&[u8]> {
     }
 
     // octetsToInlineQos at (data_off + 4 [hdr] + 2 [extraFlags]) = data_off + 6
-    let octets_to_inline_qos = u16::from_le_bytes([
-        rtps_packet[data_off + 6],
-        rtps_packet[data_off + 7],
-    ]) as usize;
+    let octets_to_inline_qos =
+        u16::from_le_bytes([rtps_packet[data_off + 6], rtps_packet[data_off + 7]]) as usize;
     let qos_offset = data_off + 8 + octets_to_inline_qos;
 
     if qos_offset >= rtps_packet.len() {

@@ -119,14 +119,21 @@ fn test_data_frag_packet_count() {
 
     let packets = build_data_frag_packets(&ctx, 1, &payload, DEFAULT_FRAGMENT_SIZE);
 
-    // 10240 / 1024 = 10 fragments
-    let expected_frags = payload_size.div_ceil(DEFAULT_FRAGMENT_SIZE);
+    // `build_data_frag_packets` prepends a 4-byte CDR encapsulation header
+    // before fragmenting (see commit abde10c "fix(data_frag): K-flag misuse,
+    // missing CDR header, and HBF routing"), so the wire total is
+    // payload + 4, not payload.
+    const CDR_HEADER: usize = 4;
+    let total_on_wire = payload_size + CDR_HEADER;
+    let expected_frags = total_on_wire.div_ceil(DEFAULT_FRAGMENT_SIZE);
     assert_eq!(
         packets.len(),
         expected_frags,
-        "Expected {} DATA_FRAG packets for {} bytes with fragment_size={}",
+        "Expected {} DATA_FRAG packets for {} bytes payload (+{} CDR header) \
+         with fragment_size={}",
         expected_frags,
         payload_size,
+        CDR_HEADER,
         DEFAULT_FRAGMENT_SIZE
     );
 
@@ -370,12 +377,18 @@ fn test_data_frag_custom_fragment_size() {
 
     let packets = build_data_frag_packets(&ctx, 1, &payload, custom_frag_size);
 
-    let expected_frags = payload_size.div_ceil(custom_frag_size);
+    // Same +4 CDR encapsulation header as `test_data_frag_packet_count`.
+    const CDR_HEADER: usize = 4;
+    let total_on_wire = payload_size + CDR_HEADER;
+    let expected_frags = total_on_wire.div_ceil(custom_frag_size);
     assert_eq!(
         packets.len(),
         expected_frags,
-        "Expected {} fragments with custom fragment_size={}",
+        "Expected {} fragments for {} bytes payload (+{} CDR header) \
+         with custom fragment_size={}",
         expected_frags,
+        payload_size,
+        CDR_HEADER,
         custom_frag_size
     );
 }
@@ -388,16 +401,26 @@ fn test_data_frag_custom_fragment_size() {
 fn test_data_frag_exact_boundary() {
     let ctx = test_ctx();
 
-    // Payload exactly at the unfragmented threshold: no fragmentation
-    let payload_at_threshold = make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE);
+    // `build_data_frag_packets` prepends a 4-byte CDR encapsulation header
+    // before comparing against the threshold, so the caller's payload must
+    // be `threshold - 4` for the total-on-wire to equal threshold.
+    const CDR_HEADER: usize = 4;
+
+    // Payload such that the 4-byte header brings the wire total to exactly
+    // the unfragmented threshold: the function must NOT fragment.
+    let payload_at_threshold =
+        make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE.saturating_sub(CDR_HEADER));
     let packets = build_data_frag_packets(&ctx, 1, &payload_at_threshold, DEFAULT_FRAGMENT_SIZE);
     assert!(
         packets.is_empty(),
-        "Payload at exact threshold should NOT produce DATA_FRAG packets"
+        "Payload that fills exactly the threshold once CDR header is added \
+         should NOT produce DATA_FRAG packets"
     );
 
-    // Payload 1 byte over threshold: must fragment
-    let payload_over_threshold = make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE + 1);
+    // Payload 1 byte over the threshold (after accounting for the header):
+    // must fragment.
+    let payload_over_threshold =
+        make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE.saturating_sub(CDR_HEADER) + 1);
     let packets = build_data_frag_packets(&ctx, 1, &payload_over_threshold, DEFAULT_FRAGMENT_SIZE);
     assert!(
         !packets.is_empty(),

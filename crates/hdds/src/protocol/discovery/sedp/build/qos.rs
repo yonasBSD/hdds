@@ -48,7 +48,7 @@ pub fn write_reliability(
     buf[*offset + 2..*offset + 4].copy_from_slice(&12u16.to_le_bytes());
     buf[*offset + 4..*offset + 8].copy_from_slice(&reliability_kind.to_le_bytes());
     buf[*offset + 8..*offset + 12].copy_from_slice(&0u32.to_le_bytes()); // max_blocking_time.sec = 0
-    // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds. 100 ms = 0.1 * 2^32 ~= 0x1999999A.
+                                                                         // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds. 100 ms = 0.1 * 2^32 ~= 0x1999999A.
     buf[*offset + 12..*offset + 16].copy_from_slice(&0x1999_999Au32.to_le_bytes());
     *offset += 16;
 

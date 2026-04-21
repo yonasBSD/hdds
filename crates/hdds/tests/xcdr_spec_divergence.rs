@@ -105,7 +105,9 @@ fn xcdr2_spec_correct_reference_bytes() -> [u8; 12] {
 fn probe_octet_double_encoded_bytes_match_xcdr1_pattern() {
     let probe = Probe { a: 0x42, b: 1.0f64 };
     let mut buf = vec![0u8; probe.max_cdr2_size()];
-    let n = probe.encode_cdr2_le(&mut buf).expect("Probe encode succeeds");
+    let n = probe
+        .encode_cdr2_le(&mut buf)
+        .expect("Probe encode succeeds");
     buf.truncate(n);
 
     let xcdr1 = xcdr1_reference_bytes();

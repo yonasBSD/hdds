@@ -98,12 +98,12 @@ pub fn encode_data_frag(
 
     // Submessage header
     buf[0] = 0x16; // DATA_FRAG
-    // RTPS v2.5 Table 9.18: DATA_FRAG flags are E(0x01), Q(0x02), K(0x04), N(0x08).
-    // There is no D flag -- the submessage always carries data unless K is set.
-    // HDDS used 0x05 (E+K) thinking bit 2 meant "data present" (as it does on
-    // plain DATA, Table 9.17), which made Connext decode every fragment as the
-    // serialized key of ShapeType and fail with "color deserialization error"
-    // while reassembling large samples. Emit only E.
+                   // RTPS v2.5 Table 9.18: DATA_FRAG flags are E(0x01), Q(0x02), K(0x04), N(0x08).
+                   // There is no D flag -- the submessage always carries data unless K is set.
+                   // HDDS used 0x05 (E+K) thinking bit 2 meant "data present" (as it does on
+                   // plain DATA, Table 9.17), which made Connext decode every fragment as the
+                   // serialized key of ShapeType and fail with "color deserialization error"
+                   // while reassembling large samples. Emit only E.
     buf[1] = 0x01;
     buf[2..4].copy_from_slice(&(submsg_len as u16).to_le_bytes());
 

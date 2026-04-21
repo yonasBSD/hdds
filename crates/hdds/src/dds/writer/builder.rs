@@ -665,10 +665,8 @@ impl<T: DDS> WriterBuilder<T> {
         // known single-reader limitation.
         let scheduler_state_for_match: Option<Arc<HeartbeatSchedulerState>> =
             heartbeat_scheduler.as_ref().map(|h| Arc::clone(h.state()));
-        let writer_is_volatile = matches!(
-            self.qos.durability,
-            super::super::qos::Durability::Volatile
-        );
+        let writer_is_volatile =
+            matches!(self.qos.durability, super::super::qos::Durability::Volatile);
 
         // Register match notification (on_publication_matched) if listener is present.
         // Must happen before self.listener is moved into the DataWriter.

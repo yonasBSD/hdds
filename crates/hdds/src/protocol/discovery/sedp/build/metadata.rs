@@ -261,6 +261,14 @@ pub fn write_data_representation_xcdr2(
 ///
 /// CycloneDDS matching requires at least one common data representation between
 /// writer and reader. By advertising both, HDDS can match with any vendor.
+///
+/// `#[allow(dead_code)]`: this helper is pre-wired infrastructure that the
+/// current SEDP advertising path does not call yet -- the runtime still picks
+/// a single representation per writer at match time. Phase 2 Etape 2.5 of
+/// `WIP-XCDR1-INTEROP.md` (runtime dispatch rewiring in
+/// `dds/writer/runtime.rs:295`, `:612`) is the step that enables it, so the
+/// function stays compiled but unused until then. Do NOT delete it.
+#[allow(dead_code)]
 pub fn write_data_representation_both(
     buf: &mut [u8],
     offset: &mut usize,
