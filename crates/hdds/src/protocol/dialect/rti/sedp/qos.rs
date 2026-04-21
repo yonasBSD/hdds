@@ -134,7 +134,11 @@ pub fn write_deadline(
 
     let (seconds, fraction) = if let Some(q) = qos {
         // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
-        let frac = (((q.deadline_period_nsec as u64) << 32) / 1_000_000_000) as u32;
+        // For a well-formed Duration_t the nsec portion is < 10^9, so the
+        // shifted division stays in u32 range; `try_from` guards the
+        // invariant against malformed QoS input.
+        let frac = u32::try_from(((q.deadline_period_nsec as u64) << 32) / 1_000_000_000)
+            .unwrap_or(u32::MAX);
         (q.deadline_period_sec, frac)
     } else {
         (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
@@ -353,7 +357,10 @@ pub fn write_lifespan(
             (0x7FFF_FFFFu32, 0xFFFF_FFFFu32)
         } else {
             // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
-            let frac = (((q.lifespan_nsec as u64) << 32) / 1_000_000_000) as u32;
+            // `try_from` preserves the value when the Duration_t invariant
+            // `nsec < 10^9` holds, saturates at u32::MAX otherwise.
+            let frac =
+                u32::try_from(((q.lifespan_nsec as u64) << 32) / 1_000_000_000).unwrap_or(u32::MAX);
             (q.lifespan_sec, frac)
         }
     } else {

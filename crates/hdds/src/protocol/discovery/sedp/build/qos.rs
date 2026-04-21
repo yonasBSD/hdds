@@ -135,7 +135,9 @@ pub fn write_deadline(
             let secs = qos.deadline.period.as_secs();
             let nanos = qos.deadline.period.subsec_nanos() as u64;
             // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
-            let frac = ((nanos << 32) / 1_000_000_000) as u32;
+            // `subsec_nanos() < 10^9` per std::time::Duration contract, so the
+            // shifted division fits in u32; `try_from` guards defensively.
+            let frac = u32::try_from((nanos << 32) / 1_000_000_000).unwrap_or(u32::MAX);
             (u32::try_from(secs).unwrap_or(u32::MAX), frac)
         }
     } else {
@@ -170,7 +172,9 @@ pub fn write_lifespan(
             let secs = qos.lifespan.duration.as_secs();
             let nanos = qos.lifespan.duration.subsec_nanos() as u64;
             // RTPS v2.5 §9.3.2: Duration_t fraction is 2^-32 seconds, not nanoseconds.
-            let frac = ((nanos << 32) / 1_000_000_000) as u32;
+            // `subsec_nanos() < 10^9` per std::time::Duration contract, so the
+            // shifted division fits in u32; `try_from` guards defensively.
+            let frac = u32::try_from((nanos << 32) / 1_000_000_000).unwrap_or(u32::MAX);
             (u32::try_from(secs).unwrap_or(u32::MAX), frac)
         }
     } else {
@@ -393,9 +397,14 @@ pub fn write_durability_service(
 
     // Convert cleanup delay from microseconds to RTPS Duration_t.
     // RTPS v2.5 §9.3.2: fraction is 2^-32 seconds, not nanoseconds.
-    let cleanup_secs = (ds.service_cleanup_delay_us / 1_000_000).min(u32::MAX as u64) as u32;
+    let cleanup_secs = u32::try_from(ds.service_cleanup_delay_us / 1_000_000).unwrap_or(u32::MAX);
     let cleanup_ns_u64 = (ds.service_cleanup_delay_us % 1_000_000) * 1_000;
-    let cleanup_fraction = ((cleanup_ns_u64 << 32) / 1_000_000_000) as u32;
+    // `cleanup_ns_u64 < 10^9` by construction (modulo above + *1000 < 10^9
+    // as long as microseconds is well-formed), so the shift-then-divide fits
+    // in u32. `try_from` guards the invariant at runtime in case of
+    // unexpected input.
+    let cleanup_fraction =
+        u32::try_from((cleanup_ns_u64 << 32) / 1_000_000_000).unwrap_or(u32::MAX);
 
     // History kind: KEEP_LAST=0 (DurabilityService always uses KEEP_LAST)
     let history_kind = 0u32;

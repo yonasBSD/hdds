@@ -478,7 +478,8 @@ impl<T: DDS> WriterBuilder<T> {
 
             // v240: Determine CDR encapsulation from type extensibility.
             // @final -> PLAIN_CDR_LE (0x0001), backward-compatible default.
-            // @appendable -> CDR2_LE (0x0007), required by XTypes v1.3 Sec.7.6.3.1.2.
+            // @appendable -> D_CDR2_LE (0x0009), required by XTypes v1.3 Sec.7.6.3.1.2
+            // (delimited CDR2 with DHEADER).
             // @mutable -> PL_CDR2_LE (0x000B).
             // Fall back to T::get_type_object() when no explicit override is set,
             // so that the normal topic.writer().build() path picks up the correct

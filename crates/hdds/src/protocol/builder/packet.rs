@@ -31,7 +31,8 @@ pub struct RtpsEndpointContext {
     /// CDR encapsulation kind for serialized payload.
     ///
     /// Defaults to `PLAIN_CDR_LE` (0x0001) for `@final` types.
-    /// Set to `CDR2_LE` (0x0007) for `@appendable` types (XTypes v1.3 Sec.7.6.3.1.2).
+    /// Set to `D_CDR2_LE` (0x0009) for `@appendable` types (XTypes v1.3 Sec.7.6.3.1.2,
+    /// delimited CDR2 with DHEADER).
     /// Set to `PL_CDR2_LE` (0x000B) for `@mutable` types.
     pub encapsulation_kind: u16,
 }
@@ -306,7 +307,8 @@ pub fn build_gap_packet(payload: &[u8]) -> Vec<u8> {
 /// ```
 ///
 /// RTI and FastDDS expect `PLAIN_CDR_LE` (0x0001) for user data.
-/// For `@appendable` types, XTypes v1.3 Sec.7.6.3.1.2 requires CDR2_LE (0x0007).
+/// For `@appendable` types, XTypes v1.3 Sec.7.6.3.1.2 requires `D_CDR2_LE` (0x0009,
+/// delimited CDR2 with DHEADER).
 /// The encapsulation kind is taken from `ctx.encapsulation_kind`.
 pub fn build_data_packet_with_context(
     ctx: &RtpsEndpointContext,
@@ -315,7 +317,7 @@ pub fn build_data_packet_with_context(
     payload: &[u8],
 ) -> Vec<u8> {
     // v235/v240: Prepend CDR encapsulation header from context.
-    // @final types use PLAIN_CDR_LE (0x0001), @appendable use CDR2_LE (0x0007).
+    // @final types use PLAIN_CDR_LE (0x0001), @appendable use D_CDR2_LE (0x0009).
     let mut encapsulated_payload = Vec::with_capacity(4 + payload.len());
     let enc_bytes = ctx.encapsulation_kind.to_be_bytes();
     encapsulated_payload.extend_from_slice(&[enc_bytes[0], enc_bytes[1], 0x00, 0x00]);
