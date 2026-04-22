@@ -120,9 +120,7 @@ fn test_data_frag_packet_count() {
     let packets = build_data_frag_packets(&ctx, 1, &payload, DEFAULT_FRAGMENT_SIZE);
 
     // `build_data_frag_packets` prepends a 4-byte CDR encapsulation header
-    // before fragmenting (see commit abde10c "fix(data_frag): K-flag misuse,
-    // missing CDR header, and HBF routing"), so the wire total is
-    // payload + 4, not payload.
+    // before fragmenting, so the wire total is payload + 4, not payload.
     const CDR_HEADER: usize = 4;
     let total_on_wire = payload_size + CDR_HEADER;
     let expected_frags = total_on_wire.div_ceil(DEFAULT_FRAGMENT_SIZE);
@@ -377,7 +375,7 @@ fn test_data_frag_custom_fragment_size() {
 
     let packets = build_data_frag_packets(&ctx, 1, &payload, custom_frag_size);
 
-    // Same +4 CDR encapsulation header as `test_data_frag_packet_count`.
+    // +4 CDR encapsulation header prepended by `build_data_frag_packets`.
     const CDR_HEADER: usize = 4;
     let total_on_wire = payload_size + CDR_HEADER;
     let expected_frags = total_on_wire.div_ceil(custom_frag_size);

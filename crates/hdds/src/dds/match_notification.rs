@@ -92,17 +92,10 @@ impl MatchNotificationRegistry {
         }
     }
 
-    /// Register a local writer for match notifications.
-    ///
-    /// The callback fires when a compatible remote reader is discovered.
-    /// Returns a MatchToken that unregisters on drop.
-    ///
-    /// `#[allow(dead_code)]`: the crate's production path calls
-    /// [`Self::register_writer_with_incompatible`] directly with the
-    /// incompatible-QoS callback always populated. `register_writer` is
-    /// kept as a convenience wrapper for the internal unit test at
-    /// `register_and_unregister` and for external integrators that don't
-    /// care about INCOMPATIBLE_QoS notifications.
+    /// Register a local writer for match notifications without an
+    /// INCOMPATIBLE_QoS callback. Convenience wrapper over
+    /// [`Self::register_writer_with_incompatible`] for callers that only
+    /// want match-success events.
     #[allow(dead_code)]
     pub fn register_writer(
         self: &Arc<Self>,

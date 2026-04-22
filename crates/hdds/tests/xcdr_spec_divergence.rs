@@ -1,22 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0 OR MIT
 // Copyright (c) 2025-2026 naskel.com
 //
-// XCDR Specification Divergence Probe (Phase 0 investigation)
+// Differential probe test on the XCDR1 / XCDR2 alignment divergence for the
+// IDL type `@final struct Probe { octet a; double b; };`.
 //
-// This test empirically determines whether hdds_gen's current `cdr2_alignment()`
-// emits XCDR1 or XCDR2 spec-correct wire bytes for an 8-byte-aligned primitive.
+// Per OMG DDS-XTypes v1.3 Sec.7.4.1.1.1 Table 31, XCDR v1 aligns 8-byte
+// primitives on 8, producing 16 bytes (1 + 7 padding + 8).
+// Per Sec.7.4.2 + Sec.7.4.3.2.2 Table 37 `MAXALIGN(VERSION2) = 4`, XCDR v2
+// caps alignment at 4 for 8-byte primitives, producing 12 bytes
+// (1 + 3 padding + 8).
 //
-// Context: WIP-XCDR1-INTEROP.md rev. 3, Phase 0.1.
-//
-// Reference IDL: `@final struct Probe { octet a; double b; };`
-//
-// XCDR1 expected (8-byte types aligned on 8):    16 bytes (1 + 7 padding + 8)
-// XCDR2 spec-correct (8-byte types aligned on 4): 12 bytes (1 + 3 padding + 8)
-//
-// The `Probe` impl below is COPIED VERBATIM from `hddsgen gen rust Probe.idl`
-// (hddsgen v1.0.10) so the test reflects exactly what the codegen emits today.
-// The DDS trait impl from the generator is intentionally omitted -- only the
-// raw `Cdr2Encode` / `Cdr2Decode` impls are needed to observe the wire bytes.
+// The `Probe` impl below is copied verbatim from `hddsgen gen rust Probe.idl`
+// (hddsgen v1.0.10), minus the DDS trait impl -- only the `Cdr2Encode` /
+// `Cdr2Decode` impls are needed to observe the wire bytes produced by the
+// current codegen.
 
 #![allow(clippy::float_cmp)]
 
@@ -113,7 +110,6 @@ fn probe_octet_double_encoded_bytes_match_xcdr1_pattern() {
     let xcdr1 = xcdr1_reference_bytes();
     let xcdr2 = xcdr2_spec_correct_reference_bytes();
 
-    eprintln!("=== Phase 0 XCDR divergence probe ===");
     eprintln!("Probe {{ a = 0x42, b = 1.0f64 }}");
     eprintln!("HDDS encoded {} bytes:", buf.len());
     eprintln!("  {:02X?}", buf);
@@ -128,14 +124,7 @@ fn probe_octet_double_encoded_bytes_match_xcdr1_pattern() {
     let matches_xcdr1 = buf.as_slice() == xcdr1.as_slice();
     let matches_xcdr2 = buf.as_slice() == xcdr2.as_slice();
 
-    if matches_xcdr1 {
-        eprintln!("\nVERDICT: HDDS emits the XCDR1 pattern (8-byte types aligned on 8).");
-        eprintln!("This is consistent with hdds_gen::cdr2_alignment() returning 8 for");
-        eprintln!("LongLong / UnsignedLongLong / Int64 / UInt64 / Double / LongDouble");
-        eprintln!("(see projects/public/hdds_gen/src/codegen/rust_backend/helpers.rs:233-238).");
-    } else if matches_xcdr2 {
-        eprintln!("\nVERDICT: HDDS emits the XCDR2 spec-correct pattern (cap to 4).");
-    } else {
+    if !matches_xcdr1 && !matches_xcdr2 {
         panic!(
             "HDDS output matches neither reference pattern.\n\
              Got:   {:02X?}\n\
@@ -145,14 +134,14 @@ fn probe_octet_double_encoded_bytes_match_xcdr1_pattern() {
         );
     }
 
-    // Lock the current behaviour until the Phase 2 alignment fix lands.
-    // When that fix is applied, this assertion will need to flip to `xcdr2`
-    // and the test name / docs should be updated accordingly.
+    // Lock the current hand-written impl's output to the XCDR1 pattern.
+    // A subsequent spec-correct rewrite of the copied impl to XCDR2 alignment
+    // must flip this assertion to `xcdr2` and rename the test accordingly.
     assert_eq!(
         buf.as_slice(),
         xcdr1.as_slice(),
-        "Probe wire bytes must match XCDR1 pattern (16 bytes) until Phase 2 \
-         applies the XCDR2 alignment cap fix."
+        "Probe wire bytes must match the XCDR1 pattern (16 bytes) \
+         until the impl adopts the XCDR2 alignment cap."
     );
 }
 
