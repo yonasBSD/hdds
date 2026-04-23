@@ -247,7 +247,19 @@ impl<T: DDS> ReaderSubscriber<T> {
 }
 
 impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
-    fn on_data(&self, _topic: &str, remote_seq: u64, data: &[u8]) {
+    fn on_data(&self, topic: &str, remote_seq: u64, data: &[u8]) {
+        // Fallback path: wire CDR version unknown at this entry point,
+        // default to Xcdr2 to preserve pre-2.5-f behavior.
+        self.on_data_with_version(topic, remote_seq, data, crate::dds::CdrVersion::Xcdr2);
+    }
+
+    fn on_data_with_version(
+        &self,
+        _topic: &str,
+        remote_seq: u64,
+        data: &[u8],
+        version: crate::dds::CdrVersion,
+    ) {
         // Drop duplicate remote sequences. Per RTPS spec a DataWriter MUST
         // assign a monotonically increasing sequence number per sample, so
         // repeats are retransmits that were already delivered. Without this
@@ -267,12 +279,11 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
                 return;
             }
         }
-        #[allow(deprecated)]
-        let msg = match T::decode_cdr2(data) {
+        let msg = match T::decode(data, version) {
             Ok(m) => m,
             Err(_e) => {
                 log::debug!(
-                    "[READER-SUB] CDR2 decode failed topic='{}' seq={} len={}: {:?}",
+                    "[READER-SUB] decode failed topic='{}' seq={} len={}: {:?}",
                     self.topic,
                     remote_seq,
                     data.len(),
@@ -327,8 +338,7 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
             let mut size = 65_536usize;
             loop {
                 let mut buf = vec![0u8; size];
-                #[allow(deprecated)]
-                match msg.encode_cdr2(&mut buf) {
+                match msg.encode(&mut buf, version) {
                     Ok(len) => break (buf, len),
                     Err(crate::dds::Error::BufferTooSmall) if size < MAX_RE_ENCODE_SIZE => {
                         size = (size * 2).min(MAX_RE_ENCODE_SIZE);
@@ -397,6 +407,7 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
             handle,
             len,
             flags: 0x01,
+            cdr_version: version,
             timestamp_ns: current_time_ns(),
         };
 

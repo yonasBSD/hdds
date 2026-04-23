@@ -308,7 +308,7 @@ mod tests {
         assert_eq!(topic.subscriber_count(), 0);
 
         topic.add_subscriber(sub);
-        let errors = topic.deliver(42, &[1, 2, 3]);
+        let errors = topic.deliver(42, &[1, 2, 3], crate::dds::CdrVersion::Xcdr2);
         assert_eq!(errors, 0);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
@@ -328,7 +328,7 @@ mod tests {
         ));
 
         topic.add_subscriber(sub);
-        let errors = topic.deliver(0, &[]);
+        let errors = topic.deliver(0, &[], crate::dds::CdrVersion::Xcdr2);
 
         assert_eq!(errors, 1);
         assert_eq!(counter.load(Ordering::SeqCst), 1);

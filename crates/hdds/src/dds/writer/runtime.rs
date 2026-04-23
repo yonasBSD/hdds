@@ -348,6 +348,7 @@ impl<T: DDS> DataWriter<T> {
                 serialized_len,
                 seq,
                 write_start_ns,
+                version,
             ) {
                 Ok(entry) => Some(entry),
                 Err(Error::WouldBlock) => {
@@ -670,6 +671,7 @@ impl<T: DDS> DataWriter<T> {
             len: len_u32,
             flags: 0x01, // COMMITTED
             timestamp_ns: write_start_ns,
+            cdr_version: version,
         };
 
         let merger_success = self.merger.push(entry);
@@ -701,6 +703,7 @@ impl<T: DDS> DataWriter<T> {
         serialized_len: usize,
         seq: u64,
         write_start_ns: u64,
+        cdr_version: crate::dds::CdrVersion,
     ) -> Result<(rt::IndexEntry, rt::SlabHandle)> {
         let slab_pool = rt::get_slab_pool();
         let (handle, slab_buf) = match slab_pool.reserve(serialized_len) {
@@ -752,6 +755,7 @@ impl<T: DDS> DataWriter<T> {
             len: len_u32,
             flags: 0x01,
             timestamp_ns: write_start_ns,
+            cdr_version,
         };
 
         Ok((entry, handle))

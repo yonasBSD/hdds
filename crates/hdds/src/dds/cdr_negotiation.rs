@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 use crate::core::discovery::multicast::fsm::EndpointInfo;
+use crate::core::ser::CdrError;
 use crate::core::types::TypeDescriptor;
 use crate::dds::CdrVersion;
 
@@ -106,6 +107,28 @@ fn code_to_version(code: u16) -> Result<CdrVersion, IncompatibleQos> {
         _ => Err(IncompatibleQos {
             policy_id: POLICY_ID_DATA_REPRESENTATION,
         }),
+    }
+}
+
+/// Map an RTPS encapsulation `representation_id` to the matching
+/// `CdrVersion` per DDS-RTPS v2.5 §10.7 and DDS-XTypes v1.3 §7.6.2.2.
+///
+/// Valid ids (big-endian u16 in the first two bytes of the
+/// serializedPayload encapsulation header):
+///
+/// * `0x0000` CDR_BE, `0x0001` CDR_LE, `0x0002` PL_CDR_BE,
+///   `0x0003` PL_CDR_LE → XCDR v1
+/// * `0x0006` CDR2_BE, `0x0007` CDR2_LE, `0x0008` D_CDR2_BE,
+///   `0x0009` D_CDR2_LE, `0x000A` PL_CDR2_BE, `0x000B` PL_CDR2_LE
+///   → XCDR v2
+///
+/// Any other value indicates a malformed payload and is reported as
+/// `CdrError::InvalidEncoding`.
+pub(crate) fn cdr_version_from_representation_id(repr_id: u16) -> Result<CdrVersion, CdrError> {
+    match repr_id {
+        0x0000..=0x0003 => Ok(CdrVersion::Xcdr1),
+        0x0006..=0x000B => Ok(CdrVersion::Xcdr2),
+        _ => Err(CdrError::InvalidEncoding),
     }
 }
 
@@ -285,6 +308,70 @@ mod tests {
             is_variable_size,
             fields: &[],
         }
+    }
+
+    #[test]
+    fn cdr_version_from_representation_id_maps_xcdr1_codes() {
+        assert_eq!(
+            cdr_version_from_representation_id(0x0000),
+            Ok(CdrVersion::Xcdr1)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x0001),
+            Ok(CdrVersion::Xcdr1)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x0002),
+            Ok(CdrVersion::Xcdr1)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x0003),
+            Ok(CdrVersion::Xcdr1)
+        );
+    }
+
+    #[test]
+    fn cdr_version_from_representation_id_maps_xcdr2_codes() {
+        assert_eq!(
+            cdr_version_from_representation_id(0x0006),
+            Ok(CdrVersion::Xcdr2)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x0007),
+            Ok(CdrVersion::Xcdr2)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x0008),
+            Ok(CdrVersion::Xcdr2)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x0009),
+            Ok(CdrVersion::Xcdr2)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x000A),
+            Ok(CdrVersion::Xcdr2)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x000B),
+            Ok(CdrVersion::Xcdr2)
+        );
+    }
+
+    #[test]
+    fn cdr_version_from_representation_id_rejects_invalid_codes() {
+        assert_eq!(
+            cdr_version_from_representation_id(0x0004),
+            Err(CdrError::InvalidEncoding)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0x00FF),
+            Err(CdrError::InvalidEncoding)
+        );
+        assert_eq!(
+            cdr_version_from_representation_id(0xFFFF),
+            Err(CdrError::InvalidEncoding)
+        );
     }
 
     #[test]

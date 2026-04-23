@@ -131,12 +131,12 @@ impl Topic {
     /// # Performance
     /// HOT PATH: Called for every DATA packet delivery.
     #[inline]
-    pub fn deliver(&self, seq: u64, data: &[u8]) -> usize {
+    pub fn deliver(&self, seq: u64, data: &[u8], version: crate::dds::CdrVersion) -> usize {
         let mut errors = 0;
 
         for sub in &self.subscribers {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                sub.on_data(&self.name, seq, data);
+                sub.on_data_with_version(&self.name, seq, data, version);
             }));
 
             if result.is_err() {

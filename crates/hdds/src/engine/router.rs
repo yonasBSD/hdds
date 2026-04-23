@@ -310,6 +310,10 @@ pub fn route_data_packet(
         // Fall through to normal delivery as best-effort
     }
 
+    // Parse the CDR encapsulation header (4 bytes at `offset`) to strip it
+    // from the delivered slice and capture the `representation_id` for the
+    // downstream dispatch per DDS-RTPS v2.5 §10.7.
+    let mut encap_repr_id: Option<u16> = None;
     let cdr2_payload = if let Some(offset) = payload_offset {
         // Offset already points to the serialized payload (or the CDR header).
         // Only skip the CDR encapsulation header when it is actually present.
@@ -337,11 +341,13 @@ pub fn route_data_packet(
             if (is_xcdr1 || is_xcdr2) && padding == 0 {
                 // Skip 4-byte encapsulation header
                 start += 4;
+                encap_repr_id = Some(enc);
             } else if is_d_cdr2 && padding == 0 {
                 // D_CDR2: Skip ONLY the 4-byte encapsulation header.
                 // The DHEADER (4 bytes, size of serialized data) is part of the
                 // CDR2 encoding and must be preserved for the decoder.
                 start += 4;
+                encap_repr_id = Some(enc);
                 log::trace!(
                     "[ROUTER] D_CDR2 detected (enc={:#06x}), skipped 4 bytes (encap only, DHEADER preserved)",
                     enc
@@ -392,6 +398,9 @@ pub fn route_data_packet(
             }
         }
     };
+    let cdr_version = encap_repr_id
+        .and_then(|id| crate::dds::cdr_negotiation::cdr_version_from_representation_id(id).ok())
+        .unwrap_or(crate::dds::CdrVersion::Xcdr2);
 
     // v249: QoS compatibility filter — drop data from writers whose QoS
     // is incompatible with local readers (e.g., DATA_REPRESENTATION mismatch).
@@ -423,7 +432,7 @@ pub fn route_data_packet(
         }
     }
 
-    let errors = topic.deliver(seq, cdr2_payload);
+    let errors = topic.deliver(seq, cdr2_payload, cdr_version);
 
     metrics.packets_routed.fetch_add(1, Ordering::Relaxed);
     metrics
@@ -699,6 +708,7 @@ fn route_reassembled_data(
 
     // Strip CDR encapsulation header if present (same logic as route_data_packet)
     // CDR header format: [encoding_kind: u16 BE][options: u16] = 4 bytes
+    let mut encap_repr_id: Option<u16> = None;
     let payload_to_deliver = if payload.len() >= 4 {
         let enc = u16::from_be_bytes([payload[0], payload[1]]);
         let padding = u16::from_be_bytes([payload[2], payload[3]]);
@@ -712,9 +722,11 @@ fn route_reassembled_data(
 
         if (is_xcdr1 || is_xcdr2) && padding == 0 {
             // Skip 4-byte encapsulation header
+            encap_repr_id = Some(enc);
             &payload[4..]
         } else if is_d_cdr2 && padding == 0 {
             // D_CDR2: Skip ONLY 4-byte encap header; DHEADER preserved for decoder
+            encap_repr_id = Some(enc);
             &payload[4..]
         } else {
             payload
@@ -722,6 +734,9 @@ fn route_reassembled_data(
     } else {
         payload
     };
+    let cdr_version = encap_repr_id
+        .and_then(|id| crate::dds::cdr_negotiation::cdr_version_from_representation_id(id).ok())
+        .unwrap_or(crate::dds::CdrVersion::Xcdr2);
 
     // Exclusive ownership filter (per-instance)
     let instance_hash = compute_instance_hash(payload_to_deliver);
@@ -735,7 +750,7 @@ fn route_reassembled_data(
         return RouteStatus::Dropped;
     }
 
-    let errors = topic.deliver(seq, payload_to_deliver);
+    let errors = topic.deliver(seq, payload_to_deliver, cdr_version);
 
     metrics.packets_routed.fetch_add(1, Ordering::Relaxed);
     metrics

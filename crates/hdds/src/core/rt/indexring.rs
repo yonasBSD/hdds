@@ -12,23 +12,26 @@
 //! - pop: < 5 ns (p99)
 
 use super::slabpool::SlabHandle;
+use crate::dds::CdrVersion;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// COMMITTED flag (bit 0): entry is fully written and ready to pop
 const COMMITTED_FLAG: u8 = 0x01;
 
-/// Entry in a SPSC ring (sequence + slab handle + length + flags + timestamp)
+/// Entry in a SPSC ring (sequence + slab handle + length + flags + timestamp
+/// + CDR version selected at the write side per DDS-XTypes v1.3 §7.6.3.1).
 #[derive(Debug, Clone, Copy)]
 pub struct IndexEntry {
-    pub seq: u32,           // sequence number
-    pub handle: SlabHandle, // slab handle for payload
-    pub len: u32,           // bytes written
-    pub flags: u8,          // COMMITTED flag (bit 0)
-    pub timestamp_ns: u64,  // write timestamp for latency measurement
+    pub seq: u32,                // sequence number
+    pub handle: SlabHandle,      // slab handle for payload
+    pub len: u32,                // bytes written
+    pub flags: u8,               // COMMITTED flag (bit 0)
+    pub timestamp_ns: u64,       // write timestamp for latency measurement
+    pub cdr_version: CdrVersion, // encoding version used for the payload
 }
 
 impl IndexEntry {
-    /// Create new entry with uncommitted state
+    /// Create new entry with uncommitted state (default Xcdr2 encoding).
     pub fn new(seq: u32, handle: SlabHandle, len: u32) -> Self {
         Self {
             seq,
@@ -36,10 +39,11 @@ impl IndexEntry {
             len,
             flags: 0, // Not committed yet
             timestamp_ns: 0,
+            cdr_version: CdrVersion::Xcdr2,
         }
     }
 
-    /// Create entry with timestamp
+    /// Create entry with timestamp (default Xcdr2 encoding).
     pub fn with_timestamp(seq: u32, handle: SlabHandle, len: u32, timestamp_ns: u64) -> Self {
         Self {
             seq,
@@ -47,6 +51,26 @@ impl IndexEntry {
             len,
             flags: 0,
             timestamp_ns,
+            cdr_version: CdrVersion::Xcdr2,
+        }
+    }
+
+    /// Create entry with the explicit CDR version used to encode the
+    /// payload carried in the slab handle.
+    pub fn with_cdr_version(
+        seq: u32,
+        handle: SlabHandle,
+        len: u32,
+        timestamp_ns: u64,
+        cdr_version: CdrVersion,
+    ) -> Self {
+        Self {
+            seq,
+            handle,
+            len,
+            flags: 0,
+            timestamp_ns,
+            cdr_version,
         }
     }
 
@@ -69,6 +93,7 @@ impl Default for IndexEntry {
             len: 0,
             flags: 0,
             timestamp_ns: 0,
+            cdr_version: CdrVersion::Xcdr2,
         }
     }
 }

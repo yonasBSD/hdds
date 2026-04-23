@@ -55,6 +55,21 @@ pub trait Subscriber: Send + Sync {
     /// delivery to other subscribers (logged as delivery_error metric).
     fn on_data(&self, topic: &str, seq: u64, data: &[u8]);
 
+    /// Same as [`Self::on_data`] but also receives the CDR encoding
+    /// version extracted from the RTPS encapsulation header per
+    /// DDS-RTPS v2.5 §10.7. The default implementation delegates to
+    /// `on_data` (version ignored); implementors needing version-aware
+    /// decoding should override this method instead.
+    fn on_data_with_version(
+        &self,
+        topic: &str,
+        seq: u64,
+        data: &[u8],
+        _version: crate::dds::CdrVersion,
+    ) {
+        self.on_data(topic, seq, data);
+    }
+
     /// Called when a dispose or unregister lifecycle change is received.
     ///
     /// # Arguments
