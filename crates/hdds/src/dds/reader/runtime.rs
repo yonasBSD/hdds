@@ -259,6 +259,7 @@ impl<T: DDS> DataReader<T> {
         let buf = slab_pool.get_buffer(entry.handle);
         let data_len = entry.len as usize;
         let slice = &buf[..data_len];
+        #[allow(deprecated)]
         let decode_result = T::decode_cdr2(slice);
         slab_pool.release(entry.handle);
 
@@ -486,6 +487,7 @@ impl<T: DDS> DataReader<T> {
             let data_len = entry.len as usize;
             let slice = &buf[..data_len];
 
+            #[allow(deprecated)]
             let decode_result = T::decode_cdr2(slice);
             slab_pool.release(entry.handle);
 

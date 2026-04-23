@@ -77,7 +77,7 @@ impl DdsTrait for PingMsg {
         &PING_MSG_DESCRIPTOR
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> hdds::dds::Result<usize> {
+    fn encode(&self, buf: &mut [u8], _version: hdds::CdrVersion) -> hdds::dds::Result<usize> {
         let mut offset: usize = 0;
 
         // sequence (u32)
@@ -107,7 +107,7 @@ impl DdsTrait for PingMsg {
         Ok(offset)
     }
 
-    fn decode_cdr2(buf: &[u8]) -> hdds::dds::Result<Self> {
+    fn decode(buf: &[u8], _version: hdds::CdrVersion) -> hdds::dds::Result<Self> {
         let mut offset: usize = 0;
 
         // sequence

@@ -344,7 +344,7 @@ pub fn derive_dds(input: TokenStream) -> TokenStream {
                 &DESCRIPTOR
             }
 
-            fn encode_cdr2(&self, buf: &mut [u8]) -> ::hdds::api::Result<usize> {
+            fn encode(&self, buf: &mut [u8], _version: ::hdds::CdrVersion) -> ::hdds::api::Result<usize> {
                 use ::hdds::core::ser::cursor::CursorMut;
 
                 let mut cursor = CursorMut::new(buf);
@@ -355,7 +355,7 @@ pub fn derive_dds(input: TokenStream) -> TokenStream {
                 Ok(cursor.offset())
             }
 
-            fn decode_cdr2(buf: &[u8]) -> ::hdds::api::Result<Self> {
+            fn decode(buf: &[u8], _version: ::hdds::CdrVersion) -> ::hdds::api::Result<Self> {
                 use ::hdds::core::ser::cursor::Cursor;
 
                 let mut cursor = Cursor::new(buf);

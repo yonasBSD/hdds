@@ -74,6 +74,7 @@ use std::time::Duration;
 
 // Include generated type
 #[allow(dead_code)]
+#[allow(clippy::upper_case_acronyms)]
 mod generated {
     include!("../../generated/enums.rs");
 }

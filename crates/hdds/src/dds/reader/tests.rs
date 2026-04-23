@@ -187,6 +187,7 @@ fn take_deduplicates_replay_scenario() {
     for (i, msg) in msgs.iter().enumerate() {
         let seq = (i as u32) + 1; // match writer's seq numbering
         let mut buf = vec![0u8; 256];
+        #[allow(deprecated)]
         let len = msg.encode_cdr2(&mut buf).expect("encode should succeed");
         let (handle, slab_buf) = slab_pool.reserve(len).expect("slab reserve");
         slab_buf[..len].copy_from_slice(&buf[..len]);

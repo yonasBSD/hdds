@@ -87,7 +87,11 @@ impl crate::dds::DDS for RpcMessage {
         &DESC
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> crate::dds::Result<usize> {
+    fn encode(
+        &self,
+        buf: &mut [u8],
+        _version: crate::dds::CdrVersion,
+    ) -> crate::dds::Result<usize> {
         let total_len = self.header.len() + self.payload.len();
         if buf.len() < total_len {
             return Err(crate::dds::Error::BufferTooSmall);
@@ -97,7 +101,7 @@ impl crate::dds::DDS for RpcMessage {
         Ok(total_len)
     }
 
-    fn decode_cdr2(buf: &[u8]) -> crate::dds::Result<Self> {
+    fn decode(buf: &[u8], _version: crate::dds::CdrVersion) -> crate::dds::Result<Self> {
         // For replies, we need at least the header (28 bytes)
         if buf.len() < 28 {
             return Err(crate::dds::Error::SerializationError);

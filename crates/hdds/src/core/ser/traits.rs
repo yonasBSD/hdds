@@ -98,6 +98,29 @@ pub trait Cdr2Encode {
     /// This is a conservative estimate (may include padding/alignment overhead).
     /// Variable-size types (strings, sequences) should use worst-case estimates.
     fn max_cdr2_size(&self) -> usize;
+
+    /// XTypes v1.3 §7.4.3.4 — Container types (sequence, map, array)
+    /// recursively serialize elements using the element type's own encoding
+    /// rules. For element types without native XCDR1 encoding support
+    /// (not yet implemented for standard Rust container types and primitives),
+    /// fall back to the XCDR2 path. This is byte-identical to XCDR2 only
+    /// when elements are ≤4-byte aligned; for 8-byte-aligned elements
+    /// (double, uint64, int64) the wire format follows XCDR2 alignment
+    /// rules, not strict XCDR1.
+    ///
+    /// Overridden by types that provide an inherent `encode_xcdr1_le`
+    /// method (see hdds_gen-generated code for struct/enum/union/bitset
+    /// types). Rust method resolution picks the inherent first.
+    fn encode_xcdr1_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
+        self.encode_cdr2_le(dst)
+    }
+
+    /// Default identical to `encode_cdr2_le`. Overridden by types that
+    /// provide an inherent `encode_xcdr2_le` method (hdds_gen-generated
+    /// code for struct/enum/union/bitset types).
+    fn encode_xcdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
+        self.encode_cdr2_le(dst)
+    }
 }
 
 /// CDR2 decoding trait (Little-Endian)
@@ -125,6 +148,21 @@ pub trait Cdr2Decode: Sized {
     /// # Returns
     /// Tuple of (decoded value, bytes consumed), or `CdrError` on failure
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError>;
+
+    /// XTypes v1.3 §7.4.3.4 — Symmetric fallback for XCDR1 decoding.
+    /// See `Cdr2Encode::encode_xcdr1_le` for rationale. Overridden by
+    /// types that provide an inherent `decode_xcdr1_le` method
+    /// (hdds_gen-generated code for struct/enum/union/bitset types).
+    fn decode_xcdr1_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
+        Self::decode_cdr2_le(src)
+    }
+
+    /// Default identical to `decode_cdr2_le`. Overridden by types that
+    /// provide an inherent `decode_xcdr2_le` method (hdds_gen-generated
+    /// code for struct/enum/union/bitset types).
+    fn decode_xcdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
+        Self::decode_cdr2_le(src)
+    }
 }
 
 // DDS trait is defined in crate::dds::DDS (with type_descriptor, encode_cdr2, decode_cdr2)

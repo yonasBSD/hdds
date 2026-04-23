@@ -747,14 +747,14 @@ impl DDS for ShapeType {
         &DESC
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> hdds::dds::Result<usize> {
+    fn encode(&self, buf: &mut [u8], _version: hdds::CdrVersion) -> hdds::dds::Result<usize> {
         self.encode_cdr2_le(buf).map_err(|e| match e {
             CdrError::BufferTooSmall => hdds::Error::BufferTooSmall,
             _ => hdds::Error::SerializationError,
         })
     }
 
-    fn decode_cdr2(buf: &[u8]) -> hdds::dds::Result<Self> {
+    fn decode(buf: &[u8], _version: hdds::CdrVersion) -> hdds::dds::Result<Self> {
         Self::decode_cdr2_le(buf)
             .map(|(val, _)| val)
             .map_err(|_| hdds::Error::SerializationError)

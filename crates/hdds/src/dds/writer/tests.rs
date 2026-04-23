@@ -27,6 +27,7 @@ fn test_writer_write_basic() {
 }
 
 #[test]
+#[allow(deprecated)]
 fn test_writer_encode_decode_roundtrip() {
     let original = Point { x: 42, y: -123 };
 

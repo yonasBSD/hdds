@@ -180,6 +180,7 @@ pub use discovery::cloud::{AwsCloudMap, AzureDiscovery, CloudDiscovery, ConsulDi
 pub use core::ser::{Cdr2Decode, Cdr2Encode, CdrError};
 
 // Re-export DDS trait and derive macro
+pub use dds::CdrVersion;
 pub use dds::DDS as DdsTrait; // Trait (for type bounds)
 pub use hdds_codegen::DDS; // Derive macro (for #[derive(hdds::DDS)])
 

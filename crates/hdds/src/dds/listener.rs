@@ -386,7 +386,11 @@ mod tests {
             &DESC
         }
 
-        fn encode_cdr2(&self, buf: &mut [u8]) -> crate::dds::Result<usize> {
+        fn encode(
+            &self,
+            buf: &mut [u8],
+            _version: crate::dds::CdrVersion,
+        ) -> crate::dds::Result<usize> {
             if buf.len() < 4 {
                 return Err(crate::dds::Error::BufferTooSmall);
             }
@@ -394,7 +398,7 @@ mod tests {
             Ok(4)
         }
 
-        fn decode_cdr2(buf: &[u8]) -> crate::dds::Result<Self> {
+        fn decode(buf: &[u8], _version: crate::dds::CdrVersion) -> crate::dds::Result<Self> {
             if buf.len() < 4 {
                 return Err(crate::dds::Error::SerializationError);
             }

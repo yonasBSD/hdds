@@ -275,24 +275,48 @@ impl std::error::Error for Error {
 /// Convenient alias for API results using the public `Error` type.
 pub type Result<T> = core::result::Result<T, Error>;
 
+/// CDR encoding version negotiated per OMG DDS-XTypes v1.3 §7.6.3.1.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CdrVersion {
+    /// XCDR v1 per OMG DDS-XTypes v1.3 §7.4.1.
+    Xcdr1,
+    /// XCDR v2 per OMG DDS-XTypes v1.3 §7.4.2.
+    Xcdr2,
+}
+
 /// DDS trait: encode/decode contract
 pub trait DDS: Sized + Send + Sync + 'static {
     /// Type descriptor (compile-time or manual registration)
     fn type_descriptor() -> &'static crate::core::types::TypeDescriptor;
 
-    /// Encode to CDR2 LE buffer
+    /// Encode to CDR LE buffer at the requested `version`.
+    ///
+    /// Version selection follows OMG DDS-XTypes v1.3 §7.6.3.1
+    /// (DataRepresentationQosPolicy).
     ///
     /// # Errors
     ///
     /// Returns `Err` if the buffer is too small or encoding fails.
-    fn encode_cdr2(&self, buf: &mut [u8]) -> Result<usize>;
+    fn encode(&self, buf: &mut [u8], version: CdrVersion) -> Result<usize>;
 
-    /// Decode from CDR2 LE buffer
+    /// Decode from CDR LE buffer at the requested `version`.
     ///
     /// # Errors
     ///
     /// Returns `Err` if the buffer is truncated or contains invalid data.
-    fn decode_cdr2(buf: &[u8]) -> Result<Self>;
+    fn decode(buf: &[u8], version: CdrVersion) -> Result<Self>;
+
+    #[doc(hidden)]
+    #[deprecated(note = "internal XCDR migration pont — removed in 2.5-f")]
+    fn encode_cdr2(&self, buf: &mut [u8]) -> Result<usize> {
+        self.encode(buf, CdrVersion::Xcdr2)
+    }
+
+    #[doc(hidden)]
+    #[deprecated(note = "internal XCDR migration pont — removed in 2.5-f")]
+    fn decode_cdr2(buf: &[u8]) -> Result<Self> {
+        Self::decode(buf, CdrVersion::Xcdr2)
+    }
 
     /// Extract field values for content filtering.
     ///

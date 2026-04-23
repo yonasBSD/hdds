@@ -345,7 +345,7 @@ impl DDS for BytePayload {
         &DESCRIPTOR
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> hdds::api::Result<usize> {
+    fn encode(&self, buf: &mut [u8], _version: hdds::CdrVersion) -> hdds::api::Result<usize> {
         // Raw byte payload (no length prefix)
         if buf.len() < self.data.len() {
             return Err(hdds::api::Error::BufferTooSmall);
@@ -355,7 +355,7 @@ impl DDS for BytePayload {
         Ok(self.data.len())
     }
 
-    fn decode_cdr2(buf: &[u8]) -> hdds::api::Result<Self> {
+    fn decode(buf: &[u8], _version: hdds::CdrVersion) -> hdds::api::Result<Self> {
         Ok(BytePayload { data: buf.to_vec() })
     }
 }

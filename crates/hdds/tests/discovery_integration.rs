@@ -135,12 +135,12 @@ impl hdds::DdsTrait for Temperature {
         &DESC
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> hdds::Result<usize> {
+    fn encode(&self, buf: &mut [u8], _version: hdds::CdrVersion) -> hdds::Result<usize> {
         use hdds::Cdr2Encode;
         self.encode_cdr2_le(buf).map_err(Into::into)
     }
 
-    fn decode_cdr2(buf: &[u8]) -> hdds::Result<Self> {
+    fn decode(buf: &[u8], _version: hdds::CdrVersion) -> hdds::Result<Self> {
         use hdds::Cdr2Decode;
         Self::decode_cdr2_le(buf)
             .map(|(val, _len)| val)

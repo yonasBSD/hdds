@@ -267,6 +267,7 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
                 return;
             }
         }
+        #[allow(deprecated)]
         let msg = match T::decode_cdr2(data) {
             Ok(m) => m,
             Err(_e) => {
@@ -326,6 +327,7 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
             let mut size = 65_536usize;
             loop {
                 let mut buf = vec![0u8; size];
+                #[allow(deprecated)]
                 match msg.encode_cdr2(&mut buf) {
                     Ok(len) => break (buf, len),
                     Err(crate::dds::Error::BufferTooSmall) if size < MAX_RE_ENCODE_SIZE => {

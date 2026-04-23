@@ -81,7 +81,7 @@ use std::thread;
 use std::time::Duration;
 
 // Include generated type
-#[allow(dead_code, clippy::enum_variant_names)]
+#[allow(dead_code, clippy::enum_variant_names, clippy::upper_case_acronyms)]
 mod generated {
     include!("../../generated/unions.rs");
 }

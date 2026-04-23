@@ -2,65 +2,119 @@
 # SPDX-License-Identifier: Apache-2.0 OR MIT
 # Copyright (c) 2025-2026 naskel.com
 
-# Generate Rust types from IDL files using hdds_gen
+# Generate Rust types from IDL files using hddsgen
 #
-# Usage: ./gen_rust_types.sh
+# Usage:
+#   ./gen_rust_types.sh
 #
 # Prerequisites:
-#   - hdds_gen must be built and idl-gen available in PATH or set HDDS_GEN env var
+#   - hddsgen must be built and available in PATH
+#     (cargo install --path <hdds_gen_repo> --force)
+#   - Or set HDDSGEN=/absolute/path/to/hddsgen to override PATH lookup
+#
+# Coverage:
+#   - 16 IDLs in sdk/samples/idl/ (HelloWorld, KeyedData, Primitives, Strings,
+#     Sequences, Arrays, Maps, Enums, Unions, Nested, Bits, Optional,
+#     Benchmark, Interop, ROS2Types, Usecases)
+#   - 5 of those land in 2 sample sub-dirs (HelloWorld, KeyedData, Interop,
+#     ROS2Types, Usecases) -> 21 output files total
+#
+# Orphan files NOT covered (no IDL source in sdk/samples/idl/):
+#   - 07_advanced/rust/generated/rpc_types.rs (RequestReply.idl needs
+#     hddsgen --features interfaces, not yet activated)
+#   - 07_advanced/rust/generated/sensor_data.rs (no IDL found)
+#   - 07_advanced/rust/generated/waitset_types.rs (no IDL found)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SAMPLES_DIR="$(dirname "$SCRIPT_DIR")"
 IDL_DIR="$SAMPLES_DIR/idl"
-HDDS_GEN="${HDDS_GEN:-$(command -v idl-gen 2>/dev/null || echo "")}"
+HDDSGEN="${HDDSGEN:-$(command -v hddsgen 2>/dev/null || echo "")}"
 
-# Check hdds_gen exists
-if [ -z "$HDDS_GEN" ] || [ ! -x "$HDDS_GEN" ]; then
-    echo "ERROR: idl-gen not found in PATH"
-    echo "Either add it to PATH or set HDDS_GEN=/path/to/idl-gen"
+if [ -z "$HDDSGEN" ] || [ ! -x "$HDDSGEN" ]; then
+    echo "ERROR: hddsgen not found in PATH"
+    echo "Build + install from hdds_gen source:"
+    echo "    cargo install --path /path/to/hdds_gen --force"
+    echo "Or export HDDSGEN=/absolute/path/to/hddsgen"
     exit 1
 fi
 
-echo "=== Generating Rust types from IDL ==="
+echo "=== Generating Rust types from IDL ($("$HDDSGEN" --version)) ==="
 
-# 01_basics
-echo "Generating 01_basics types..."
-mkdir -p "$SAMPLES_DIR/01_basics/rust/generated"
-$HDDS_GEN gen rust "$IDL_DIR/HelloWorld.idl" > "$SAMPLES_DIR/01_basics/rust/generated/hello_world.rs"
-$HDDS_GEN gen rust "$IDL_DIR/KeyedData.idl" > "$SAMPLES_DIR/01_basics/rust/generated/keyed_data.rs"
+gen() {
+    # gen <IDL_NAME> <PRIMARY_OUT> [EXTRA_OUT ...]
+    local idl="$1"; shift
+    local primary="$1"; shift
+    "$HDDSGEN" gen rust "$IDL_DIR/$idl" > "$primary"
+    for extra in "$@"; do
+        cp "$primary" "$extra"
+    done
+}
 
-# 03_types
-echo "Generating 03_types types..."
-mkdir -p "$SAMPLES_DIR/03_types/rust/generated"
-$HDDS_GEN gen rust "$IDL_DIR/Primitives.idl" > "$SAMPLES_DIR/03_types/rust/generated/primitives.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Strings.idl" > "$SAMPLES_DIR/03_types/rust/generated/strings.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Sequences.idl" > "$SAMPLES_DIR/03_types/rust/generated/sequences.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Arrays.idl" > "$SAMPLES_DIR/03_types/rust/generated/arrays.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Maps.idl" > "$SAMPLES_DIR/03_types/rust/generated/maps.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Enums.idl" > "$SAMPLES_DIR/03_types/rust/generated/enums.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Unions.idl" > "$SAMPLES_DIR/03_types/rust/generated/unions.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Nested.idl" > "$SAMPLES_DIR/03_types/rust/generated/nested.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Bits.idl" > "$SAMPLES_DIR/03_types/rust/generated/bits.rs"
-$HDDS_GEN gen rust "$IDL_DIR/Optional.idl" > "$SAMPLES_DIR/03_types/rust/generated/optional.rs"
+mkdir -p \
+    "$SAMPLES_DIR/01_basics/rust/generated" \
+    "$SAMPLES_DIR/03_types/rust/generated" \
+    "$SAMPLES_DIR/08_interop/rust/generated" \
+    "$SAMPLES_DIR/09_ros2/rust/generated" \
+    "$SAMPLES_DIR/10_usecases/rust/generated"
 
-# Generate mod.rs for 03_types
+# 01_basics + 03_types duplicates
+gen HelloWorld.idl \
+    "$SAMPLES_DIR/01_basics/rust/generated/helloworld.rs" \
+    "$SAMPLES_DIR/03_types/rust/generated/helloworld.rs"
+gen KeyedData.idl \
+    "$SAMPLES_DIR/01_basics/rust/generated/keyeddata.rs" \
+    "$SAMPLES_DIR/03_types/rust/generated/keyeddata.rs"
+
+# 03_types unique
+gen Primitives.idl "$SAMPLES_DIR/03_types/rust/generated/primitives.rs"
+gen Strings.idl    "$SAMPLES_DIR/03_types/rust/generated/strings.rs"
+gen Sequences.idl  "$SAMPLES_DIR/03_types/rust/generated/sequences.rs"
+gen Arrays.idl     "$SAMPLES_DIR/03_types/rust/generated/arrays.rs"
+gen Maps.idl       "$SAMPLES_DIR/03_types/rust/generated/maps.rs"
+gen Enums.idl      "$SAMPLES_DIR/03_types/rust/generated/enums.rs"
+gen Unions.idl     "$SAMPLES_DIR/03_types/rust/generated/unions.rs"
+gen Nested.idl     "$SAMPLES_DIR/03_types/rust/generated/nested.rs"
+gen Bits.idl       "$SAMPLES_DIR/03_types/rust/generated/bits.rs"
+gen Optional.idl   "$SAMPLES_DIR/03_types/rust/generated/optional.rs"
+gen Benchmark.idl  "$SAMPLES_DIR/03_types/rust/generated/benchmark.rs"
+
+# 03_types + sub-dir duplicates
+gen Interop.idl \
+    "$SAMPLES_DIR/03_types/rust/generated/interop.rs" \
+    "$SAMPLES_DIR/08_interop/rust/generated/interop.rs"
+gen ROS2Types.idl \
+    "$SAMPLES_DIR/03_types/rust/generated/ros2types.rs" \
+    "$SAMPLES_DIR/09_ros2/rust/generated/ros2types.rs"
+gen Usecases.idl \
+    "$SAMPLES_DIR/03_types/rust/generated/usecases.rs" \
+    "$SAMPLES_DIR/10_usecases/rust/generated/usecases.rs"
+
+# Aggregator mod.rs for 03_types
 cat > "$SAMPLES_DIR/03_types/rust/generated/mod.rs" << 'EOF'
-// Generated module index - DO NOT EDIT
-pub mod primitives;
-pub mod strings;
-pub mod sequences;
+// Generated by gen_rust_types.sh - DO NOT EDIT
 pub mod arrays;
-pub mod maps;
-pub mod enums;
-pub mod unions;
-pub mod nested;
 pub mod bits;
+pub mod enums;
+pub mod maps;
+pub mod nested;
 pub mod optional;
+pub mod primitives;
+pub mod sequences;
+pub mod strings;
+pub mod unions;
+pub mod benchmark;
+pub mod helloworld;
+pub mod interop;
+pub mod keyeddata;
+pub mod ros2types;
+pub mod usecases;
 EOF
 
 echo "=== Done ==="
-echo "Generated files in:"
-echo "  - $SAMPLES_DIR/01_basics/rust/generated/"
-echo "  - $SAMPLES_DIR/03_types/rust/generated/"
+echo "Generated 21 files across 5 sample sub-dirs from 16 IDLs."
+echo "Orphan files (no IDL source) kept as-is:"
+echo "  - 07_advanced/rust/generated/rpc_types.rs"
+echo "  - 07_advanced/rust/generated/sensor_data.rs"
+echo "  - 07_advanced/rust/generated/waitset_types.rs"

@@ -58,7 +58,7 @@ impl DdsTrait for RawBytes {
         &DESC
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> Result<usize> {
+    fn encode(&self, buf: &mut [u8], _version: crate::dds::CdrVersion) -> Result<usize> {
         use crate::core::ser::Cdr2Encode;
         self.encode_cdr2_le(buf).map_err(|e| match e {
             CdrError::BufferTooSmall => Error::BufferTooSmall,
@@ -66,7 +66,7 @@ impl DdsTrait for RawBytes {
         })
     }
 
-    fn decode_cdr2(buf: &[u8]) -> Result<Self> {
+    fn decode(buf: &[u8], _version: crate::dds::CdrVersion) -> Result<Self> {
         use crate::core::ser::Cdr2Decode;
         Self::decode_cdr2_le(buf)
             .map(|(val, _)| val)

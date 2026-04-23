@@ -292,6 +292,7 @@ impl<T: DDS> DataWriter<T> {
             let mut size = 65_536usize;
             loop {
                 let mut buf = vec![0u8; size];
+                #[allow(deprecated)]
                 match msg.encode_cdr2(&mut buf) {
                     Ok(len) => break (buf, len),
                     Err(Error::BufferTooSmall) if size < MAX_SERIALIZED_SIZE => {
@@ -609,6 +610,7 @@ impl<T: DDS> DataWriter<T> {
             }
         };
 
+        #[allow(deprecated)]
         let serialized_len = match msg.encode_cdr2(slab_buf) {
             Ok(len) => len,
             Err(e) => {
