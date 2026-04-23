@@ -27,22 +27,22 @@ fn test_writer_write_basic() {
 }
 
 #[test]
-#[allow(deprecated)]
 fn test_writer_encode_decode_roundtrip() {
     let original = Point { x: 42, y: -123 };
 
     let mut buf = vec![0u8; 100];
     let len = original
-        .encode_cdr2(&mut buf)
+        .encode(&mut buf, crate::dds::CdrVersion::Xcdr2)
         .expect("encode should succeed");
     assert_eq!(len, 8);
 
-    let decoded = Point::decode_cdr2(&buf[..len]).expect("decode should succeed");
+    let decoded =
+        Point::decode(&buf[..len], crate::dds::CdrVersion::Xcdr2).expect("decode should succeed");
     assert_eq!(decoded, original);
 }
 
 #[test]
-#[allow(deprecated)]
+#[allow(deprecated)] // UdpTransport::with_port is deprecated, unrelated to DDS trait
 fn test_writer_with_udp_transport() {
     use crate::transport::UdpTransport;
 

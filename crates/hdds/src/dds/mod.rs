@@ -307,18 +307,6 @@ pub trait DDS: Sized + Send + Sync + 'static {
     /// Returns `Err` if the buffer is truncated or contains invalid data.
     fn decode(buf: &[u8], version: CdrVersion) -> Result<Self>;
 
-    #[doc(hidden)]
-    #[deprecated(note = "internal XCDR migration pont — removed in 2.5-f")]
-    fn encode_cdr2(&self, buf: &mut [u8]) -> Result<usize> {
-        self.encode(buf, CdrVersion::Xcdr2)
-    }
-
-    #[doc(hidden)]
-    #[deprecated(note = "internal XCDR migration pont — removed in 2.5-f")]
-    fn decode_cdr2(buf: &[u8]) -> Result<Self> {
-        Self::decode(buf, CdrVersion::Xcdr2)
-    }
-
     /// Extract field values for content filtering.
     ///
     /// Returns a map of field name to field value for use with ContentFilteredTopic.

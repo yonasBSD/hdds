@@ -298,7 +298,7 @@ pub fn build_gap_packet(payload: &[u8]) -> Vec<u8> {
 ///
 /// # CDR Encapsulation (v174)
 ///
-/// The payload from `DDS::encode_cdr2()` contains raw CDR-encoded data without
+/// The payload from `DDS::encode(buf, version)` contains raw CDR-encoded data without
 /// the 4-byte encapsulation header. For DDS interoperability, user data must be
 /// prefixed with a CDR encapsulation header:
 ///

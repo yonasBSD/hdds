@@ -25,8 +25,7 @@ fn main() {
 
     // Encode
     let mut buf = vec![0u8; 16]; // Allocate enough for alignment
-    #[allow(deprecated)]
-    let written = t.encode_cdr2(&mut buf).unwrap();
+    let written = t.encode(&mut buf, hdds::CdrVersion::Xcdr2).unwrap();
 
     println!("Encoded CDR2 (little-endian):");
     println!("  bytes written: {}", written);
@@ -44,8 +43,7 @@ fn main() {
     println!();
 
     // Decode
-    #[allow(deprecated)]
-    let decoded = Temperature::decode_cdr2(&buf).unwrap();
+    let decoded = Temperature::decode(&buf, hdds::CdrVersion::Xcdr2).unwrap();
 
     println!("Decoded Temperature:");
     println!("  value: {}  degC", decoded.value);
