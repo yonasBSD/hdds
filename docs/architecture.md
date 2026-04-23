@@ -443,7 +443,7 @@ Adaptive congestion control to prevent network collapse.
 sequenceDiagram
     participant App as Application
     participant DW as DataWriter<T>
-    participant SER as DDS::encode_cdr2()
+    participant SER as DDS::encode(buf, version)
     participant REL as HistoryCache
     participant BLD as protocol::builder
     participant CC as WriterPacer
@@ -473,7 +473,7 @@ sequenceDiagram
     participant TOP as Topic
     participant SUB as engine::Subscriber
     participant DR as DataReader<T>
-    participant DES as DDS::decode_cdr2()
+    participant DES as DDS::decode(buf, version)
     participant App as Application
 
     NET->>ML: recvfrom() multicast
@@ -505,12 +505,12 @@ sequenceDiagram
     participant App2 as Application (Reader)
 
     App->>DW: write(&sample)
-    DW->>DW: encode_cdr2()
+    DW->>DW: encode(buf, version)
     DW->>DOM: Lookup matched readers (same topic + domain)
     DOM->>DR: Direct delivery (CDR2 bytes)
     DR->>DR: StatusCondition triggered
     App2->>DR: try_take()
-    DR->>DR: decode_cdr2()
+    DR->>DR: decode(buf, version)
     DR->>App2: Return typed T
     Note over DW,DR: No network I/O.<br/>~257ns latency.
 ```

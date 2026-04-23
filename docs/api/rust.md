@@ -396,8 +396,15 @@ struct Temperature {
 
 ### Manual Implementation
 
+The example below dispatches on `CdrVersion` to inherent `encode_xcdr{1,2}_le` /
+`decode_xcdr{1,2}_le` methods. If your type only supports a single wire format,
+implement `Cdr2Encode` / `Cdr2Decode` instead: the default `encode_xcdr1_le` /
+`encode_xcdr2_le` methods on those traits delegate to `encode_cdr2_le` for you.
+For alignment rules of 8-byte primitives (double, uint64, int64) in XCDR1 vs
+XCDR2, see XTypes v1.3 §7.4.3.4.1 Table 15.
+
 ```rust
-use hdds::{DDS, Result};
+use hdds::{CdrVersion, DDS, Result};
 use hdds::core::types::TypeDescriptor;
 
 impl DDS for MyType {
@@ -406,13 +413,18 @@ impl DDS for MyType {
         &MY_TYPE_DESCRIPTOR
     }
 
-    fn encode_cdr2(&self, buf: &mut [u8]) -> Result<usize> {
-        // Encode to CDR2 little-endian
-        // Return bytes written
+    fn encode(&self, buf: &mut [u8], version: CdrVersion) -> Result<usize> {
+        match version {
+            CdrVersion::Xcdr1 => self.encode_xcdr1_le(buf).map_err(Into::into),
+            CdrVersion::Xcdr2 => self.encode_xcdr2_le(buf).map_err(Into::into),
+        }
     }
 
-    fn decode_cdr2(buf: &[u8]) -> Result<Self> {
-        // Decode from CDR2 little-endian
+    fn decode(buf: &[u8], version: CdrVersion) -> Result<Self> {
+        match version {
+            CdrVersion::Xcdr1 => Self::decode_xcdr1_le(buf).map(|(v, _)| v).map_err(Into::into),
+            CdrVersion::Xcdr2 => Self::decode_xcdr2_le(buf).map(|(v, _)| v).map_err(Into::into),
+        }
     }
 
     fn compute_key(&self) -> [u8; 16] {
