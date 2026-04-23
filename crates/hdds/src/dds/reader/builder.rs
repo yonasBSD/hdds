@@ -398,6 +398,7 @@ impl<T: DDS> ReaderBuilder<T> {
                 Some(reg.register_reader_with_lifespan(
                     topic.clone(),
                     qos.clone(),
+                    T::type_descriptor(),
                     move |total, total_change, current, current_change, last_handle| {
                         l_match.on_subscription_matched(
                             crate::dds::listener::SubscriptionMatchedStatus {

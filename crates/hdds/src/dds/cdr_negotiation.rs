@@ -9,6 +9,7 @@
 #![allow(dead_code)]
 
 use crate::core::discovery::multicast::fsm::EndpointInfo;
+use crate::core::types::TypeDescriptor;
 use crate::dds::CdrVersion;
 
 /// DDS Table 2.60 policy ID for DATA_REPRESENTATION.
@@ -106,6 +107,23 @@ fn code_to_version(code: u16) -> Result<CdrVersion, IncompatibleQos> {
             policy_id: POLICY_ID_DATA_REPRESENTATION,
         }),
     }
+}
+
+/// Types mixing variable-size containers with 8-byte aligned primitives
+/// require native XCDR1 encoding per DDS-XTypes v1.3 §7.4.3.4.1 Table 15
+/// (natural alignment for 8-byte elements, distinct from the cap-at-4
+/// alignment of PLAIN_CDR2). Until that native path is implemented,
+/// callers must reject XCDR1 negotiation for these types and surface
+/// INCOMPATIBLE_QOS (policy ID 23) rather than silently fall back to the
+/// XCDR2 wire format via the `Cdr2Encode` trait default.
+///
+/// This is a conservative check: it flags any type that combines the
+/// `is_variable_size` flag with `alignment >= 8`, even when the
+/// variable-size member does not itself host an 8-byte primitive.
+/// Refining it requires walking `fields` recursively; that refinement is
+/// deliberately deferred until the native path exists.
+pub(crate) fn type_requires_native_xcdr1(desc: &TypeDescriptor) -> bool {
+    desc.is_variable_size && desc.alignment >= 8
 }
 
 /// Pairwise DataRepresentation compatibility check per DDS-XTypes v1.3
@@ -256,6 +274,37 @@ mod tests {
             compute_effective_cdr_version(&[XCDR2_CODE], &matched),
             Ok(CdrVersion::Xcdr2)
         );
+    }
+
+    fn desc(alignment: u8, is_variable_size: bool) -> TypeDescriptor {
+        TypeDescriptor {
+            type_id: 0,
+            type_name: "Synthetic",
+            size_bytes: 0,
+            alignment,
+            is_variable_size,
+            fields: &[],
+        }
+    }
+
+    #[test]
+    fn type_requires_native_xcdr1_true_for_variable_8_byte_aligned() {
+        assert!(type_requires_native_xcdr1(&desc(8, true)));
+    }
+
+    #[test]
+    fn type_requires_native_xcdr1_false_for_variable_4_byte_aligned() {
+        assert!(!type_requires_native_xcdr1(&desc(4, true)));
+    }
+
+    #[test]
+    fn type_requires_native_xcdr1_false_for_fixed_8_byte_aligned() {
+        assert!(!type_requires_native_xcdr1(&desc(8, false)));
+    }
+
+    #[test]
+    fn type_requires_native_xcdr1_false_for_fixed_1_byte_aligned() {
+        assert!(!type_requires_native_xcdr1(&desc(1, false)));
     }
 
     #[test]

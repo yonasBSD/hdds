@@ -683,6 +683,7 @@ impl<T: DDS> WriterBuilder<T> {
                 Some(reg.register_writer_with_incompatible(
                     self.topic.clone(),
                     self.qos.clone(),
+                    T::type_descriptor(),
                     move |total, total_change, current, current_change, last_handle| {
                         // v252: Before the user listener fires, if the writer
                         // is VOLATILE and we are observing a real match

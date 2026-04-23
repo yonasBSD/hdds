@@ -37,6 +37,11 @@ struct MatchEntry {
     topic: String,
     qos: QoS,
     kind: LocalKind,
+    /// Type descriptor of the local endpoint, used at match time to evaluate
+    /// DataRepresentation constraints per DDS-XTypes v1.3 §7.4.3.4.1 Table 15
+    /// (types combining variable-size containers with 8-byte aligned
+    /// primitives require native XCDR1 encoding).
+    type_descriptor: &'static crate::core::types::TypeDescriptor,
     callback: MatchCallback,
     incompatible_callback: Option<IncompatibleCallback>,
     matched_remotes: Mutex<HashSet<GUID>>,
@@ -101,9 +106,10 @@ impl MatchNotificationRegistry {
         self: &Arc<Self>,
         topic: String,
         qos: QoS,
+        type_descriptor: &'static crate::core::types::TypeDescriptor,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
     ) -> MatchToken {
-        self.register_writer_with_incompatible(topic, qos, callback, None)
+        self.register_writer_with_incompatible(topic, qos, type_descriptor, callback, None)
     }
 
     /// Register a local writer with both match and incompatible QoS callbacks.
@@ -111,6 +117,7 @@ impl MatchNotificationRegistry {
         self: &Arc<Self>,
         topic: String,
         qos: QoS,
+        type_descriptor: &'static crate::core::types::TypeDescriptor,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
         incompatible_callback: Option<IncompatibleCallback>,
     ) -> MatchToken {
@@ -120,6 +127,7 @@ impl MatchNotificationRegistry {
             topic: topic.clone(),
             qos: qos.clone(),
             kind: LocalKind::Writer,
+            type_descriptor,
             callback: Box::new(callback),
             incompatible_callback,
             matched_remotes: Mutex::new(HashSet::new()),
@@ -131,7 +139,7 @@ impl MatchNotificationRegistry {
             let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
             entries.push(entry);
         }
-        self.catch_up(id, LocalKind::Writer, &topic, &qos);
+        self.catch_up(id, LocalKind::Writer, &topic, &qos, type_descriptor);
         MatchToken {
             registry: Arc::downgrade(self),
             id,
@@ -147,6 +155,7 @@ impl MatchNotificationRegistry {
         self: &Arc<Self>,
         topic: String,
         qos: QoS,
+        type_descriptor: &'static crate::core::types::TypeDescriptor,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
         incompatible_callback: Option<IncompatibleCallback>,
         reader_lifespan_nanos: Arc<AtomicU64>,
@@ -154,6 +163,7 @@ impl MatchNotificationRegistry {
         self.register_reader_full(
             topic,
             qos,
+            type_descriptor,
             callback,
             incompatible_callback,
             Some(reader_lifespan_nanos),
@@ -164,6 +174,7 @@ impl MatchNotificationRegistry {
         self: &Arc<Self>,
         topic: String,
         qos: QoS,
+        type_descriptor: &'static crate::core::types::TypeDescriptor,
         callback: impl Fn(u32, i32, u32, i32, Option<GUID>) + Send + Sync + 'static,
         incompatible_callback: Option<IncompatibleCallback>,
         reader_lifespan_nanos: Option<Arc<AtomicU64>>,
@@ -174,6 +185,7 @@ impl MatchNotificationRegistry {
             topic: topic.clone(),
             qos: qos.clone(),
             kind: LocalKind::Reader,
+            type_descriptor,
             callback: Box::new(callback),
             incompatible_callback,
             matched_remotes: Mutex::new(HashSet::new()),
@@ -185,7 +197,7 @@ impl MatchNotificationRegistry {
             let mut entries = self.entries.write().unwrap_or_else(|e| e.into_inner());
             entries.push(entry);
         }
-        self.catch_up(id, LocalKind::Reader, &topic, &qos);
+        self.catch_up(id, LocalKind::Reader, &topic, &qos, type_descriptor);
         MatchToken {
             registry: Arc::downgrade(self),
             id,
@@ -198,7 +210,14 @@ impl MatchNotificationRegistry {
     }
 
     /// Catch-up: scan existing remote endpoints for matches with a newly registered entry.
-    fn catch_up(&self, entry_id: u64, kind: LocalKind, topic: &str, local_qos: &QoS) {
+    fn catch_up(
+        &self,
+        entry_id: u64,
+        kind: LocalKind,
+        topic: &str,
+        local_qos: &QoS,
+        type_descriptor: &'static crate::core::types::TypeDescriptor,
+    ) {
         let fsm = match self.discovery_fsm.upgrade() {
             Some(fsm) => fsm,
             None => return,
@@ -219,17 +238,27 @@ impl MatchNotificationRegistry {
             };
             // DataRepresentation matching per DDS-XTypes v1.3 §7.6.3.1:
             // writer.offered must accept at least one of reader.accepted.
-            let data_rep_ok = match kind {
+            // Types requiring native XCDR1 (XTypes v1.3 §7.4.3.4.1 Table 15:
+            // variable-size containers with 8-byte aligned primitives) are
+            // rejected on XCDR1 negotiation until native support lands.
+            let cdr_result = match kind {
                 LocalKind::Writer => crate::dds::cdr_negotiation::pair_effective_cdr_version(
                     &local_qos.data_representation,
                     &remote.qos.data_representation,
-                )
-                .is_ok(),
+                ),
                 LocalKind::Reader => crate::dds::cdr_negotiation::pair_effective_cdr_version(
                     &remote.qos.data_representation,
                     &local_qos.data_representation,
-                )
-                .is_ok(),
+                ),
+            };
+            let data_rep_ok = match cdr_result {
+                Ok(crate::dds::CdrVersion::Xcdr1)
+                    if crate::dds::cdr_negotiation::type_requires_native_xcdr1(type_descriptor) =>
+                {
+                    false
+                }
+                Ok(_) => true,
+                Err(_) => false,
             };
             let compatible = compatible_policies && data_rep_ok;
             if compatible {
@@ -355,22 +384,34 @@ impl DiscoveryListener for MatchNotificationRegistry {
             };
             // DataRepresentation matching per DDS-XTypes v1.3 §7.6.3.1:
             // writer.offered must accept at least one of reader.accepted.
-            let data_rep_ok = match (entry.kind, endpoint.kind) {
+            // Types requiring native XCDR1 (XTypes v1.3 §7.4.3.4.1 Table 15:
+            // variable-size containers with 8-byte aligned primitives) are
+            // rejected on XCDR1 negotiation until native support lands.
+            let cdr_result = match (entry.kind, endpoint.kind) {
                 (LocalKind::Writer, EndpointKind::Reader) => {
-                    crate::dds::cdr_negotiation::pair_effective_cdr_version(
+                    Some(crate::dds::cdr_negotiation::pair_effective_cdr_version(
                         &entry.qos.data_representation,
                         &remote_qos_for_compat.data_representation,
-                    )
-                    .is_ok()
+                    ))
                 }
                 (LocalKind::Reader, EndpointKind::Writer) => {
-                    crate::dds::cdr_negotiation::pair_effective_cdr_version(
+                    Some(crate::dds::cdr_negotiation::pair_effective_cdr_version(
                         &remote_qos_for_compat.data_representation,
                         &entry.qos.data_representation,
-                    )
-                    .is_ok()
+                    ))
                 }
-                _ => false,
+                _ => None,
+            };
+            let data_rep_ok = match cdr_result {
+                Some(Ok(crate::dds::CdrVersion::Xcdr1))
+                    if crate::dds::cdr_negotiation::type_requires_native_xcdr1(
+                        entry.type_descriptor,
+                    ) =>
+                {
+                    false
+                }
+                Some(Ok(_)) => true,
+                Some(Err(_)) | None => false,
             };
             let compatible = compatible_policies && data_rep_ok;
 
@@ -475,6 +516,29 @@ mod tests {
         QoS::best_effort()
     }
 
+    // Simple fixed-size type descriptor (alignment=4, is_variable_size=false):
+    // triggers the XCDR1 guard-rail only when alignment>=8 && is_variable_size.
+    static SIMPLE_DESC: crate::core::types::TypeDescriptor = crate::core::types::TypeDescriptor {
+        type_id: 0,
+        type_name: "Simple",
+        size_bytes: 8,
+        alignment: 4,
+        is_variable_size: false,
+        fields: &[],
+    };
+
+    // Container type descriptor (alignment=8 + is_variable_size=true):
+    // requires native XCDR1 per §7.4.3.4.1 Table 15. Triggers the guard-rail.
+    static CONTAINER_DESC: crate::core::types::TypeDescriptor =
+        crate::core::types::TypeDescriptor {
+            type_id: 0,
+            type_name: "Container",
+            size_bytes: 0,
+            alignment: 8,
+            is_variable_size: true,
+            fields: &[],
+        };
+
     // Remote reader with an explicit data_representation sequence. Used to
     // exercise the DDS-XTypes v1.3 §7.6.3.1 match-time gate.
     fn remote_reader(data_rep: Vec<u16>) -> EndpointInfo {
@@ -517,6 +581,7 @@ mod tests {
         let _token = reg.register_writer_with_incompatible(
             "topic".into(),
             writer_qos,
+            &SIMPLE_DESC,
             move |_, _, _, _, _| {
                 mc.fetch_add(1, Ordering::Relaxed);
             },
@@ -552,6 +617,7 @@ mod tests {
         let _token = reg.register_writer_with_incompatible(
             "topic".into(),
             writer_qos,
+            &SIMPLE_DESC,
             move |_, _, _, _, _| {
                 mc.fetch_add(1, Ordering::Relaxed);
             },
@@ -568,15 +634,127 @@ mod tests {
     }
 
     #[test]
+    fn xcdr1_rejected_for_container_type_fires_policy_23() {
+        let fsm = Arc::new(DiscoveryFsm::new(GUID::zero(), 30_000));
+        let reg = Arc::new(MatchNotificationRegistry::new(&fsm, [0; 12]));
+
+        let match_count = Arc::new(AtomicU32::new(0));
+        let mc = Arc::clone(&match_count);
+        let incompat_policy = Arc::new(AtomicU32::new(0));
+        let ip = Arc::clone(&incompat_policy);
+
+        let writer_qos = QoS {
+            data_representation: vec![0x0000], // XCDR1 only
+            ..QoS::best_effort()
+        };
+        let _token = reg.register_writer_with_incompatible(
+            "topic".into(),
+            writer_qos,
+            &CONTAINER_DESC, // alignment=8 + is_variable_size
+            move |_, _, _, _, _| {
+                mc.fetch_add(1, Ordering::Relaxed);
+            },
+            Some(Box::new(move |_, _, policy_id| {
+                ip.store(policy_id, Ordering::Relaxed);
+            })),
+        );
+
+        // Reader also accepts only XCDR1 -> intersection non-empty,
+        // but the container type requires native XCDR1 which is not
+        // implemented: the guard-rail fires policy 23.
+        reg.on_endpoint_discovered(remote_reader(vec![0x0000]));
+
+        assert_eq!(match_count.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            incompat_policy.load(Ordering::Relaxed),
+            crate::dds::cdr_negotiation::POLICY_ID_DATA_REPRESENTATION
+        );
+    }
+
+    #[test]
+    fn xcdr2_proceeds_for_container_type() {
+        let fsm = Arc::new(DiscoveryFsm::new(GUID::zero(), 30_000));
+        let reg = Arc::new(MatchNotificationRegistry::new(&fsm, [0; 12]));
+
+        let match_count = Arc::new(AtomicU32::new(0));
+        let mc = Arc::clone(&match_count);
+        let incompat_count = Arc::new(AtomicU32::new(0));
+        let ic = Arc::clone(&incompat_count);
+
+        let writer_qos = QoS {
+            data_representation: vec![0x0002], // XCDR2 only
+            ..QoS::best_effort()
+        };
+        let _token = reg.register_writer_with_incompatible(
+            "topic".into(),
+            writer_qos,
+            &CONTAINER_DESC,
+            move |_, _, _, _, _| {
+                mc.fetch_add(1, Ordering::Relaxed);
+            },
+            Some(Box::new(move |_, _, _| {
+                ic.fetch_add(1, Ordering::Relaxed);
+            })),
+        );
+
+        // Reader accepts XCDR2 -> negotiation resolves to XCDR2, which the
+        // codegen path supports natively on container types; guard-rail
+        // does not fire.
+        reg.on_endpoint_discovered(remote_reader(vec![0x0002]));
+
+        assert_eq!(match_count.load(Ordering::Relaxed), 1);
+        assert_eq!(incompat_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn xcdr1_accepted_for_simple_type() {
+        let fsm = Arc::new(DiscoveryFsm::new(GUID::zero(), 30_000));
+        let reg = Arc::new(MatchNotificationRegistry::new(&fsm, [0; 12]));
+
+        let match_count = Arc::new(AtomicU32::new(0));
+        let mc = Arc::clone(&match_count);
+        let incompat_count = Arc::new(AtomicU32::new(0));
+        let ic = Arc::clone(&incompat_count);
+
+        let writer_qos = QoS {
+            data_representation: vec![0x0000], // XCDR1 only
+            ..QoS::best_effort()
+        };
+        let _token = reg.register_writer_with_incompatible(
+            "topic".into(),
+            writer_qos,
+            &SIMPLE_DESC, // alignment=4, is_variable_size=false
+            move |_, _, _, _, _| {
+                mc.fetch_add(1, Ordering::Relaxed);
+            },
+            Some(Box::new(move |_, _, _| {
+                ic.fetch_add(1, Ordering::Relaxed);
+            })),
+        );
+
+        // Simple type: XCDR1 natively supported (primitive types have
+        // identical XCDR1/XCDR2 layout at 4-byte alignment or finer).
+        reg.on_endpoint_discovered(remote_reader(vec![0x0000]));
+
+        assert_eq!(match_count.load(Ordering::Relaxed), 1);
+        assert_eq!(incompat_count.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
     fn register_and_unregister() {
         let fsm = Arc::new(DiscoveryFsm::new(GUID::zero(), 30_000));
         let reg = Arc::new(MatchNotificationRegistry::new(&fsm, [0; 12]));
 
         let call_count = Arc::new(AtomicU32::new(0));
         let cc = Arc::clone(&call_count);
-        let token = reg.register_writer("test".into(), test_qos(), move |_, _, _, _, _| {
-            cc.fetch_add(1, Ordering::Relaxed);
-        });
+        let token = reg.register_writer(
+            "test".into(),
+            test_qos(),
+            &SIMPLE_DESC,
+            move |_, _, _, _, _| {
+                cc.fetch_add(1, Ordering::Relaxed);
+            },
+        );
 
         // Should have 1 entry
         assert_eq!(
