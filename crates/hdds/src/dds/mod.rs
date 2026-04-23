@@ -59,6 +59,7 @@
 //! - [`DDS`] - Trait for serializable types
 //! - [DDS Specification](https://www.omg.org/spec/DDS/1.4/)
 
+pub(crate) mod cdr_negotiation;
 mod condition;
 mod content_filtered_topic;
 mod domain_registry;
