@@ -188,24 +188,10 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
         }
     }
 
-    // 8. DataRepresentation compatibility (DDS-RTPS v2.5)
-    // If both writer and reader advertise data_representation, they must share
-    // at least one common representation. Empty means "default" (XCDR1),
-    // which is always compatible with XCDR1.
-    if !writer_qos.data_representation.is_empty() && !reader_qos.data_representation.is_empty() {
-        let has_common = writer_qos
-            .data_representation
-            .iter()
-            .any(|w| reader_qos.data_representation.contains(w));
-        if !has_common {
-            log::debug!(
-                "[MATCH-QOS] DataRepresentation mismatch (writer={:?}, reader={:?})",
-                writer_qos.data_representation,
-                reader_qos.data_representation
-            );
-            return false;
-        }
-    }
+    // DataRepresentation matching (DDS-XTypes v1.3 §7.6.3.1) is handled at
+    // match time via `crate::dds::cdr_negotiation::pair_effective_cdr_version`
+    // rather than here: it is the single source of truth for policy ID 23
+    // and is reused at send time for the Option 2 writer-side version choice.
 
     // 9. Presentation (DDS v1.4 Sec.2.2.3.6, Table 2.60)
     // RxO policy: writer access_scope must be >= reader access_scope
@@ -245,7 +231,10 @@ pub(super) fn is_compatible(reader_qos: &QoS, writer_qos: &QoS) -> bool {
 /// Return the DDS policy ID of the first incompatible QoS policy.
 /// Returns 0 if all policies are compatible (should not happen if is_compatible returned false).
 /// DDS policy IDs per spec Table 2.60:
-///   7=DURABILITY, 11=RELIABILITY, 5=OWNERSHIP, 13=DEADLINE, 21=LIVELINESS, 23=DATA_REPRESENTATION
+///   7=DURABILITY, 11=RELIABILITY, 5=OWNERSHIP, 13=DEADLINE, 21=LIVELINESS.
+/// Policy ID 23 (DATA_REPRESENTATION) is owned by
+/// `crate::dds::cdr_negotiation::pair_effective_cdr_version` and never
+/// returned here.
 pub(super) fn first_incompatible_policy(reader_qos: &QoS, writer_qos: &QoS) -> u32 {
     // Check in same order as is_compatible
     if let (Reliability::BestEffort, Reliability::Reliable) =
@@ -273,16 +262,10 @@ pub(super) fn first_incompatible_policy(reader_qos: &QoS, writer_qos: &QoS) -> u
     {
         return 21; // LIVELINESS
     }
-    // DataRepresentation mismatch
-    if !writer_qos.data_representation.is_empty() && !reader_qos.data_representation.is_empty() {
-        let has_common = writer_qos
-            .data_representation
-            .iter()
-            .any(|w| reader_qos.data_representation.contains(w));
-        if !has_common {
-            return 23; // DATA_REPRESENTATION
-        }
-    }
+    // DataRepresentation (policy ID 23) is checked by the match-time caller
+    // via `crate::dds::cdr_negotiation::pair_effective_cdr_version`, so
+    // `first_incompatible_policy` never returns 23 from this routine.
+
     // Presentation mismatch — same guard as is_compatible() above: only
     // report when at least one side is non-default, to avoid flagging
     // default-default pairs as incompatible when the remote vendor omits

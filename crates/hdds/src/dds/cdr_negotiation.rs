@@ -108,6 +108,37 @@ fn code_to_version(code: u16) -> Result<CdrVersion, IncompatibleQos> {
     }
 }
 
+/// Pairwise DataRepresentation compatibility check per DDS-XTypes v1.3
+/// §7.6.3.1, matching a single remote endpoint against a local offered
+/// sequence. Equivalent to calling `compute_effective_cdr_version` with a
+/// single-reader matched slice, but avoids constructing an `EndpointInfo`
+/// at the match-time call site.
+///
+/// * `offered` — writer-side offered codes (empty = writer unconstrained).
+/// * `accepted` — reader-side accepted codes (empty = reader unconstrained).
+pub(crate) fn pair_effective_cdr_version(
+    offered: &[u16],
+    accepted: &[u16],
+) -> Result<CdrVersion, IncompatibleQos> {
+    if offered.is_empty() && accepted.is_empty() {
+        return Ok(CdrVersion::Xcdr2);
+    }
+    if offered.is_empty() {
+        return code_to_version(accepted[0]);
+    }
+    if accepted.is_empty() {
+        return code_to_version(offered[0]);
+    }
+    for &code in offered {
+        if accepted.contains(&code) {
+            return code_to_version(code);
+        }
+    }
+    Err(IncompatibleQos {
+        policy_id: POLICY_ID_DATA_REPRESENTATION,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,6 +255,53 @@ mod tests {
         assert_eq!(
             compute_effective_cdr_version(&[XCDR2_CODE], &matched),
             Ok(CdrVersion::Xcdr2)
+        );
+    }
+
+    #[test]
+    fn pair_empty_offered_empty_accepted_defaults_to_xcdr2() {
+        assert_eq!(pair_effective_cdr_version(&[], &[]), Ok(CdrVersion::Xcdr2));
+    }
+
+    #[test]
+    fn pair_writer_offered_no_reader_accepted_returns_offered_first() {
+        assert_eq!(
+            pair_effective_cdr_version(&[XCDR1_CODE], &[]),
+            Ok(CdrVersion::Xcdr1)
+        );
+        assert_eq!(
+            pair_effective_cdr_version(&[XCDR2_CODE], &[]),
+            Ok(CdrVersion::Xcdr2)
+        );
+    }
+
+    #[test]
+    fn pair_reader_accepted_no_writer_offered_reader_imposes() {
+        assert_eq!(
+            pair_effective_cdr_version(&[], &[XCDR1_CODE]),
+            Ok(CdrVersion::Xcdr1)
+        );
+    }
+
+    #[test]
+    fn pair_both_constrained_picks_first_offered_in_accepted() {
+        assert_eq!(
+            pair_effective_cdr_version(&[XCDR2_CODE, XCDR1_CODE], &[XCDR1_CODE]),
+            Ok(CdrVersion::Xcdr1)
+        );
+        assert_eq!(
+            pair_effective_cdr_version(&[XCDR2_CODE, XCDR1_CODE], &[XCDR1_CODE, XCDR2_CODE]),
+            Ok(CdrVersion::Xcdr2)
+        );
+    }
+
+    #[test]
+    fn pair_empty_intersection_yields_incompatible_qos() {
+        assert_eq!(
+            pair_effective_cdr_version(&[XCDR2_CODE], &[XCDR1_CODE]),
+            Err(IncompatibleQos {
+                policy_id: POLICY_ID_DATA_REPRESENTATION
+            })
         );
     }
 

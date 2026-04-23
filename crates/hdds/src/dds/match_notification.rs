@@ -213,10 +213,25 @@ impl MatchNotificationRegistry {
             if remote.endpoint_guid.prefix == self.local_guid_prefix {
                 continue;
             }
-            let compatible = match kind {
+            let compatible_policies = match kind {
                 LocalKind::Writer => Matcher::is_compatible(&remote.qos, local_qos),
                 LocalKind::Reader => Matcher::is_compatible(local_qos, &remote.qos),
             };
+            // DataRepresentation matching per DDS-XTypes v1.3 §7.6.3.1:
+            // writer.offered must accept at least one of reader.accepted.
+            let data_rep_ok = match kind {
+                LocalKind::Writer => crate::dds::cdr_negotiation::pair_effective_cdr_version(
+                    &local_qos.data_representation,
+                    &remote.qos.data_representation,
+                )
+                .is_ok(),
+                LocalKind::Reader => crate::dds::cdr_negotiation::pair_effective_cdr_version(
+                    &remote.qos.data_representation,
+                    &local_qos.data_representation,
+                )
+                .is_ok(),
+            };
+            let compatible = compatible_policies && data_rep_ok;
             if compatible {
                 let writer_lifespan_nanos = if kind == LocalKind::Reader
                     && !remote.qos.lifespan.is_infinite()
@@ -231,11 +246,24 @@ impl MatchNotificationRegistry {
                 // endpoint was cached BEFORE the local entry registered).
                 // Fire on_requested_incompatible_qos / on_offered_incompatible_qos
                 // so listeners see the mismatch even in this ordering.
-                let policy_id = match kind {
-                    LocalKind::Writer => Matcher::first_incompatible_policy(&remote.qos, local_qos),
-                    LocalKind::Reader => Matcher::first_incompatible_policy(local_qos, &remote.qos),
+                let policy_id = if !data_rep_ok {
+                    crate::dds::cdr_negotiation::POLICY_ID_DATA_REPRESENTATION
+                } else {
+                    match kind {
+                        LocalKind::Writer => {
+                            Matcher::first_incompatible_policy(&remote.qos, local_qos)
+                        }
+                        LocalKind::Reader => {
+                            Matcher::first_incompatible_policy(local_qos, &remote.qos)
+                        }
+                    }
                 };
                 if policy_id != 0 {
+                    log::warn!(
+                        "[MATCH] incompatible QoS on topic='{}' policy_id={}",
+                        topic,
+                        policy_id
+                    );
                     self.fire_incompat(entry_id, policy_id);
                 }
             }
@@ -316,7 +344,7 @@ impl DiscoveryListener for MatchNotificationRegistry {
                 continue;
             }
 
-            let compatible = match (entry.kind, endpoint.kind) {
+            let compatible_policies = match (entry.kind, endpoint.kind) {
                 (LocalKind::Writer, EndpointKind::Reader) => {
                     Matcher::is_compatible(&remote_qos_for_compat, &entry.qos)
                 }
@@ -325,6 +353,26 @@ impl DiscoveryListener for MatchNotificationRegistry {
                 }
                 _ => false,
             };
+            // DataRepresentation matching per DDS-XTypes v1.3 §7.6.3.1:
+            // writer.offered must accept at least one of reader.accepted.
+            let data_rep_ok = match (entry.kind, endpoint.kind) {
+                (LocalKind::Writer, EndpointKind::Reader) => {
+                    crate::dds::cdr_negotiation::pair_effective_cdr_version(
+                        &entry.qos.data_representation,
+                        &remote_qos_for_compat.data_representation,
+                    )
+                    .is_ok()
+                }
+                (LocalKind::Reader, EndpointKind::Writer) => {
+                    crate::dds::cdr_negotiation::pair_effective_cdr_version(
+                        &remote_qos_for_compat.data_representation,
+                        &entry.qos.data_representation,
+                    )
+                    .is_ok()
+                }
+                _ => false,
+            };
+            let compatible = compatible_policies && data_rep_ok;
 
             // Ownership check: infer ownership kind from SEDP PIDs.
             // PID_OWNERSHIP present → use it directly.
@@ -381,6 +429,8 @@ impl DiscoveryListener for MatchNotificationRegistry {
                 // But NOT for partition mismatches — those are silent no-match (DDS spec).
                 let policy_id = if !ownership_ok {
                     5 // OWNERSHIP
+                } else if !data_rep_ok {
+                    crate::dds::cdr_negotiation::POLICY_ID_DATA_REPRESENTATION
                 } else {
                     // first_incompatible_policy expects (reader_qos, writer_qos)
                     match entry.kind {
@@ -395,6 +445,11 @@ impl DiscoveryListener for MatchNotificationRegistry {
                 // policy_id 0 = no real QoS incompatibility found (partition mismatch
                 // or unknown). Partition mismatch is not an INCOMPATIBLE_QOS event.
                 if policy_id != 0 {
+                    log::warn!(
+                        "[MATCH] incompatible QoS on topic='{}' policy_id={}",
+                        entry.topic,
+                        policy_id
+                    );
                     if std::env::var("HDDS_INTEROP_DIAGNOSTICS").is_ok() {
                         eprintln!(
                             "[MATCH-INCOMPAT] topic='{}' policy={} own_ok={} has_expl={} has_str={} remote_own={:?} local_own={:?} compat={}",
@@ -418,6 +473,98 @@ mod tests {
 
     fn test_qos() -> QoS {
         QoS::best_effort()
+    }
+
+    // Remote reader with an explicit data_representation sequence. Used to
+    // exercise the DDS-XTypes v1.3 §7.6.3.1 match-time gate.
+    fn remote_reader(data_rep: Vec<u16>) -> EndpointInfo {
+        use crate::core::discovery::multicast::fsm::EndpointKind;
+        // GUID with a non-zero prefix so it is not skipped as local.
+        let guid = GUID::from_bytes([
+            0xA, 0xB, 0xC, 0xD, 0xE, 0xF, 1, 2, 3, 4, 5, 6, 0, 0, 0, 0x04,
+        ]);
+        let qos = QoS {
+            data_representation: data_rep,
+            ..QoS::best_effort()
+        };
+        EndpointInfo {
+            endpoint_guid: guid,
+            participant_guid: guid,
+            topic_name: "topic".into(),
+            type_name: "T".into(),
+            qos,
+            kind: EndpointKind::Reader,
+            type_object: None,
+            has_explicit_ownership: false,
+            has_ownership_strength: false,
+        }
+    }
+
+    #[test]
+    fn data_rep_mismatch_fires_incompat_with_policy_23_and_skips_match() {
+        let fsm = Arc::new(DiscoveryFsm::new(GUID::zero(), 30_000));
+        let reg = Arc::new(MatchNotificationRegistry::new(&fsm, [0; 12]));
+
+        let match_count = Arc::new(AtomicU32::new(0));
+        let mc = Arc::clone(&match_count);
+        let incompat_policy = Arc::new(AtomicU32::new(0));
+        let ip = Arc::clone(&incompat_policy);
+
+        let writer_qos = QoS {
+            data_representation: vec![0x0002], // offered XCDR2 only
+            ..QoS::best_effort()
+        };
+        let _token = reg.register_writer_with_incompatible(
+            "topic".into(),
+            writer_qos,
+            move |_, _, _, _, _| {
+                mc.fetch_add(1, Ordering::Relaxed);
+            },
+            Some(Box::new(move |_, _, policy_id| {
+                ip.store(policy_id, Ordering::Relaxed);
+            })),
+        );
+
+        // Reader accepts only XCDR1 -> mismatch -> incompat event, no match.
+        reg.on_endpoint_discovered(remote_reader(vec![0x0000]));
+
+        assert_eq!(match_count.load(Ordering::Relaxed), 0);
+        assert_eq!(
+            incompat_policy.load(Ordering::Relaxed),
+            crate::dds::cdr_negotiation::POLICY_ID_DATA_REPRESENTATION
+        );
+    }
+
+    #[test]
+    fn data_rep_match_proceeds_and_does_not_fire_incompat() {
+        let fsm = Arc::new(DiscoveryFsm::new(GUID::zero(), 30_000));
+        let reg = Arc::new(MatchNotificationRegistry::new(&fsm, [0; 12]));
+
+        let match_count = Arc::new(AtomicU32::new(0));
+        let mc = Arc::clone(&match_count);
+        let incompat_count = Arc::new(AtomicU32::new(0));
+        let ic = Arc::clone(&incompat_count);
+
+        let writer_qos = QoS {
+            data_representation: vec![0x0002],
+            ..QoS::best_effort()
+        };
+        let _token = reg.register_writer_with_incompatible(
+            "topic".into(),
+            writer_qos,
+            move |_, _, _, _, _| {
+                mc.fetch_add(1, Ordering::Relaxed);
+            },
+            Some(Box::new(move |_, _, _| {
+                ic.fetch_add(1, Ordering::Relaxed);
+            })),
+        );
+
+        // Reader accepts XCDR2 -> intersection non-empty -> match fires.
+        reg.on_endpoint_discovered(remote_reader(vec![0x0002]));
+
+        assert_eq!(match_count.load(Ordering::Relaxed), 1);
+        assert_eq!(incompat_count.load(Ordering::Relaxed), 0);
     }
 
     #[test]
