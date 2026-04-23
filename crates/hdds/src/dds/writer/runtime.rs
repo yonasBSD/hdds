@@ -228,6 +228,33 @@ impl<T: DDS> DataWriter<T> {
         Arc::clone(&self.merger)
     }
 
+    /// Resolve the effective CDR encoding version for the upcoming write()
+    /// per DDS-XTypes v1.3 §7.6.3.1 (DataRepresentationQosPolicy). The
+    /// matched readers are looked up once via the discovery FSM; the
+    /// selection is the first writer-offered code accepted by at least one
+    /// matched reader, falling back to offered[0] when no readers are
+    /// known or defaulting to XCDR2 when neither side constrains the choice.
+    pub(super) fn effective_cdr_version(&self) -> crate::dds::CdrVersion {
+        let readers = self
+            .discovery_fsm
+            .as_ref()
+            .map(|fsm| fsm.find_readers_for_topic(&self.topic))
+            .unwrap_or_default();
+        match crate::dds::cdr_negotiation::compute_effective_cdr_version(
+            &self.qos.data_representation,
+            &readers,
+        ) {
+            Ok(version) => version,
+            // The match-time filter in MatchNotificationRegistry rejects
+            // readers whose data_representation does not intersect the
+            // writer's offered sequence, so any reader reaching this call
+            // site is already compatible.
+            Err(_) => unreachable!(
+                "DataRepresentation match-time filter should have rejected incompatible readers"
+            ),
+        }
+    }
+
     /// Encrypt payload if security is enabled and a session key is available.
     ///
     /// Returns the encrypted payload, or the original payload if encryption is not available.
@@ -288,12 +315,13 @@ impl<T: DDS> DataWriter<T> {
         // (covers typical samples with no realloc) and double on BufferTooSmall
         // up to a 16 MB cap to support LargeData-style payloads.
         const MAX_SERIALIZED_SIZE: usize = 16 * 1024 * 1024;
+        // Single encode per write() per DDS-XTypes v1.3 §7.6.3.1.
+        let version = self.effective_cdr_version();
         let (tmp_buf, serialized_len) = {
             let mut size = 65_536usize;
             loop {
                 let mut buf = vec![0u8; size];
-                #[allow(deprecated)]
-                match msg.encode_cdr2(&mut buf) {
+                match msg.encode(&mut buf, version) {
                     Ok(len) => break (buf, len),
                     Err(Error::BufferTooSmall) if size < MAX_SERIALIZED_SIZE => {
                         size = (size * 2).min(MAX_SERIALIZED_SIZE);
@@ -610,8 +638,9 @@ impl<T: DDS> DataWriter<T> {
             }
         };
 
-        #[allow(deprecated)]
-        let serialized_len = match msg.encode_cdr2(slab_buf) {
+        // Single encode per write() per DDS-XTypes v1.3 §7.6.3.1.
+        let version = self.effective_cdr_version();
+        let serialized_len = match msg.encode(slab_buf, version) {
             Ok(len) => len,
             Err(e) => {
                 slab_pool.release(handle);
