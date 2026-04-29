@@ -11,9 +11,12 @@
 //! - reserve: < 30 ns (p99)
 //! - release: < 30 ns (p99)
 
+use crate::qos::MemoryPolicy;
 use parking_lot::Mutex;
+use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
+use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 /// Allocation tier that produced a successful `reserve_and_write` call.
@@ -76,8 +79,10 @@ impl SlabHandle {
     /// constructs handles through `SlabPool::reserve` directly.
     #[doc(hidden)]
     pub fn legacy_handle_to_primary(packed: u32) -> Self {
-        let pool_id = (packed >> 16) as u16;
-        let slot_id = (packed & 0xFFFF) as u16;
+        // `packed >> 16` and `packed & 0xFFFF` are both bounded by 0xFFFF
+        // = u16::MAX, so try_from never fails on a well-formed u32.
+        let pool_id = u16::try_from(packed >> 16).unwrap_or(u16::MAX);
+        let slot_id = u16::try_from(packed & 0xFFFF).unwrap_or(u16::MAX);
         SlabHandle::Primary { pool_id, slot_id }
     }
 }
@@ -212,50 +217,64 @@ impl Pool {
     }
 }
 
-/// Memory pool for zero-copy message buffers
+/// Combined storage for the heap fallback tier. Single mutex avoids
+/// the deadlock-by-ordering class that two independent locks would
+/// introduce; tier 3 contention is exceptional by design.
+struct HeapStore {
+    /// `heap_id` -> live buffer, or `None` when the slot has been released.
+    buffers: Vec<Option<Box<[u8]>>>,
+    /// LIFO stack of `heap_id` values reusable by future allocations.
+    free_list: Vec<u32>,
+}
+
+/// Memory pool for zero-copy message buffers.
 ///
-/// Allocates from size-class pools using atomic bitmaps (lock-free).
-/// Target: reserve + release < 100 ns.
-///
-/// The `heap_buffers` / `heap_free_list` / `slab_heap_bytes_used` /
-/// `max_heap_bytes` fields are scaffolding for the heap fallback tier
-/// (DDS-XTypes-irrelevant runtime concern). They are inert until the
-/// allocation paths that produce `SlabHandle::Heap` are wired in.
+/// Three allocation tiers are tried in order: the primary 14-class pool
+/// (lock-free bitmap CAS), an opt-in secondary pool sized for large
+/// payloads, and a heap fallback bounded by `max_heap_bytes`.
 pub struct SlabPool {
     pools: Vec<Pool>,
-    /// Backing storage for the `SlabHandle::Heap` tier. Indexed by
-    /// `heap_id` from the variant; `None` slots are free.
-    #[allow(dead_code)]
-    heap_buffers: Mutex<Vec<Option<Box<[u8]>>>>,
-    /// LIFO stack of free `heap_id` values reusable by future allocations.
-    #[allow(dead_code)]
-    heap_free_list: Mutex<Vec<u32>>,
-    /// Current bytes held in active `Heap` slots; CAS-incremented on
-    /// allocation, decremented on release.
-    #[allow(dead_code)]
+    /// Secondary pool, configured at participant start via `MemoryPolicy`.
+    /// Empty = disabled.
+    large_pools: Vec<Pool>,
+    /// Heap fallback storage; mutated under a single mutex.
+    heap_store: Mutex<HeapStore>,
+    /// Current bytes held in active `Heap` slots; incremented under CAS
+    /// before allocation, decremented on release.
     slab_heap_bytes_used: AtomicUsize,
-    /// Ceiling for the heap fallback tier.
-    #[allow(dead_code)]
+    /// Ceiling for the heap fallback tier (per `MemoryPolicy.max_heap_bytes`).
     max_heap_bytes: usize,
 }
 
 impl SlabPool {
-    /// Default ceiling for the heap fallback tier (16 MB). Will be
-    /// overridable via `MemoryPolicy` once that wiring lands.
-    const DEFAULT_MAX_HEAP_BYTES: usize = 16 * 1024 * 1024;
-
+    /// Build a slab pool with the default `MemoryPolicy` (no large tier,
+    /// 16 MB heap fallback ceiling).
     pub fn new() -> Self {
+        Self::with_policy(&MemoryPolicy::default())
+    }
+
+    /// Build a slab pool from an explicit allocation policy.
+    pub fn with_policy(policy: &MemoryPolicy) -> Self {
         let pools = SIZE_CLASSES
+            .iter()
+            .map(|&(size, count)| Pool::new(size, count))
+            .collect();
+        let large_pools = policy
+            .large_pool
+            .classes
             .iter()
             .map(|&(size, count)| Pool::new(size, count))
             .collect();
 
         Self {
             pools,
-            heap_buffers: Mutex::new(Vec::new()),
-            heap_free_list: Mutex::new(Vec::new()),
+            large_pools,
+            heap_store: Mutex::new(HeapStore {
+                buffers: Vec::new(),
+                free_list: Vec::new(),
+            }),
             slab_heap_bytes_used: AtomicUsize::new(0),
-            max_heap_bytes: Self::DEFAULT_MAX_HEAP_BYTES,
+            max_heap_bytes: policy.max_heap_bytes,
         }
     }
 
@@ -322,18 +341,15 @@ impl SlabPool {
     /// `payload.len()` for the `Primary` and `Large` tiers (size classes
     /// round up). Consumers must track the logical length independently
     /// (the runtime carries it on `IndexEntry::len`).
-    pub(crate) fn reserve_and_write(
-        &self,
-        payload: &[u8],
-    ) -> Option<(SlabHandle, SlabMetric)> {
+    pub(crate) fn reserve_and_write(&self, payload: &[u8]) -> Option<(SlabHandle, SlabMetric)> {
         if let Some(handle) = self.try_reserve_primary_and_copy(payload) {
             return Some((handle, SlabMetric::Primary));
         }
-
-        // Large and Heap tiers are wired in a follow-up commit; once
-        // active the primary pool returning `None` falls through to
-        // Tier 2 then Tier 3 instead of failing.
-        None
+        if let Some(handle) = self.try_reserve_large_and_copy(payload) {
+            return Some((handle, SlabMetric::Large));
+        }
+        self.try_reserve_heap_and_copy(payload)
+            .map(|h| (h, SlabMetric::HeapFallback))
     }
 
     /// Walk the primary size classes from best-fit upward, reserve the
@@ -344,25 +360,124 @@ impl SlabPool {
         let start_idx = SIZE_CLASSES.iter().position(|&(size, _)| size >= len)?;
 
         for pool_idx in start_idx..self.pools.len() {
-            if let Some((slot_id, slice)) = self.pools[pool_idx].try_reserve() {
-                slice[..len].copy_from_slice(payload);
-                let pool_id = match u16::try_from(pool_idx) {
-                    Ok(id) => id,
-                    Err(_) => {
-                        // Defensive: SIZE_CLASSES has 14 entries today, so this
-                        // path is unreachable. If a future change pushes the
-                        // pool count past u16::MAX, the next class still fits
-                        // the same payload, so we release this slot and let
-                        // the loop try the next class instead of bailing.
-                        self.pools[pool_idx].release_slot(slot_id);
-                        continue;
-                    }
-                };
-                return Some(SlabHandle::Primary { pool_id, slot_id });
+            if let Some(handle) = self.try_claim_slot(&self.pools, pool_idx, payload, false) {
+                return Some(handle);
             }
         }
-
         None
+    }
+
+    /// Walk the secondary (`Large`) size classes and reserve+copy on hit.
+    /// Returns `None` if the large pool is disabled or every class is full.
+    fn try_reserve_large_and_copy(&self, payload: &[u8]) -> Option<SlabHandle> {
+        if self.large_pools.is_empty() {
+            return None;
+        }
+        let len = payload.len();
+        let start_idx = self
+            .large_pools
+            .iter()
+            .position(|pool| pool.slot_size >= len)?;
+
+        for pool_idx in start_idx..self.large_pools.len() {
+            if let Some(handle) = self.try_claim_slot(&self.large_pools, pool_idx, payload, true) {
+                return Some(handle);
+            }
+        }
+        None
+    }
+
+    /// Try to reserve a slot in `pools[pool_idx]` and copy the payload
+    /// into it. Returns `Some(handle)` on success with the matching
+    /// variant tag, `None` if the pool was full at this class.
+    fn try_claim_slot(
+        &self,
+        pools: &[Pool],
+        pool_idx: usize,
+        payload: &[u8],
+        is_large: bool,
+    ) -> Option<SlabHandle> {
+        let len = payload.len();
+        let (slot_id, slice) = pools[pool_idx].try_reserve()?;
+        slice[..len].copy_from_slice(payload);
+        let pool_id = match u16::try_from(pool_idx) {
+            Ok(id) => id,
+            Err(_) => {
+                // Defensive: pools.len() is bounded by SIZE_CLASSES (14) for
+                // the primary tier and by LargePoolConfig for the secondary
+                // tier, both well below u16::MAX. If a future change crosses
+                // that bound the caller will simply skip to the next class.
+                pools[pool_idx].release_slot(slot_id);
+                return None;
+            }
+        };
+        Some(if is_large {
+            SlabHandle::Large { pool_id, slot_id }
+        } else {
+            SlabHandle::Primary { pool_id, slot_id }
+        })
+    }
+
+    /// Allocate a heap-tier buffer for `payload`, enforcing `max_heap_bytes`.
+    /// Returns `None` if the ceiling would be crossed.
+    fn try_reserve_heap_and_copy(&self, payload: &[u8]) -> Option<SlabHandle> {
+        let len = payload.len();
+
+        // Atomic accounting (CAS-loop). On success, `slab_heap_bytes_used`
+        // has been incremented by `len` and the caller is responsible for
+        // either publishing a Heap handle (matched by a future `release`
+        // that decrements) or rolling back via `fetch_sub` on failure.
+        loop {
+            let prev = self.slab_heap_bytes_used.load(Ordering::Acquire);
+            let next = prev.checked_add(len)?;
+            if next > self.max_heap_bytes {
+                return None;
+            }
+            if self
+                .slab_heap_bytes_used
+                .compare_exchange(prev, next, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+            {
+                break;
+            }
+            // CAS lost the race; re-read and retry.
+        }
+
+        // SAFETY:
+        // 1. `Box::new_uninit_slice(len)` allocates `len` `MaybeUninit<u8>`
+        //    bytes; layout is identical to `[u8; len]`.
+        // 2. `copy_nonoverlapping` writes every byte of `dst`, so the slice
+        //    is fully initialised before we cast.
+        // 3. `Box::from_raw(Box::into_raw(boxed) as *mut [u8])` reclaims
+        //    ownership of the same allocation with the layout unchanged.
+        let init_box: Box<[u8]> = unsafe {
+            let mut boxed: Box<[MaybeUninit<u8>]> = Box::new_uninit_slice(len);
+            let dst = boxed.as_mut_ptr().cast::<u8>();
+            std::ptr::copy_nonoverlapping(payload.as_ptr(), dst, len);
+            Box::from_raw(Box::into_raw(boxed) as *mut [u8])
+        };
+
+        let heap_id = {
+            let mut store = self.heap_store.lock();
+            if let Some(reused) = store.free_list.pop() {
+                store.buffers[reused as usize] = Some(init_box);
+                reused
+            } else {
+                let new_id = match u32::try_from(store.buffers.len()) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        // Heap-id space exhausted; roll back the accounting
+                        // and surface as exhaustion to the caller.
+                        self.slab_heap_bytes_used.fetch_sub(len, Ordering::AcqRel);
+                        return None;
+                    }
+                };
+                store.buffers.push(Some(init_box));
+                new_id
+            }
+        };
+
+        Some(SlabHandle::Heap { heap_id })
     }
 
     /// Get immutable buffer from handle (for reading)
@@ -383,34 +498,23 @@ impl SlabPool {
     ///
     /// # Performance
     /// Target: < 20 ns (pointer arithmetic only, no atomics)
-    #[allow(clippy::mut_from_ref)]
-    pub fn get_buffer(&self, handle: SlabHandle) -> &[u8] {
+    pub fn get_buffer(&self, handle: SlabHandle) -> Cow<'_, [u8]> {
         match handle {
             SlabHandle::Primary { pool_id, slot_id } => {
-                let pool_id = usize::from(pool_id);
-                let slot_id = usize::from(slot_id);
-                debug_assert!(pool_id < self.pools.len(), "Invalid pool_id");
-                let pool = &self.pools[pool_id];
-                debug_assert!(slot_id < pool.slot_count, "Invalid slot_id");
-                let offset = slot_id * pool.slot_size;
-                // SAFETY:
-                // 1. pool.data was allocated once during Pool::new and never freed
-                //    while Pool alive.
-                // 2. Slot is allocated (bitmap bit set) so slice lies within
-                //    initialized memory.
-                // 3. We only create an immutable slice (&[u8]), so concurrent
-                //    readers are allowed.
-                // 4. Offset math bounded by slot_count and slot_size.
-                let data = unsafe { &*pool.data.get() };
-                &data[offset..offset + pool.slot_size]
+                Cow::Borrowed(slot_slice(&self.pools, pool_id, slot_id))
             }
-            SlabHandle::Large { .. } => {
-                debug_assert!(false, "Large variant not yet allocated");
-                &[]
+            SlabHandle::Large { pool_id, slot_id } => {
+                Cow::Borrowed(slot_slice(&self.large_pools, pool_id, slot_id))
             }
-            SlabHandle::Heap { .. } => {
-                debug_assert!(false, "Heap variant not yet allocated");
-                &[]
+            SlabHandle::Heap { heap_id } => {
+                let store = self.heap_store.lock();
+                let buf = store
+                    .buffers
+                    .get(heap_id as usize)
+                    .and_then(|slot| slot.as_ref())
+                    .map(|b| b.to_vec())
+                    .unwrap_or_default();
+                Cow::Owned(buf)
             }
         }
     }
@@ -439,17 +543,56 @@ impl SlabPool {
         match handle {
             SlabHandle::Primary { pool_id, slot_id } => {
                 let pool_idx = usize::from(pool_id);
-                debug_assert!(pool_idx < self.pools.len(), "Invalid pool_id");
+                debug_assert!(pool_idx < self.pools.len(), "Invalid Primary pool_id");
                 self.pools[pool_idx].release_slot(slot_id);
             }
-            SlabHandle::Large { .. } => {
-                debug_assert!(false, "Large variant not yet allocated");
+            SlabHandle::Large { pool_id, slot_id } => {
+                let pool_idx = usize::from(pool_id);
+                debug_assert!(pool_idx < self.large_pools.len(), "Invalid Large pool_id");
+                self.large_pools[pool_idx].release_slot(slot_id);
             }
-            SlabHandle::Heap { .. } => {
-                debug_assert!(false, "Heap variant not yet allocated");
+            SlabHandle::Heap { heap_id } => {
+                // Take the box out under the lock so the buffer drop and the
+                // accounting decrement happen outside the critical section.
+                let taken = {
+                    let mut store = self.heap_store.lock();
+                    match store.buffers.get_mut(heap_id as usize) {
+                        Some(slot) => slot.take().inspect(|_| {
+                            store.free_list.push(heap_id);
+                        }),
+                        None => None,
+                    }
+                };
+                if let Some(buf) = taken {
+                    let len = buf.len();
+                    drop(buf);
+                    self.slab_heap_bytes_used.fetch_sub(len, Ordering::AcqRel);
+                }
+                // Idempotent: a second release on the same heap_id is a no-op.
             }
         }
     }
+}
+
+/// Borrow the size-class slot referenced by a slab handle. Used by both
+/// `Primary` and `Large` paths in `get_buffer`.
+fn slot_slice(pools: &[Pool], pool_id: u16, slot_id: u16) -> &[u8] {
+    let pool_idx = usize::from(pool_id);
+    let slot_idx = usize::from(slot_id);
+    debug_assert!(pool_idx < pools.len(), "Invalid pool_id");
+    let pool = &pools[pool_idx];
+    debug_assert!(slot_idx < pool.slot_count, "Invalid slot_id");
+    let offset = slot_idx * pool.slot_size;
+    // SAFETY:
+    // 1. pool.data was allocated once during Pool::new and never freed
+    //    while Pool alive.
+    // 2. Slot is allocated (bitmap bit set) so slice lies within
+    //    initialized memory.
+    // 3. We only create an immutable slice (&[u8]), so concurrent
+    //    readers are allowed.
+    // 4. Offset math is bounded by slot_count and slot_size.
+    let data = unsafe { &*pool.data.get() };
+    &data[offset..offset + pool.slot_size]
 }
 
 impl Default for SlabPool {
@@ -461,6 +604,7 @@ impl Default for SlabPool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::qos::LargePoolConfig;
 
     #[test]
     fn test_handle_encoding() {
@@ -499,6 +643,78 @@ mod tests {
         let buf = pool.get_buffer(handle);
         assert_eq!(&buf[..payload.len()], payload);
         pool.release(handle);
+    }
+
+    #[test]
+    fn test_reserve_and_write_heap_fallback_when_primary_saturated() {
+        // Saturate the largest primary class (128 KB × 16 slots) and prove
+        // the 17th 100 KB allocation lands in the heap fallback tier with
+        // its bytes intact. Mirrors the LargeData_0 bench scenario (writer
+        // sends N > 16 samples of 100 KB, primary class exhausts, heap
+        // fallback must succeed instead of silently dropping).
+        let pool = SlabPool::new();
+        let mut primary_handles = Vec::new();
+        for _ in 0..16 {
+            let payload = vec![0u8; 100_000];
+            let (h, m) = pool
+                .reserve_and_write(&payload)
+                .expect("primary slot should be available");
+            assert_eq!(m, SlabMetric::Primary);
+            primary_handles.push(h);
+        }
+
+        let payload = vec![0xCDu8; 100_000];
+        let (h_heap, m_heap) = pool
+            .reserve_and_write(&payload)
+            .expect("heap fallback should succeed once primary is full");
+        assert_eq!(m_heap, SlabMetric::HeapFallback);
+
+        let buf = pool.get_buffer(h_heap);
+        assert_eq!(buf.len(), 100_000);
+        assert!(buf.iter().all(|&b| b == 0xCD));
+
+        pool.release(h_heap);
+        for h in primary_handles {
+            pool.release(h);
+        }
+    }
+
+    #[test]
+    fn test_reserve_and_write_heap_ceiling_enforced() {
+        // 1 MB heap ceiling: two 400 KB heap allocations should succeed,
+        // a third 400 KB allocation must fail without corrupting state.
+        let pool = SlabPool::with_policy(&MemoryPolicy {
+            large_pool: LargePoolConfig::default(),
+            max_heap_bytes: 1024 * 1024,
+        });
+        let mut primary_handles = Vec::new();
+        for _ in 0..16 {
+            let payload = vec![0u8; 100_000];
+            let (h, _m) = pool
+                .reserve_and_write(&payload)
+                .expect("primary slot should be available");
+            primary_handles.push(h);
+        }
+
+        let payload = vec![0u8; 400_000];
+        let (h1, m1) = pool
+            .reserve_and_write(&payload)
+            .expect("first heap allocation under ceiling");
+        let (h2, m2) = pool
+            .reserve_and_write(&payload)
+            .expect("second heap allocation under ceiling");
+        assert_eq!(m1, SlabMetric::HeapFallback);
+        assert_eq!(m2, SlabMetric::HeapFallback);
+
+        // Third 400 KB would push to 1.2 MB > 1 MB ceiling.
+        let blocked = pool.reserve_and_write(&payload);
+        assert!(blocked.is_none(), "ceiling must reject allocation");
+
+        pool.release(h1);
+        pool.release(h2);
+        for h in primary_handles {
+            pool.release(h);
+        }
     }
 
     #[test]

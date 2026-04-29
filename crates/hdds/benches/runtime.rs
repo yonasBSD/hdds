@@ -122,7 +122,11 @@ fn bench_indexring_push(c: &mut Criterion) {
                 }
             },
             |_| {
-                let entry = IndexEntry::new(seq.get(), SlabHandle::legacy_handle_to_primary(seq.get()), 0);
+                let entry = IndexEntry::new(
+                    seq.get(),
+                    SlabHandle::legacy_handle_to_primary(seq.get()),
+                    0,
+                );
                 seq.set(seq.get().wrapping_add(1));
                 let pushed = ring.push(black_box(entry));
                 debug_assert!(pushed);
@@ -145,7 +149,11 @@ fn bench_indexring_pop(c: &mut Criterion) {
         b.iter_batched(
             || {
                 if occupancy.get() == 0 {
-                    let entry = IndexEntry::new(seq.get(), SlabHandle::legacy_handle_to_primary(seq.get()), 0);
+                    let entry = IndexEntry::new(
+                        seq.get(),
+                        SlabHandle::legacy_handle_to_primary(seq.get()),
+                        0,
+                    );
                     seq.set(seq.get().wrapping_add(1));
                     let pushed = ring.push(entry);
                     debug_assert!(pushed);
@@ -206,7 +214,11 @@ fn bench_topicmerger_push_5subs(c: &mut Criterion) {
                 }
             },
             |_| {
-                let entry = IndexEntry::new(seq.get(), SlabHandle::legacy_handle_to_primary(seq.get()), 0);
+                let entry = IndexEntry::new(
+                    seq.get(),
+                    SlabHandle::legacy_handle_to_primary(seq.get()),
+                    0,
+                );
                 seq.set(seq.get().wrapping_add(1));
                 let pushed = merger.push(black_box(entry));
                 debug_assert!(pushed);

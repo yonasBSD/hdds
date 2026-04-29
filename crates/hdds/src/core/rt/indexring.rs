@@ -371,7 +371,11 @@ mod tests {
 
         // Fill ring (3 entries, since 1 slot reserved)
         for i in 0..3 {
-            assert!(ring.push(IndexEntry::new(i, SlabHandle::legacy_handle_to_primary(i), 100)));
+            assert!(ring.push(IndexEntry::new(
+                i,
+                SlabHandle::legacy_handle_to_primary(i),
+                100
+            )));
         }
 
         // Pop all
@@ -381,7 +385,11 @@ mod tests {
 
         // Push again (should wrap around)
         for i in 10..13 {
-            assert!(ring.push(IndexEntry::new(i, SlabHandle::legacy_handle_to_primary(i), 100)));
+            assert!(ring.push(IndexEntry::new(
+                i,
+                SlabHandle::legacy_handle_to_primary(i),
+                100
+            )));
         }
 
         // Pop again

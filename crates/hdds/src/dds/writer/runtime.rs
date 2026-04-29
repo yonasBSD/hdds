@@ -622,30 +622,38 @@ impl<T: DDS> DataWriter<T> {
         }
     }
 
-    /// Ultra-fast intra-process write path.
-    /// Bypasses RTPS framing, UDP transport, history cache, and heartbeats.
+    /// Intra-process write path: bypasses RTPS framing, UDP transport,
+    /// history cache, and heartbeats. Encodes into a heap-temporary
+    /// buffer that doubles on `BufferTooSmall` (up to 16 MB), then hands
+    /// the bytes to `reserve_and_write` which routes through the
+    /// primary, large, and heap fallback tiers in turn.
     fn write_intra_process_fast(&self, msg: &T, seq: u64, write_start_ns: u64) -> Result<()> {
-        // Reserve max-sized slab slot, encode directly into it, then commit
-        // the actual serialized length. Single copy, no intermediate buffer.
         let slab_pool = rt::get_slab_pool();
-        let max_size = 65536;
-        let (handle, slab_buf) = match slab_pool.reserve(max_size) {
-            Some((h, b)) => (h, b),
+
+        // Single encode per write() per DDS-XTypes v1.3 §7.6.3.1.
+        let version = self.effective_cdr_version();
+        const MAX_SERIALIZED_SIZE: usize = 16 * 1024 * 1024;
+        let (tmp_buf, serialized_len) = {
+            let mut size = 65_536usize;
+            loop {
+                let mut buf = vec![0u8; size];
+                match msg.encode(&mut buf, version) {
+                    Ok(len) => break (buf, len),
+                    Err(Error::BufferTooSmall) if size < MAX_SERIALIZED_SIZE => {
+                        size = (size * 2).min(MAX_SERIALIZED_SIZE);
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        };
+
+        let (handle, _metric) = match slab_pool.reserve_and_write(&tmp_buf[..serialized_len]) {
+            Some(value) => value,
             None => {
                 if let Some(m) = telemetry::get_metrics_opt() {
                     m.increment_would_block(1);
                 }
                 return Err(Error::WouldBlock);
-            }
-        };
-
-        // Single encode per write() per DDS-XTypes v1.3 §7.6.3.1.
-        let version = self.effective_cdr_version();
-        let serialized_len = match msg.encode(slab_buf, version) {
-            Ok(len) => len,
-            Err(e) => {
-                slab_pool.release(handle);
-                return Err(e);
             }
         };
 

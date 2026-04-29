@@ -289,6 +289,52 @@ impl Default for ResourceLimits {
     }
 }
 
+/// Secondary slab pool size classes for payloads that exceed the
+/// primary 14-class pool.
+///
+/// Empty `classes` disables the secondary pool entirely; allocations that
+/// outgrow the primary pool then fall through to the heap tier of the
+/// allocator.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LargePoolConfig {
+    /// `(slot_size, slot_count)` pairs preallocated at participant start.
+    pub classes: Vec<(usize, usize)>,
+}
+
+impl LargePoolConfig {
+    /// Preset sized for typical large-data workloads (video frames,
+    /// telemetry snapshots, small file transfers). Total prealloc 12 MB:
+    /// 512 KB * 8 = 4 MB, 2 MB * 4 = 8 MB.
+    pub fn typical_large_data() -> Self {
+        Self {
+            classes: vec![(524_288, 8), (2_097_152, 4)],
+        }
+    }
+}
+
+/// Allocation strategy for participant memory.
+///
+/// `ResourceLimits` answers "how much" (cache-wide bounds);
+/// `MemoryPolicy` answers "how" (which tiers exist and how much heap
+/// budget the fallback tier may consume).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MemoryPolicy {
+    /// Secondary pool for allocations larger than the primary classes.
+    /// Empty = disabled, heap fallback only.
+    pub large_pool: LargePoolConfig,
+    /// Maximum bytes the heap fallback tier is allowed to hold at any time.
+    pub max_heap_bytes: usize,
+}
+
+impl Default for MemoryPolicy {
+    fn default() -> Self {
+        Self {
+            large_pool: LargePoolConfig::default(),
+            max_heap_bytes: 16 * 1024 * 1024,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
