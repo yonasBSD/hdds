@@ -84,7 +84,7 @@ fn bench_ring_pop(c: &mut Criterion) {
 
         b.iter(|| {
             // Push then pop (simulates write->read flow)
-            let entry = IndexEntry::new(seq, SlabHandle(seq), 64);
+            let entry = IndexEntry::new(seq, SlabHandle::legacy_handle_to_primary(seq), 64);
             seq = seq.wrapping_add(1);
             ring.push(entry);
             let result = ring.pop();
@@ -150,7 +150,7 @@ fn bench_comparison(c: &mut Criterion) {
         let mut seq = 0u32;
 
         b.iter(|| {
-            let entry = IndexEntry::new(seq, SlabHandle(seq), 64);
+            let entry = IndexEntry::new(seq, SlabHandle::legacy_handle_to_primary(seq), 64);
             seq = seq.wrapping_add(1);
             ring.push(entry);
             let result = ring.pop();
@@ -207,7 +207,7 @@ fn bench_batch_throughput(c: &mut Criterion) {
                 b.iter(|| {
                     // Fill ring
                     for i in 0..size {
-                        ring.push(IndexEntry::new(i as u32, SlabHandle(i as u32), 64));
+                        ring.push(IndexEntry::new(i as u32, SlabHandle::legacy_handle_to_primary(i as u32), 64));
                     }
                     // Drain ring
                     let mut count = 0;

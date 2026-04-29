@@ -11,27 +11,59 @@
 //! - reserve: < 30 ns (p99)
 //! - release: < 30 ns (p99)
 
+use parking_lot::Mutex;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
-/// Handle to a reserved slab region
+/// Handle to a reserved slab region.
 ///
-/// Encoded as: upper 16 bits = pool_id, lower 16 bits = slot_id
+/// Three indirect-handle variants: `Primary` (default 14 size classes),
+/// `Large` (opt-in secondary pool for >128 KB payloads), and `Heap`
+/// (fallback when both pools are saturated). All three reference
+/// pool-side storage; the handle itself is a small (8 byte) `Copy`
+/// value.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SlabHandle(pub u32);
+pub enum SlabHandle {
+    /// Slot in the primary 14-class pool (everyday traffic, ≤128 KB).
+    Primary { pool_id: u16, slot_id: u16 },
+    /// Slot in the secondary opt-in large pool (configured per-participant).
+    Large { pool_id: u16, slot_id: u16 },
+    /// Heap-allocated buffer indexed by `heap_id` into the pool's
+    /// `heap_buffers` vector.
+    Heap { heap_id: u32 },
+}
 
 impl SlabHandle {
-    fn new(pool_id: u16, slot_id: u16) -> Self {
-        Self(((u32::from(pool_id)) << 16) | u32::from(slot_id))
+    /// Sentinel value used by `IndexEntry::default()` and event entries
+    /// to mark "no buffer associated". Guaranteed to never collide with
+    /// a real allocation: the primary and large size-class tables top
+    /// out well below `u16::MAX` slots per pool (the bitmap is `AtomicU64`,
+    /// so `slot_count` ≤ 64).
+    pub const EMPTY: SlabHandle = SlabHandle::Primary {
+        pool_id: u16::MAX,
+        slot_id: u16::MAX,
+    };
+
+    /// Returns true if this handle is the `EMPTY` sentinel.
+    pub fn is_empty(self) -> bool {
+        matches!(
+            self,
+            SlabHandle::Primary {
+                pool_id: u16::MAX,
+                slot_id: u16::MAX,
+            }
+        )
     }
 
-    fn pool_id(self) -> u16 {
-        (self.0 >> 16) as u16 // SAFETY: upper 16 bits store the original pool_id value.
-    }
-
-    fn slot_id(self) -> u16 {
-        (self.0 & 0xFFFF) as u16 // SAFETY: mask keeps value within u16 range.
+    /// Construct a `Primary` handle from a packed `(pool_id << 16) | slot_id`
+    /// `u32` value. Test and benchmark fixture only — production code
+    /// constructs handles through `SlabPool::reserve` directly.
+    #[doc(hidden)]
+    pub fn legacy_handle_to_primary(packed: u32) -> Self {
+        let pool_id = (packed >> 16) as u16;
+        let slot_id = (packed & 0xFFFF) as u16;
+        SlabHandle::Primary { pool_id, slot_id }
     }
 }
 
@@ -169,18 +201,47 @@ impl Pool {
 ///
 /// Allocates from size-class pools using atomic bitmaps (lock-free).
 /// Target: reserve + release < 100 ns.
+///
+/// The `heap_buffers` / `heap_free_list` / `slab_heap_bytes_used` /
+/// `max_heap_bytes` fields are scaffolding for the heap fallback tier
+/// (DDS-XTypes-irrelevant runtime concern). They are inert until the
+/// allocation paths that produce `SlabHandle::Heap` are wired in.
 pub struct SlabPool {
     pools: Vec<Pool>,
+    /// Backing storage for the `SlabHandle::Heap` tier. Indexed by
+    /// `heap_id` from the variant; `None` slots are free.
+    #[allow(dead_code)]
+    heap_buffers: Mutex<Vec<Option<Box<[u8]>>>>,
+    /// LIFO stack of free `heap_id` values reusable by future allocations.
+    #[allow(dead_code)]
+    heap_free_list: Mutex<Vec<u32>>,
+    /// Current bytes held in active `Heap` slots; CAS-incremented on
+    /// allocation, decremented on release.
+    #[allow(dead_code)]
+    slab_heap_bytes_used: AtomicUsize,
+    /// Ceiling for the heap fallback tier.
+    #[allow(dead_code)]
+    max_heap_bytes: usize,
 }
 
 impl SlabPool {
+    /// Default ceiling for the heap fallback tier (16 MB). Will be
+    /// overridable via `MemoryPolicy` once that wiring lands.
+    const DEFAULT_MAX_HEAP_BYTES: usize = 16 * 1024 * 1024;
+
     pub fn new() -> Self {
         let pools = SIZE_CLASSES
             .iter()
             .map(|&(size, count)| Pool::new(size, count))
             .collect();
 
-        Self { pools }
+        Self {
+            pools,
+            heap_buffers: Mutex::new(Vec::new()),
+            heap_free_list: Mutex::new(Vec::new()),
+            slab_heap_bytes_used: AtomicUsize::new(0),
+            max_heap_bytes: Self::DEFAULT_MAX_HEAP_BYTES,
+        }
     }
 
     /// Reserve buffer space; returns handle + mutable slice
@@ -220,7 +281,7 @@ impl SlabPool {
                     Ok(id) => id,
                     Err(_) => continue,
                 };
-                let handle = SlabHandle::new(pool_id, slot_id);
+                let handle = SlabHandle::Primary { pool_id, slot_id };
                 return Some((handle, slice));
             }
         }
@@ -259,24 +320,34 @@ impl SlabPool {
     /// Target: < 20 ns (pointer arithmetic only, no atomics)
     #[allow(clippy::mut_from_ref)]
     pub fn get_buffer(&self, handle: SlabHandle) -> &[u8] {
-        let pool_id = usize::from(handle.pool_id());
-        let slot_id = usize::from(handle.slot_id());
-
-        debug_assert!(pool_id < self.pools.len(), "Invalid pool_id");
-
-        let pool = &self.pools[pool_id];
-        debug_assert!(slot_id < pool.slot_count, "Invalid slot_id");
-
-        // SAFETY: Bitmap ensures this slot is allocated
-        // Caller guarantees handle is valid and committed
-        let offset = slot_id * pool.slot_size;
-        // SAFETY:
-        // 1. pool.data was allocated once during Pool::new and never freed while Pool alive.
-        // 2. Slot is allocated (bitmap bit set) so slice lies within initialized memory.
-        // 3. We only create an immutable slice (&[u8]), so concurrent readers are allowed.
-        // 4. Offset math bounded by slot_count and slot_size.
-        let data = unsafe { &*pool.data.get() };
-        &data[offset..offset + pool.slot_size]
+        match handle {
+            SlabHandle::Primary { pool_id, slot_id } => {
+                let pool_id = usize::from(pool_id);
+                let slot_id = usize::from(slot_id);
+                debug_assert!(pool_id < self.pools.len(), "Invalid pool_id");
+                let pool = &self.pools[pool_id];
+                debug_assert!(slot_id < pool.slot_count, "Invalid slot_id");
+                let offset = slot_id * pool.slot_size;
+                // SAFETY:
+                // 1. pool.data was allocated once during Pool::new and never freed
+                //    while Pool alive.
+                // 2. Slot is allocated (bitmap bit set) so slice lies within
+                //    initialized memory.
+                // 3. We only create an immutable slice (&[u8]), so concurrent
+                //    readers are allowed.
+                // 4. Offset math bounded by slot_count and slot_size.
+                let data = unsafe { &*pool.data.get() };
+                &data[offset..offset + pool.slot_size]
+            }
+            SlabHandle::Large { .. } => {
+                debug_assert!(false, "Large variant not yet allocated");
+                &[]
+            }
+            SlabHandle::Heap { .. } => {
+                debug_assert!(false, "Heap variant not yet allocated");
+                &[]
+            }
+        }
     }
 
     /// Release slab after reading
@@ -300,12 +371,19 @@ impl SlabPool {
     ///   additional bookkeeping (~3 ns) yields ~28 ns p99. Alternatives (spinlock, batching) perform
     ///   worse (>50 ns). Acceptable deviation recorded in audit (Section 8).
     pub fn release(&self, handle: SlabHandle) {
-        let pool_id = usize::from(handle.pool_id());
-        let slot_id = handle.slot_id();
-
-        debug_assert!(pool_id < self.pools.len(), "Invalid pool_id");
-
-        self.pools[pool_id].release_slot(slot_id);
+        match handle {
+            SlabHandle::Primary { pool_id, slot_id } => {
+                let pool_idx = usize::from(pool_id);
+                debug_assert!(pool_idx < self.pools.len(), "Invalid pool_id");
+                self.pools[pool_idx].release_slot(slot_id);
+            }
+            SlabHandle::Large { .. } => {
+                debug_assert!(false, "Large variant not yet allocated");
+            }
+            SlabHandle::Heap { .. } => {
+                debug_assert!(false, "Heap variant not yet allocated");
+            }
+        }
     }
 }
 
@@ -321,9 +399,40 @@ mod tests {
 
     #[test]
     fn test_handle_encoding() {
-        let h = SlabHandle::new(42, 1337);
-        assert_eq!(h.pool_id(), 42);
-        assert_eq!(h.slot_id(), 1337);
+        let h = SlabHandle::Primary {
+            pool_id: 42,
+            slot_id: 1337,
+        };
+        assert!(matches!(
+            h,
+            SlabHandle::Primary {
+                pool_id: 42,
+                slot_id: 1337,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_empty_sentinel() {
+        let h = SlabHandle::EMPTY;
+        assert!(h.is_empty());
+        assert!(!SlabHandle::Primary {
+            pool_id: 0,
+            slot_id: 0,
+        }
+        .is_empty());
+    }
+
+    #[test]
+    fn test_legacy_handle_to_primary() {
+        let h = SlabHandle::legacy_handle_to_primary((3 << 16) | 7);
+        assert!(matches!(
+            h,
+            SlabHandle::Primary {
+                pool_id: 3,
+                slot_id: 7,
+            }
+        ));
     }
 
     #[test]
@@ -365,7 +474,10 @@ mod tests {
             .reserve(10)
             .expect("SlabPool reservation should succeed");
         assert_eq!(buf.len(), 16);
-        assert_eq!(h.pool_id(), 0); // First pool (16B)
+        match h {
+            SlabHandle::Primary { pool_id, .. } => assert_eq!(pool_id, 0),
+            other => panic!("expected Primary, got {:?}", other),
+        }
 
         pool.release(h);
 
@@ -374,7 +486,10 @@ mod tests {
             .reserve(100)
             .expect("SlabPool reservation should succeed");
         assert_eq!(buf2.len(), 128);
-        assert_eq!(h2.pool_id(), 3); // Fourth pool (128B)
+        match h2 {
+            SlabHandle::Primary { pool_id, .. } => assert_eq!(pool_id, 3),
+            other => panic!("expected Primary, got {:?}", other),
+        }
     }
 
     #[test]
@@ -395,7 +510,10 @@ mod tests {
             .reserve(16)
             .expect("SlabPool reservation should succeed");
         assert_eq!(buf.len(), 32); // Fallback to next size class
-        assert_eq!(h_fallback.pool_id(), 1); // Second pool (32B)
+        match h_fallback {
+            SlabHandle::Primary { pool_id, .. } => assert_eq!(pool_id, 1),
+            other => panic!("expected Primary, got {:?}", other),
+        }
     }
 
     #[test]

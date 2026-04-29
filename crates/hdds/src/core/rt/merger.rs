@@ -301,7 +301,7 @@ mod tests {
         assert_eq!(merger.reader_count(), 1, "Reader count should still be 1");
 
         // Push entry - should only be delivered once
-        let entry = IndexEntry::new(1, SlabHandle(42), 100);
+        let entry = IndexEntry::new(1, SlabHandle::legacy_handle_to_primary(42), 100);
         assert!(merger.push(entry), "Push should succeed");
 
         // Only one entry in the ring (not two!)
@@ -330,7 +330,7 @@ mod tests {
         merger.add_reader(reader2);
 
         // Push entry via merger
-        let entry = IndexEntry::new(1, SlabHandle(42), 100);
+        let entry = IndexEntry::new(1, SlabHandle::legacy_handle_to_primary(42), 100);
         assert!(merger.push(entry), "Should push to at least one reader");
 
         // Both readers should have the entry (IndexRing now has interior mutability)

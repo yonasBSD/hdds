@@ -94,7 +94,7 @@ impl IndexEntry {
     pub fn new_event(seq: u32, event_data: u32) -> Self {
         Self {
             seq,
-            handle: SlabHandle(0),
+            handle: SlabHandle::EMPTY,
             len: 0,
             flags: 0,
             timestamp_ns: 0,
@@ -118,7 +118,7 @@ impl Default for IndexEntry {
     fn default() -> Self {
         Self {
             seq: 0,
-            handle: SlabHandle(0),
+            handle: SlabHandle::EMPTY,
             len: 0,
             flags: 0,
             timestamp_ns: 0,
@@ -311,12 +311,12 @@ mod tests {
     fn test_push_pop_basic() {
         let ring = IndexRing::with_capacity(16);
 
-        let entry = IndexEntry::new(1, SlabHandle(42), 100);
+        let entry = IndexEntry::new(1, SlabHandle::legacy_handle_to_primary(42), 100);
         assert!(ring.push(entry));
 
         let popped = ring.pop().expect("Pop should succeed after push");
         assert_eq!(popped.seq, 1);
-        assert_eq!(popped.handle, SlabHandle(42));
+        assert_eq!(popped.handle, SlabHandle::legacy_handle_to_primary(42));
         assert_eq!(popped.len, 100);
         assert!(popped.is_committed());
     }
@@ -334,12 +334,12 @@ mod tests {
 
         // Push 3 entries (capacity - 1, because one slot reserved)
         for i in 0..3 {
-            let entry = IndexEntry::new(i, SlabHandle(i), 100);
+            let entry = IndexEntry::new(i, SlabHandle::legacy_handle_to_primary(i), 100);
             assert!(ring.push(entry), "Failed to push entry {}", i);
         }
 
         // Next push should fail (ring full)
-        let entry = IndexEntry::new(99, SlabHandle(99), 100);
+        let entry = IndexEntry::new(99, SlabHandle::legacy_handle_to_primary(99), 100);
         assert!(!ring.push(entry), "Should fail when ring full");
     }
 
@@ -349,7 +349,7 @@ mod tests {
 
         // Push 5 entries
         for i in 0..5 {
-            let entry = IndexEntry::new(i, SlabHandle(i), i * 10);
+            let entry = IndexEntry::new(i, SlabHandle::legacy_handle_to_primary(i), i * 10);
             assert!(ring.push(entry));
         }
 
@@ -357,7 +357,7 @@ mod tests {
         for i in 0..5 {
             let popped = ring.pop().expect("Pop should succeed for pushed entries");
             assert_eq!(popped.seq, i);
-            assert_eq!(popped.handle, SlabHandle(i));
+            assert_eq!(popped.handle, SlabHandle::legacy_handle_to_primary(i));
         }
 
         // Ring should be empty now
@@ -371,7 +371,7 @@ mod tests {
 
         // Fill ring (3 entries, since 1 slot reserved)
         for i in 0..3 {
-            assert!(ring.push(IndexEntry::new(i, SlabHandle(i), 100)));
+            assert!(ring.push(IndexEntry::new(i, SlabHandle::legacy_handle_to_primary(i), 100)));
         }
 
         // Pop all
@@ -381,7 +381,7 @@ mod tests {
 
         // Push again (should wrap around)
         for i in 10..13 {
-            assert!(ring.push(IndexEntry::new(i, SlabHandle(i), 100)));
+            assert!(ring.push(IndexEntry::new(i, SlabHandle::legacy_handle_to_primary(i), 100)));
         }
 
         // Pop again
@@ -398,7 +398,7 @@ mod tests {
         // Push and pop 10,000 entries in sequence
         for i in 0..10000 {
             let seq = u32::try_from(i).expect("test sequence fits in u32");
-            let handle = SlabHandle(seq);
+            let handle = SlabHandle::legacy_handle_to_primary(seq);
             let len = u32::try_from(i * 10).expect("test payload length fits in u32");
             let entry = IndexEntry::new(seq, handle, len);
 
@@ -414,7 +414,7 @@ mod tests {
 
     #[test]
     fn test_committed_flag() {
-        let mut entry = IndexEntry::new(1, SlabHandle(1), 100);
+        let mut entry = IndexEntry::new(1, SlabHandle::legacy_handle_to_primary(1), 100);
         assert!(!entry.is_committed());
 
         entry.mark_committed();
