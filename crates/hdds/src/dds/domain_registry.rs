@@ -890,9 +890,9 @@ mod tests {
         // Write data through merger
         let slab_pool = get_slab_pool();
         let data = b"Hello intra-process!";
-        let (handle, buf) = slab_pool.reserve(data.len()).expect("slab reserve");
-        buf[..data.len()].copy_from_slice(data);
-        slab_pool.commit(handle, data.len());
+        let (handle, _metric) = slab_pool
+            .reserve_and_write(data)
+            .expect("slab reserve");
 
         let entry = IndexEntry {
             seq: 1,

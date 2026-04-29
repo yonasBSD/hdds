@@ -16,6 +16,21 @@ use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
+/// Allocation tier that produced a successful `reserve_and_write` call.
+///
+/// Used by the caller to bump the matching counter without forcing
+/// the pool itself to depend on the metrics layer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[allow(dead_code)]
+pub(crate) enum SlabMetric {
+    /// Reserved from the primary 14-class pool.
+    Primary,
+    /// Reserved from the secondary opt-in large pool.
+    Large,
+    /// Reserved from the heap fallback tier.
+    HeapFallback,
+}
+
 /// Handle to a reserved slab region.
 ///
 /// Three indirect-handle variants: `Primary` (default 14 size classes),
@@ -244,14 +259,20 @@ impl SlabPool {
         }
     }
 
-    /// Reserve buffer space; returns handle + mutable slice
+    /// Reserve buffer space; returns handle + mutable slice.
+    ///
+    /// Used by the intra-process write fast path that encodes the
+    /// payload directly into the slab buffer (single copy, no
+    /// intermediate `Vec`). Production code that already holds the
+    /// payload as `&[u8]` should call `reserve_and_write` instead.
     ///
     /// Finds the smallest size class >= len and attempts to allocate.
     /// Falls back to larger classes if smaller ones are full.
     ///
     /// # Returns
     /// - `Some((handle, slice))` on success
-    /// - `None` if all pools exhausted
+    /// - `None` if all primary pools exhausted (Large and Heap tiers
+    ///   are not consulted by this entry point)
     ///
     /// # Panics
     /// Never panics on valid input (all bounds checked).
@@ -289,28 +310,72 @@ impl SlabPool {
         None // All pools full
     }
 
-    /// Commit reserved space (mark written)
+    /// Reserve a slot in the appropriate pool tier and copy the payload
+    /// into it atomically. Returns the handle and which tier was used,
+    /// or `None` if every tier was exhausted.
     ///
-    /// **Architectural note:** SlabPool is a minimal memory allocator. "Committed" tracking
-    /// is handled at a higher level by IndexEntry.flags (COMMITTED_FLAG). This design keeps
-    /// SlabPool simple (allocate/deallocate) and pushes semantic state to the index layer.
+    /// Production write paths use this entry point. Stateful encoding
+    /// directly into a reserved buffer (where the payload is not known
+    /// upfront) keeps the legacy `reserve` pair.
     ///
-    /// This function exists for API completeness (reserve -> write -> commit -> release pattern)
-    /// but is intentionally a no-op. Writers should set IndexEntry.flags = COMMITTED_FLAG
-    /// after copying data to the slab buffer.
-    ///
-    /// See: `core::rt::indexring::COMMITTED_FLAG` for the actual committed tracking mechanism.
-    pub fn commit(&self, _handle: SlabHandle, _len: usize) {
-        // Intentional no-op: committed tracking done via IndexEntry.flags (see doc above)
+    /// The slot returned by `get_buffer(handle)` may be larger than
+    /// `payload.len()` for the `Primary` and `Large` tiers (size classes
+    /// round up). Consumers must track the logical length independently
+    /// (the runtime carries it on `IndexEntry::len`).
+    pub(crate) fn reserve_and_write(
+        &self,
+        payload: &[u8],
+    ) -> Option<(SlabHandle, SlabMetric)> {
+        if let Some(handle) = self.try_reserve_primary_and_copy(payload) {
+            return Some((handle, SlabMetric::Primary));
+        }
+
+        // Large and Heap tiers are wired in a follow-up commit; once
+        // active the primary pool returning `None` falls through to
+        // Tier 2 then Tier 3 instead of failing.
+        None
+    }
+
+    /// Walk the primary size classes from best-fit upward, reserve the
+    /// first available slot, and `copy_from_slice` the payload into it.
+    /// Returns `None` if every primary class is full.
+    fn try_reserve_primary_and_copy(&self, payload: &[u8]) -> Option<SlabHandle> {
+        let len = payload.len();
+        let start_idx = SIZE_CLASSES.iter().position(|&(size, _)| size >= len)?;
+
+        for pool_idx in start_idx..self.pools.len() {
+            if let Some((slot_id, slice)) = self.pools[pool_idx].try_reserve() {
+                slice[..len].copy_from_slice(payload);
+                let pool_id = match u16::try_from(pool_idx) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        // Defensive: SIZE_CLASSES has 14 entries today, so this
+                        // path is unreachable. If a future change pushes the
+                        // pool count past u16::MAX, the next class still fits
+                        // the same payload, so we release this slot and let
+                        // the loop try the next class instead of bailing.
+                        self.pools[pool_idx].release_slot(slot_id);
+                        continue;
+                    }
+                };
+                return Some(SlabHandle::Primary { pool_id, slot_id });
+            }
+        }
+
+        None
     }
 
     /// Get immutable buffer from handle (for reading)
     ///
-    /// Returns a slice to the committed buffer data.
+    /// Returns a slice to the buffer data backing the handle. The slice
+    /// length matches the size class slot, which may exceed the bytes
+    /// actually written; the runtime carries the logical length on
+    /// `IndexEntry::len` for callers that need to slice down.
     ///
     /// # Safety
     /// - Handle must be valid and currently allocated
-    /// - Buffer must have been committed via commit()
+    /// - Buffer must have been written by `reserve_and_write`, or by
+    ///   the caller after a `reserve` call returned the slice
     /// - Caller must ensure no concurrent writes to this handle
     ///
     /// # Panics
@@ -421,6 +486,19 @@ mod tests {
             slot_id: 0,
         }
         .is_empty());
+    }
+
+    #[test]
+    fn test_reserve_and_write_primary() {
+        let pool = SlabPool::new();
+        let payload = b"hello slab";
+        let (handle, metric) = pool
+            .reserve_and_write(payload)
+            .expect("primary tier should have capacity");
+        assert_eq!(metric, SlabMetric::Primary);
+        let buf = pool.get_buffer(handle);
+        assert_eq!(&buf[..payload.len()], payload);
+        pool.release(handle);
     }
 
     #[test]

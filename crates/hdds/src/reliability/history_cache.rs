@@ -157,10 +157,7 @@ impl HistoryCache {
     /// For unkeyed topics, use 0.
     pub fn insert_keyed(&self, seq: u64, payload: &[u8], instance_key: u64) -> Result<(), Error> {
         let len = payload.len();
-        let (handle, buf) = self.slabs.reserve(len).ok_or(Error::WouldBlock)?;
-
-        buf[..len].copy_from_slice(payload);
-        self.slabs.commit(handle, len);
+        let (handle, _metric) = self.slabs.reserve_and_write(payload).ok_or(Error::WouldBlock)?;
 
         let entry = CacheEntry {
             seq,

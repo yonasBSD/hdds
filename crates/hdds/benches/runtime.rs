@@ -90,14 +90,13 @@ fn bench_slabpool_release(c: &mut Criterion) {
     });
 }
 
-/// Benchmark: SlabPool reserve + commit + release cycle
+/// Benchmark: SlabPool reserve + release cycle
 /// Target: < 150 ns total
 fn bench_slabpool_full_cycle(c: &mut Criterion) {
     c.bench_function("slabpool_full_cycle", |b| {
         let pool = SlabPool::new();
         b.iter(|| {
             let (handle, _) = pool.reserve(black_box(256)).unwrap();
-            pool.commit(handle, 256);
             pool.release(handle);
         })
     });
@@ -235,7 +234,6 @@ fn bench_full_message_flow(c: &mut Criterion) {
         b.iter(|| {
             // Writer path: reserve buffer
             let (handle, _buf) = pool.reserve(black_box(256)).unwrap();
-            pool.commit(handle, 256);
 
             // Enqueue to ring
             let entry = IndexEntry::new(1, handle, 256);

@@ -352,16 +352,13 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
         };
 
         let slab_pool = rt::get_slab_pool();
-        let (handle, slab_buf) = match slab_pool.reserve(serialized_len) {
-            Some((h, b)) => (h, b),
+        let (handle, _metric) = match slab_pool.reserve_and_write(&tmp_buf[..serialized_len]) {
+            Some(value) => value,
             None => {
                 log::debug!("[READER-SUB] slab_pool exhausted");
                 return;
             }
         };
-
-        slab_buf[..serialized_len].copy_from_slice(&tmp_buf[..serialized_len]);
-        slab_pool.commit(handle, serialized_len);
 
         let seq = {
             let mut guard = match self.seq_window.lock() {

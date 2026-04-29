@@ -190,9 +190,9 @@ fn take_deduplicates_replay_scenario() {
         let len = msg
             .encode(&mut buf, crate::dds::CdrVersion::Xcdr2)
             .expect("encode should succeed");
-        let (handle, slab_buf) = slab_pool.reserve(len).expect("slab reserve");
-        slab_buf[..len].copy_from_slice(&buf[..len]);
-        slab_pool.commit(handle, len);
+        let (handle, _metric) = slab_pool
+            .reserve_and_write(&buf[..len])
+            .expect("slab reserve");
         // Test uses 256-byte buffer, but clamp defensively per IndexEntry protocol
         let entry = IndexEntry::new(seq, handle, len.min(u32::MAX as usize) as u32);
         ring.push(entry);

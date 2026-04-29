@@ -648,7 +648,6 @@ impl<T: DDS> DataWriter<T> {
                 return Err(e);
             }
         };
-        slab_pool.commit(handle, serialized_len);
 
         let seq_u32 = match u32::try_from(seq) {
             Ok(v) => v,
@@ -707,8 +706,8 @@ impl<T: DDS> DataWriter<T> {
         cdr_version: crate::dds::CdrVersion,
     ) -> Result<(rt::IndexEntry, rt::SlabHandle)> {
         let slab_pool = rt::get_slab_pool();
-        let (handle, slab_buf) = match slab_pool.reserve(serialized_len) {
-            Some((h, b)) => (h, b),
+        let (handle, _metric) = match slab_pool.reserve_and_write(&payload[..serialized_len]) {
+            Some(value) => value,
             None => {
                 if let Some(m) = telemetry::get_metrics_opt() {
                     m.increment_would_block(1);
@@ -716,9 +715,6 @@ impl<T: DDS> DataWriter<T> {
                 return Err(Error::WouldBlock);
             }
         };
-
-        slab_buf[..serialized_len].copy_from_slice(payload);
-        slab_pool.commit(handle, serialized_len);
 
         let seq_u32 = match u32::try_from(seq) {
             Ok(value) => value,
