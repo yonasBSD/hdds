@@ -7,7 +7,6 @@
 //! matcher, QoS, and telemetry events.
 
 use crate::core::rt::indexring::{IndexEntry, IndexRing};
-use crate::core::rt::slabpool::SlabHandle;
 use std::convert::TryFrom;
 use std::sync::{Arc, Mutex};
 
@@ -112,7 +111,7 @@ impl Hub {
     ///
     /// Encoding scheme:
     /// - seq: event type (0=OnMatch, 1=OnUnmatch, 2=OnIncompatibleQos, 3=SystemStall)
-    /// - handle: upper 16 bits = writer_id/reason, lower 16 bits = reader_id
+    /// - event_data: upper 16 bits = writer_id/reason, lower 16 bits = reader_id
     pub fn encode_event(event: Event) -> IndexEntry {
         let (seq, writer_or_reason, reader_id) = match event {
             Event::OnMatch {
@@ -127,19 +126,15 @@ impl Hub {
             Event::SystemStall => (3, 0, 0),
         };
 
-        IndexEntry::new(
-            seq,
-            SlabHandle((writer_or_reason << 16) | reader_id),
-            0, // len unused for events
-        )
+        IndexEntry::new_event(seq, (writer_or_reason << 16) | reader_id)
     }
 
     /// Decode IndexEntry back to Event
     ///
     /// Used by subscribers to decode events from ring.pop().
     pub fn decode_event(entry: IndexEntry) -> Event {
-        let writer_or_reason = entry.handle.0 >> 16;
-        let reader_id = entry.handle.0 & 0xFFFF;
+        let writer_or_reason = entry.event_data >> 16;
+        let reader_id = entry.event_data & 0xFFFF;
 
         match entry.seq {
             0 => Event::OnMatch {

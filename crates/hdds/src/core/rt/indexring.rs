@@ -20,6 +20,14 @@ const COMMITTED_FLAG: u8 = 0x01;
 
 /// Entry in a SPSC ring (sequence + slab handle + length + flags + timestamp
 /// + CDR version selected at the write side per DDS-XTypes v1.3 §7.6.3.1).
+///
+/// Two entry shapes share this struct:
+/// - **Data entries** populate `seq`, `handle`, `len`, `flags`,
+///   `timestamp_ns`, `cdr_version`, and leave `event_data` zero.
+/// - **Event entries** (constructed via `new_event`) populate `seq` (event
+///   tag) and `event_data` (packed event payload), and leave `handle`,
+///   `len`, `timestamp_ns` zero. Consumers of event entries must read
+///   `event_data` only — `handle` and `len` carry no meaning.
 #[derive(Debug, Clone, Copy)]
 pub struct IndexEntry {
     pub seq: u32,                // sequence number
@@ -28,6 +36,7 @@ pub struct IndexEntry {
     pub flags: u8,               // COMMITTED flag (bit 0)
     pub timestamp_ns: u64,       // write timestamp for latency measurement
     pub cdr_version: CdrVersion, // encoding version used for the payload
+    pub event_data: u32,         // 32-bit hub event payload (0 for data entries)
 }
 
 impl IndexEntry {
@@ -40,6 +49,7 @@ impl IndexEntry {
             flags: 0, // Not committed yet
             timestamp_ns: 0,
             cdr_version: CdrVersion::Xcdr2,
+            event_data: 0,
         }
     }
 
@@ -52,6 +62,7 @@ impl IndexEntry {
             flags: 0,
             timestamp_ns,
             cdr_version: CdrVersion::Xcdr2,
+            event_data: 0,
         }
     }
 
@@ -71,6 +82,24 @@ impl IndexEntry {
             flags: 0,
             timestamp_ns,
             cdr_version,
+            event_data: 0,
+        }
+    }
+
+    /// Create a hub-event entry. `seq` carries the event tag (per
+    /// `core::rt::hub::Event` / `engine::hub::Event` encoding) and
+    /// `event_data` carries the packed payload. The slab handle and
+    /// length are zero because event entries do not reference slab
+    /// storage.
+    pub fn new_event(seq: u32, event_data: u32) -> Self {
+        Self {
+            seq,
+            handle: SlabHandle(0),
+            len: 0,
+            flags: 0,
+            timestamp_ns: 0,
+            cdr_version: CdrVersion::Xcdr2,
+            event_data,
         }
     }
 
@@ -94,6 +123,7 @@ impl Default for IndexEntry {
             flags: 0,
             timestamp_ns: 0,
             cdr_version: CdrVersion::Xcdr2,
+            event_data: 0,
         }
     }
 }

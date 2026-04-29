@@ -396,6 +396,8 @@
             len: data.len() as u32,
             flags: 0x01,
             timestamp_ns: 0,
+            cdr_version: crate::dds::CdrVersion::Xcdr2,
+            event_data: 0,
         };
 
         let push_ok = writer_merger.push(entry);

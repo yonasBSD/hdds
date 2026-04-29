@@ -409,6 +409,7 @@ impl<T: DDS> crate::engine::Subscriber for ReaderSubscriber<T> {
             flags: 0x01,
             cdr_version: version,
             timestamp_ns: current_time_ns(),
+            event_data: 0,
         };
 
         if self.ring.push(entry) {

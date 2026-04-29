@@ -672,6 +672,7 @@ impl<T: DDS> DataWriter<T> {
             flags: 0x01, // COMMITTED
             timestamp_ns: write_start_ns,
             cdr_version: version,
+            event_data: 0,
         };
 
         let merger_success = self.merger.push(entry);
@@ -756,6 +757,7 @@ impl<T: DDS> DataWriter<T> {
             flags: 0x01,
             timestamp_ns: write_start_ns,
             cdr_version,
+            event_data: 0,
         };
 
         Ok((entry, handle))
