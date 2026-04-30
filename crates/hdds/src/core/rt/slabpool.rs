@@ -286,6 +286,16 @@ impl SlabPool {
         &self.metrics
     }
 
+    /// Benchmark fixture that mirrors `reserve_and_write` under a
+    /// stable public surface. Returns the handle only (the tier tag
+    /// would force `SlabMetric` to be public). Use only from
+    /// `crates/hdds/benches/`; production code calls
+    /// `reserve_and_write` directly.
+    #[doc(hidden)]
+    pub fn bench_reserve_and_write(&self, payload: &[u8]) -> Option<SlabHandle> {
+        self.reserve_and_write(payload).map(|(handle, _)| handle)
+    }
+
     /// Reserve buffer space; returns handle + mutable slice.
     ///
     /// Used by the intra-process write fast path that encodes the

@@ -35,6 +35,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, BatchSize, Criterion};
 use hdds::core::rt::{IndexEntry, IndexRing, MergerReader, SlabHandle, SlabPool, TopicMerger};
+use hdds::qos::{LargePoolConfig, MemoryPolicy};
 use std::cell::Cell;
 use std::sync::Arc;
 
@@ -260,13 +261,115 @@ fn bench_full_message_flow(c: &mut Criterion) {
     });
 }
 
+/// Benchmark: SlabPool::reserve_and_write primary-hit (256B).
+///
+/// Primary-hit regression guard for the SlabHandle enum migration. The
+/// allocation path goes through Tier 1 (primary 14-class pool) and the
+/// returned handle is the `SlabHandle::Primary { pool_id, slot_id }`
+/// variant. Compare against `slabpool_reserve_256b` (the streaming API
+/// retained for write_intra_process_fast) to surface any enum-dispatch
+/// regression versus the legacy struct(u32) layout.
+fn bench_slabpool_reserve_and_write_primary_256b(c: &mut Criterion) {
+    let pool = SlabPool::new();
+    let payload = vec![0xABu8; 256];
+    c.bench_function("slabpool_reserve_and_write_primary_256b", |b| {
+        b.iter(|| {
+            let handle = pool.bench_reserve_and_write(black_box(&payload)).unwrap();
+            pool.release(handle);
+        })
+    });
+}
+
+/// Benchmark: SlabPool::reserve_and_write primary-hit at 1 KB.
+fn bench_slabpool_reserve_and_write_primary_1kb(c: &mut Criterion) {
+    let pool = SlabPool::new();
+    let payload = vec![0xABu8; 1024];
+    c.bench_function("slabpool_reserve_and_write_primary_1kb", |b| {
+        b.iter(|| {
+            let handle = pool.bench_reserve_and_write(black_box(&payload)).unwrap();
+            pool.release(handle);
+        })
+    });
+}
+
+/// Benchmark: SlabPool::reserve_and_write primary-hit at 4 KB.
+fn bench_slabpool_reserve_and_write_primary_4kb(c: &mut Criterion) {
+    let pool = SlabPool::new();
+    let payload = vec![0xABu8; 4096];
+    c.bench_function("slabpool_reserve_and_write_primary_4kb", |b| {
+        b.iter(|| {
+            let handle = pool.bench_reserve_and_write(black_box(&payload)).unwrap();
+            pool.release(handle);
+        })
+    });
+}
+
+/// Benchmark: SlabPool::reserve_and_write primary-hit at 16 KB.
+fn bench_slabpool_reserve_and_write_primary_16kb(c: &mut Criterion) {
+    let pool = SlabPool::new();
+    let payload = vec![0xABu8; 16_384];
+    c.bench_function("slabpool_reserve_and_write_primary_16kb", |b| {
+        b.iter(|| {
+            let handle = pool.bench_reserve_and_write(black_box(&payload)).unwrap();
+            pool.release(handle);
+        })
+    });
+}
+
+/// Benchmark: SlabPool::reserve_and_write large-hit (256 KB).
+///
+/// 200 KB payload exceeds the 128 KB primary ceiling and lands in the
+/// secondary `Large` tier configured with a 256 KB class.
+fn bench_slabpool_reserve_and_write_large_200kb(c: &mut Criterion) {
+    let policy = MemoryPolicy {
+        large_pool: LargePoolConfig {
+            classes: vec![(262_144, 8)],
+        },
+        max_heap_bytes: 16 * 1024 * 1024,
+    };
+    let pool = SlabPool::with_policy(&policy);
+    let payload = vec![0xCDu8; 200_000];
+    c.bench_function("slabpool_reserve_and_write_large_200kb", |b| {
+        b.iter(|| {
+            let handle = pool.bench_reserve_and_write(black_box(&payload)).unwrap();
+            pool.release(handle);
+        })
+    });
+}
+
+/// Benchmark: SlabPool::reserve_and_write heap-fallback (200 KB) without
+/// secondary pool. The allocation always reaches Tier 3 because the
+/// payload exceeds the 128 KB primary ceiling and the large pool is
+/// disabled. `Box::new_uninit_slice` + `copy_nonoverlapping` are the
+/// hot operations under measurement.
+fn bench_slabpool_reserve_and_write_heap_200kb(c: &mut Criterion) {
+    let policy = MemoryPolicy {
+        large_pool: LargePoolConfig::default(),
+        max_heap_bytes: 64 * 1024 * 1024,
+    };
+    let pool = SlabPool::with_policy(&policy);
+    let payload = vec![0xEFu8; 200_000];
+    c.bench_function("slabpool_reserve_and_write_heap_200kb", |b| {
+        b.iter(|| {
+            let handle = pool.bench_reserve_and_write(black_box(&payload)).unwrap();
+            pool.release(handle);
+        })
+    });
+}
+
 criterion_group!(
     slabpool_benches,
     bench_slabpool_reserve_16b,
     bench_slabpool_reserve_256b,
     bench_slabpool_reserve_1kb,
     bench_slabpool_release,
-    bench_slabpool_full_cycle
+    bench_slabpool_full_cycle,
+    bench_slabpool_reserve_and_write_primary_256b,
+    bench_slabpool_reserve_and_write_primary_1kb,
+    bench_slabpool_reserve_and_write_primary_4kb,
+    bench_slabpool_reserve_and_write_primary_16kb,
+    bench_slabpool_reserve_and_write_large_200kb,
+    bench_slabpool_reserve_and_write_heap_200kb,
 );
 
 criterion_group!(
