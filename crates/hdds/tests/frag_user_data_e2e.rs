@@ -86,3 +86,79 @@ fn test_100kb_sample_udp_roundtrip() {
         "payload corrupted during reassembly"
     );
 }
+
+#[test]
+fn test_large_data_regression_above_primary_pool_capacity() {
+    // LargeData_0 regression test, per design §6 #2.
+    //
+    // Pre-fix: the slab pool's largest primary class held 16 slots of
+    // 128 KB. Beyond the 16th 100 KB sample the cache silently dropped
+    // inserts and ACKNACK-driven retransmits would log "0 samples,
+    // 1 gaps" forever. With the heap fallback active the cache must
+    // accept N > 16 samples and the subscriber must receive them all.
+    const PAYLOAD_SIZE: usize = 100_000;
+    const SAMPLE_COUNT: u32 = 20;
+    const DOMAIN: u32 = 78;
+
+    let pub_part = Participant::builder("ld0_pub")
+        .domain_id(DOMAIN)
+        .with_transport(TransportMode::UdpMulticast)
+        .build()
+        .expect("publisher participant");
+    let sub_part = Participant::builder("ld0_sub")
+        .domain_id(DOMAIN)
+        .with_transport(TransportMode::UdpMulticast)
+        .build()
+        .expect("subscriber participant");
+
+    thread::sleep(Duration::from_millis(500));
+
+    let writer = pub_part
+        .topic::<BigBlob>("LargeDataTopic_LD0")
+        .expect("writer topic")
+        .writer()
+        .qos(QoS::reliable().keep_all())
+        .build()
+        .expect("writer");
+    let reader = sub_part
+        .topic::<BigBlob>("LargeDataTopic_LD0")
+        .expect("reader topic")
+        .reader()
+        .qos(QoS::reliable().keep_all())
+        .build()
+        .expect("reader");
+
+    thread::sleep(Duration::from_millis(500));
+
+    for id in 0..SAMPLE_COUNT {
+        let sample = BigBlob {
+            id,
+            data: vec![0xABu8; PAYLOAD_SIZE],
+        };
+        writer
+            .write(&sample)
+            .unwrap_or_else(|e| panic!("write sample {id}: {e:?}"));
+    }
+
+    // Reliable transport guarantees at-least-once delivery, so the reader
+    // may surface retransmits as duplicate ids. The test asserts that the
+    // set of distinct ids covers the full 0..SAMPLE_COUNT range.
+    let mut received_ids: std::collections::BTreeSet<u32> = std::collections::BTreeSet::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while std::time::Instant::now() < deadline && received_ids.len() < SAMPLE_COUNT as usize {
+        match reader.take() {
+            Ok(Some(msg)) => {
+                assert_eq!(msg.data.len(), PAYLOAD_SIZE, "sample {} truncated", msg.id);
+                received_ids.insert(msg.id);
+            }
+            Ok(None) | Err(_) => thread::sleep(Duration::from_millis(50)),
+        }
+    }
+
+    let received: Vec<u32> = received_ids.into_iter().collect();
+    let expected: Vec<u32> = (0..SAMPLE_COUNT).collect();
+    assert_eq!(
+        received, expected,
+        "expected {SAMPLE_COUNT} distinct samples, received {received:?}",
+    );
+}

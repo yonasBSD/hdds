@@ -646,6 +646,81 @@ mod tests {
     }
 
     #[test]
+    fn test_reserve_and_write_primary_tier() {
+        // Three-path integration test, per design §6 #1 — small payload
+        // must land in the Primary tier without consulting Large or Heap.
+        let pool = SlabPool::new();
+        let payload = vec![0xABu8; 256];
+        let (handle, metric) = pool
+            .reserve_and_write(&payload)
+            .expect("primary tier should accept a 256-byte payload");
+        assert_eq!(metric, SlabMetric::Primary);
+        let buf = pool.get_buffer(handle);
+        assert_eq!(&buf[..payload.len()], payload.as_slice());
+        pool.release(handle);
+    }
+
+    #[test]
+    fn test_reserve_and_write_large_tier() {
+        // Three-path integration test, per design §6 #1 — payload that
+        // exceeds the primary 128 KB ceiling lands in the Large tier when
+        // it is configured, not in Heap fallback.
+        //
+        // Custom Large config (single 256 KB class × 2 slots) keeps the
+        // calibration robust against future SIZE_CLASSES changes; the
+        // 200 KB payload picks this class regardless of primary layout.
+        let policy = MemoryPolicy {
+            large_pool: LargePoolConfig {
+                classes: vec![(262_144, 2)],
+            },
+            max_heap_bytes: 16 * 1024 * 1024,
+        };
+        let pool = SlabPool::with_policy(&policy);
+        let payload = vec![0xCDu8; 200_000];
+        let (handle, metric) = pool
+            .reserve_and_write(&payload)
+            .expect("large tier should accept a 200 KB payload");
+        assert_eq!(metric, SlabMetric::Large);
+        let buf = pool.get_buffer(handle);
+        assert_eq!(&buf[..payload.len()], payload.as_slice());
+        pool.release(handle);
+    }
+
+    #[test]
+    fn test_reserve_and_write_heap_fallback_after_large_saturated() {
+        // Three-path integration test, per design §6 #1 — payload that
+        // outgrows both the Primary and the Large tiers must succeed via
+        // Heap fallback, not silently drop.
+        //
+        // Custom Large config (single 256 KB class × 2 slots, total 512 KB)
+        // saturates fast; the third 200 KB allocation must reach Heap.
+        let policy = MemoryPolicy {
+            large_pool: LargePoolConfig {
+                classes: vec![(262_144, 2)],
+            },
+            max_heap_bytes: 4 * 1024 * 1024,
+        };
+        let pool = SlabPool::with_policy(&policy);
+        let payload = vec![0xEFu8; 200_000];
+
+        let (h1, m1) = pool.reserve_and_write(&payload).expect("first large slot");
+        let (h2, m2) = pool.reserve_and_write(&payload).expect("second large slot");
+        assert_eq!(m1, SlabMetric::Large);
+        assert_eq!(m2, SlabMetric::Large);
+
+        let (h3, m3) = pool
+            .reserve_and_write(&payload)
+            .expect("heap fallback after Large saturation");
+        assert_eq!(m3, SlabMetric::HeapFallback);
+        let buf = pool.get_buffer(h3);
+        assert_eq!(&buf[..payload.len()], payload.as_slice());
+
+        pool.release(h1);
+        pool.release(h2);
+        pool.release(h3);
+    }
+
+    #[test]
     fn test_reserve_and_write_heap_fallback_when_primary_saturated() {
         // Saturate the largest primary class (128 KB × 16 slots) and prove
         // the 17th 100 KB allocation lands in the heap fallback tier with
