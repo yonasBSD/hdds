@@ -6,11 +6,13 @@
 pub mod indexring;
 pub mod merger;
 pub mod slabpool;
+pub mod slabpool_metrics;
 pub mod waitset;
 
 pub use indexring::{IndexEntry, IndexRing};
 pub use merger::{MergerReader, TopicMerger};
 pub use slabpool::{SlabHandle, SlabPool};
+pub use slabpool_metrics::SlabPoolMetrics;
 pub use waitset::{
     WaitsetDriver, WaitsetRegistration, WaitsetSignal, WaitsetWaitError, WAITSET_DEFAULT_MAX_SLOTS,
 };

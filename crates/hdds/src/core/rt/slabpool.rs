@@ -11,13 +11,14 @@
 //! - reserve: < 30 ns (p99)
 //! - release: < 30 ns (p99)
 
+use crate::core::rt::slabpool_metrics::SlabPoolMetrics;
 use crate::qos::MemoryPolicy;
 use parking_lot::Mutex;
 use std::borrow::Cow;
 use std::cell::UnsafeCell;
 use std::convert::TryFrom;
 use std::mem::MaybeUninit;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// Allocation tier that produced a successful `reserve_and_write` call.
 ///
@@ -239,9 +240,10 @@ pub struct SlabPool {
     large_pools: Vec<Pool>,
     /// Heap fallback storage; mutated under a single mutex.
     heap_store: Mutex<HeapStore>,
-    /// Current bytes held in active `Heap` slots; incremented under CAS
-    /// before allocation, decremented on release.
-    slab_heap_bytes_used: AtomicUsize,
+    /// Allocation counters and the heap-bytes gauge. The
+    /// `heap_bytes_used` field is the CAS-protected accountant for
+    /// `SlabHandle::Heap` allocations.
+    metrics: SlabPoolMetrics,
     /// Ceiling for the heap fallback tier (per `MemoryPolicy.max_heap_bytes`).
     max_heap_bytes: usize,
 }
@@ -273,9 +275,15 @@ impl SlabPool {
                 buffers: Vec::new(),
                 free_list: Vec::new(),
             }),
-            slab_heap_bytes_used: AtomicUsize::new(0),
+            metrics: SlabPoolMetrics::new(),
             max_heap_bytes: policy.max_heap_bytes,
         }
+    }
+
+    /// Snapshot accessor for the pool's allocation counters.
+    #[must_use]
+    pub fn metrics(&self) -> &SlabPoolMetrics {
+        &self.metrics
     }
 
     /// Reserve buffer space; returns handle + mutable slice.
@@ -343,13 +351,25 @@ impl SlabPool {
     /// (the runtime carries it on `IndexEntry::len`).
     pub(crate) fn reserve_and_write(&self, payload: &[u8]) -> Option<(SlabHandle, SlabMetric)> {
         if let Some(handle) = self.try_reserve_primary_and_copy(payload) {
+            self.metrics
+                .primary_hit_total
+                .fetch_add(1, Ordering::Relaxed);
             return Some((handle, SlabMetric::Primary));
         }
         if let Some(handle) = self.try_reserve_large_and_copy(payload) {
+            self.metrics.large_hit_total.fetch_add(1, Ordering::Relaxed);
             return Some((handle, SlabMetric::Large));
         }
-        self.try_reserve_heap_and_copy(payload)
-            .map(|h| (h, SlabMetric::HeapFallback))
+        if let Some(handle) = self.try_reserve_heap_and_copy(payload) {
+            self.metrics
+                .heap_fallback_total
+                .fetch_add(1, Ordering::Relaxed);
+            return Some((handle, SlabMetric::HeapFallback));
+        }
+        self.metrics
+            .insert_dropped_total
+            .fetch_add(1, Ordering::Relaxed);
+        None
     }
 
     /// Walk the primary size classes from best-fit upward, reserve the
@@ -423,18 +443,19 @@ impl SlabPool {
     fn try_reserve_heap_and_copy(&self, payload: &[u8]) -> Option<SlabHandle> {
         let len = payload.len();
 
-        // Atomic accounting (CAS-loop). On success, `slab_heap_bytes_used`
+        // Atomic accounting (CAS-loop). On success, `metrics.heap_bytes_used`
         // has been incremented by `len` and the caller is responsible for
         // either publishing a Heap handle (matched by a future `release`
         // that decrements) or rolling back via `fetch_sub` on failure.
         loop {
-            let prev = self.slab_heap_bytes_used.load(Ordering::Acquire);
+            let prev = self.metrics.heap_bytes_used.load(Ordering::Acquire);
             let next = prev.checked_add(len)?;
             if next > self.max_heap_bytes {
                 return None;
             }
             if self
-                .slab_heap_bytes_used
+                .metrics
+                .heap_bytes_used
                 .compare_exchange(prev, next, Ordering::AcqRel, Ordering::Acquire)
                 .is_ok()
             {
@@ -468,7 +489,9 @@ impl SlabPool {
                     Err(_) => {
                         // Heap-id space exhausted; roll back the accounting
                         // and surface as exhaustion to the caller.
-                        self.slab_heap_bytes_used.fetch_sub(len, Ordering::AcqRel);
+                        self.metrics
+                            .heap_bytes_used
+                            .fetch_sub(len, Ordering::AcqRel);
                         return None;
                     }
                 };
@@ -566,7 +589,9 @@ impl SlabPool {
                 if let Some(buf) = taken {
                     let len = buf.len();
                     drop(buf);
-                    self.slab_heap_bytes_used.fetch_sub(len, Ordering::AcqRel);
+                    self.metrics
+                        .heap_bytes_used
+                        .fetch_sub(len, Ordering::AcqRel);
                 }
                 // Idempotent: a second release on the same heap_id is a no-op.
             }
@@ -752,6 +777,80 @@ mod tests {
         for h in primary_handles {
             pool.release(h);
         }
+    }
+
+    #[test]
+    fn test_heap_budget_exhaustion_increments_drop_counter() {
+        // Test plan §6 #3: when reserve_and_write fails at every tier
+        // (heap budget exhausted in this case), the drop counter must
+        // increment. The warn! emission is asserted by inspection of
+        // the production code path, not by a captured log assertion
+        // (no log-capture crate is currently authorised in workspace
+        // dev-dependencies).
+        let policy = MemoryPolicy {
+            large_pool: LargePoolConfig::default(),
+            max_heap_bytes: 1024 * 1024,
+        };
+        let pool = SlabPool::with_policy(&policy);
+        let mut primary_handles = Vec::new();
+        for _ in 0..16 {
+            let payload = vec![0u8; 100_000];
+            let (h, _m) = pool
+                .reserve_and_write(&payload)
+                .expect("primary slot should be available");
+            primary_handles.push(h);
+        }
+        let payload = vec![0u8; 800_000];
+        let (h_heap, _) = pool
+            .reserve_and_write(&payload)
+            .expect("first heap allocation under ceiling");
+
+        let drops_before = pool.metrics().insert_dropped_total.load(Ordering::Relaxed);
+        let overflow = vec![0u8; 800_000];
+        assert!(
+            pool.reserve_and_write(&overflow).is_none(),
+            "heap budget exhausted; reserve_and_write must return None"
+        );
+        let drops_after = pool.metrics().insert_dropped_total.load(Ordering::Relaxed);
+        assert_eq!(
+            drops_after,
+            drops_before + 1,
+            "insert_dropped_total must increment on full-tier exhaustion",
+        );
+
+        pool.release(h_heap);
+        for h in primary_handles {
+            pool.release(h);
+        }
+    }
+
+    #[test]
+    fn test_reserve_and_write_metrics_per_tier() {
+        // Each tier hit should bump its own counter, not the others.
+        let policy = MemoryPolicy {
+            large_pool: LargePoolConfig {
+                classes: vec![(262_144, 2)],
+            },
+            max_heap_bytes: 4 * 1024 * 1024,
+        };
+        let pool = SlabPool::with_policy(&policy);
+        let (primary_h, _) = pool.reserve_and_write(&[0u8; 256]).expect("primary");
+        let (large_h, _) = pool.reserve_and_write(&[0u8; 200_000]).expect("large 1");
+        let (large_h2, _) = pool.reserve_and_write(&[0u8; 200_000]).expect("large 2");
+        let (heap_h, _) = pool
+            .reserve_and_write(&[0u8; 200_000])
+            .expect("heap fallback");
+
+        let (primary, large, heap, dropped, _used) = pool.metrics().snapshot();
+        assert_eq!(primary, 1);
+        assert_eq!(large, 2);
+        assert_eq!(heap, 1);
+        assert_eq!(dropped, 0);
+
+        pool.release(primary_h);
+        pool.release(large_h);
+        pool.release(large_h2);
+        pool.release(heap_h);
     }
 
     #[test]
