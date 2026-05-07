@@ -40,6 +40,10 @@ pub(super) struct WriterNackHandler {
     metrics: Arc<ReliableMetrics>,
     gap_tx: Mutex<GapTx>,
     rtps_endpoint: Option<crate::protocol::builder::RtpsEndpointContext>,
+    /// Stable CDR version for retransmits; the cache stores raw bytes
+    /// without per-sample version metadata, so we use the writer's
+    /// first-offered version captured at build time.
+    default_version: crate::dds::CdrVersion,
 }
 
 impl WriterNackHandler {
@@ -49,6 +53,7 @@ impl WriterNackHandler {
         transport: Arc<UdpTransport>,
         metrics: Arc<ReliableMetrics>,
         rtps_endpoint: Option<crate::protocol::builder::RtpsEndpointContext>,
+        default_version: crate::dds::CdrVersion,
     ) -> Self {
         Self {
             topic,
@@ -57,6 +62,7 @@ impl WriterNackHandler {
             metrics,
             gap_tx: Mutex::new(GapTx::new()),
             rtps_endpoint,
+            default_version,
         }
     }
 }
@@ -131,6 +137,7 @@ impl NackHandler for WriterNackHandler {
                         seq,
                         &payload,
                         builder::DEFAULT_FRAGMENT_SIZE,
+                        self.default_version,
                     );
                     log::debug!(
                         "[writer] Retransmitting seq {} as {} DATA_FRAG packets ({} bytes)",
@@ -156,7 +163,13 @@ impl NackHandler for WriterNackHandler {
             } else {
                 // Small payload: retransmit as single DATA packet
                 let rtps_packet = if let Some(ctx) = self.rtps_endpoint {
-                    builder::build_data_packet_with_context(&ctx, &self.topic, seq, &payload)
+                    builder::build_data_packet_with_context(
+                        &ctx,
+                        &self.topic,
+                        seq,
+                        &payload,
+                        self.default_version,
+                    )
                 } else {
                     builder::build_data_packet(&self.topic, seq, &payload)
                 };
@@ -210,6 +223,9 @@ pub(super) struct WriterNackFragHandler {
     metrics: Arc<ReliableMetrics>,
     rtps_endpoint: Option<crate::protocol::builder::RtpsEndpointContext>,
     writer_entity_id: [u8; 4],
+    /// Stable CDR version for fragment retransmits; see
+    /// [`WriterNackHandler::default_version`].
+    default_version: crate::dds::CdrVersion,
 }
 
 impl WriterNackFragHandler {
@@ -220,6 +236,7 @@ impl WriterNackFragHandler {
         metrics: Arc<ReliableMetrics>,
         rtps_endpoint: Option<crate::protocol::builder::RtpsEndpointContext>,
         writer_entity_id: [u8; 4],
+        default_version: crate::dds::CdrVersion,
     ) -> Self {
         Self {
             topic,
@@ -228,6 +245,7 @@ impl WriterNackFragHandler {
             metrics,
             rtps_endpoint,
             writer_entity_id,
+            default_version,
         }
     }
 }
@@ -266,16 +284,30 @@ impl NackFragHandler for WriterNackFragHandler {
         // Re-fragment the payload using default fragment size
         let fragment_size = builder::DEFAULT_FRAGMENT_SIZE;
         let frag_packets = if let Some(ctx) = self.rtps_endpoint {
-            builder::build_data_frag_packets(&ctx, writer_sn, &payload, fragment_size)
+            builder::build_data_frag_packets(
+                &ctx,
+                writer_sn,
+                &payload,
+                fragment_size,
+                self.default_version,
+            )
         } else {
-            // Build without endpoint context (fallback)
+            // Build without endpoint context (fallback). The canonical
+            // PLAIN_CDR2_LE form keeps the wire encap consistent with the
+            // writer's XCDR2 default; see `encap_kind_for_version`.
             let ctx = builder::RtpsEndpointContext {
                 guid_prefix: [0; 12],
                 reader_entity_id: [0; 4],
                 writer_entity_id: self.writer_entity_id,
-                encapsulation_kind: 0x0001, // PLAIN_CDR_LE fallback
+                encapsulation_kind: 0x0007,
             };
-            builder::build_data_frag_packets(&ctx, writer_sn, &payload, fragment_size)
+            builder::build_data_frag_packets(
+                &ctx,
+                writer_sn,
+                &payload,
+                fragment_size,
+                self.default_version,
+            )
         };
 
         if frag_packets.is_empty() {

@@ -120,6 +120,10 @@ pub(super) struct WriterReplayState {
     rtps_endpoint: Option<crate::protocol::builder::RtpsEndpointContext>,
     transport: Arc<UdpTransport>,
     history_cache: Arc<HistoryCache>,
+    /// Stable CDR version derived from the writer's QoS at build time.
+    /// Used for replayed samples since the cache stores raw payload bytes
+    /// without per-sample version metadata.
+    default_version: crate::dds::CdrVersion,
 }
 
 impl WriterReplayState {
@@ -128,12 +132,14 @@ impl WriterReplayState {
         rtps_endpoint: Option<crate::protocol::builder::RtpsEndpointContext>,
         transport: Arc<UdpTransport>,
         history_cache: Arc<HistoryCache>,
+        default_version: crate::dds::CdrVersion,
     ) -> Self {
         Self {
             topic,
             rtps_endpoint,
             transport,
             history_cache,
+            default_version,
         }
     }
 
@@ -159,6 +165,7 @@ impl WriterReplayState {
                         seq,
                         &payload,
                         builder::DEFAULT_FRAGMENT_SIZE,
+                        self.default_version,
                     );
                     log::debug!(
                         "[writer] Replaying {} DATA_FRAG packets for seq {} ({} bytes)",
@@ -185,7 +192,13 @@ impl WriterReplayState {
             } else {
                 // Small payload: single DATA packet
                 let packet = if let Some(ctx) = self.rtps_endpoint {
-                    builder::build_data_packet_with_context(&ctx, &self.topic, seq, &payload)
+                    builder::build_data_packet_with_context(
+                        &ctx,
+                        &self.topic,
+                        seq,
+                        &payload,
+                        self.default_version,
+                    )
                 } else {
                     builder::build_data_packet(&self.topic, seq, &payload)
                 };
@@ -396,6 +409,7 @@ impl<T: DDS> DataWriter<T> {
                     seq,
                     payload_for_network,
                     builder::DEFAULT_FRAGMENT_SIZE,
+                    version,
                 );
 
                 if frag_packets.is_empty() {
@@ -514,6 +528,7 @@ impl<T: DDS> DataWriter<T> {
                         &self.topic,
                         seq,
                         payload_for_network,
+                        version,
                     )
                 } else {
                     builder::build_data_packet(&self.topic, seq, payload_for_network)

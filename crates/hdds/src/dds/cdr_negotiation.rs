@@ -50,45 +50,43 @@ pub(crate) struct IncompatibleQos {
 ///
 /// # Defaults
 ///
-/// * `offered` empty + `matched` empty → `Xcdr2` (HDDS profile default).
-/// * `offered` empty + `matched` non-empty, all readers unconstrained
-///   → `Xcdr2`.
-/// * `offered` empty + `matched` non-empty with constrained readers
-///   → first code from the iteration of matched readers' accepted lists.
+/// * `offered` empty (writer didn't constrain): expanded to the HDDS
+///   profile default `[XCDR2, XCDR1]`, matching what
+///   `build_sedp_rtps_packet` advertises. The local matching decision then
+///   stays consistent with the SEDP-advertised offered list a remote
+///   observer sees.
+/// * Reader with empty `data_representation`: per DDS-XTypes v1.3
+///   §7.6.3.1.2, treated as if the list contained only XCDR_V1 (back-compat
+///   with DDS-XTypes 1.1). Vendors that omit `PID_DATA_REPRESENTATION`
+///   (e.g. Fast DDS default profile) therefore force the writer to pick
+///   the XCDR1 code from its offered list, so the wire encoding matches
+///   what the reader is prepared to decode.
+/// * No matched readers: pick the writer's first effective offered code.
 pub(crate) fn compute_effective_cdr_version(
     offered: &[u16],
     matched: &[EndpointInfo],
 ) -> Result<CdrVersion, IncompatibleQos> {
-    if offered.is_empty() && matched.is_empty() {
-        return Ok(CdrVersion::Xcdr2);
-    }
+    const HDDS_DEFAULT_OFFERED: [u16; 2] = [XCDR2_CODE, XCDR1_CODE];
+    const SPEC_DEFAULT_ACCEPTED: [u16; 1] = [XCDR1_CODE];
 
-    if offered.is_empty() {
-        // Writer unconstrained: take from reader side, preferring Xcdr2 when
-        // any reader is also unconstrained.
-        if matched.iter().any(|r| r.qos.data_representation.is_empty()) {
-            return Ok(CdrVersion::Xcdr2);
-        }
-        if let Some(code) = matched
-            .iter()
-            .flat_map(|r| r.qos.data_representation.iter().copied())
-            .next()
-        {
-            return code_to_version(code);
-        }
-        return Ok(CdrVersion::Xcdr2);
-    }
+    let effective_offered: &[u16] = if offered.is_empty() {
+        &HDDS_DEFAULT_OFFERED
+    } else {
+        offered
+    };
 
     if matched.is_empty() {
-        return code_to_version(offered[0]);
+        return code_to_version(effective_offered[0]);
     }
 
-    // Both sides constrain the choice: walk offered in declared order and
-    // return the first code accepted by at least one matched reader. Readers
-    // with an empty accepted sequence accept any offered code.
-    for &code in offered {
+    for &code in effective_offered {
         let accepted = matched.iter().any(|r| {
-            r.qos.data_representation.is_empty() || r.qos.data_representation.contains(&code)
+            let effective = if r.qos.data_representation.is_empty() {
+                &SPEC_DEFAULT_ACCEPTED[..]
+            } else {
+                &r.qos.data_representation[..]
+            };
+            effective.contains(&code)
         });
         if accepted {
             return code_to_version(code);
@@ -107,6 +105,52 @@ fn code_to_version(code: u16) -> Result<CdrVersion, IncompatibleQos> {
         _ => Err(IncompatibleQos {
             policy_id: POLICY_ID_DATA_REPRESENTATION,
         }),
+    }
+}
+
+/// Resolve a writer's "stable" CDR version, ignoring matched readers.
+///
+/// Used by the retransmit and history-replay paths, which lack a per-write
+/// matched-reader set: the cache stores raw CDR-encoded payload bytes
+/// without per-sample version metadata, so wire decisions there must use
+/// the writer's first-offered version (or `Xcdr2` for an empty offered
+/// list, per HDDS profile defaults).
+pub(crate) fn stable_writer_version(qos: &crate::dds::qos::QoS) -> CdrVersion {
+    compute_effective_cdr_version(&qos.data_representation, &[]).unwrap_or(CdrVersion::Xcdr2)
+}
+
+/// Map a type's canonical (XCDR2) RTPS encapsulation kind to the wire
+/// encapsulation kind for the negotiated CDR version, per DDS-RTPS v2.5
+/// §10.7 and DDS-XTypes v1.3 §7.6.2.1.2 + §7.6.3.1.2.
+///
+/// `RtpsEndpointContext::encapsulation_kind` stores the canonical XCDR2
+/// form of the type's extensibility (`0x0007` for `@final`, `0x0009` for
+/// `@appendable`, `0x000B` for `@mutable`). This helper degrades that
+/// canonical kind to the matching XCDR1 wire code when the writer's
+/// `effective_cdr_version()` resolves to `Xcdr1`, so the wire encap stays
+/// consistent with the bytes produced by `T::encode(buf, version)`.
+///
+/// # Mappings
+///
+/// * `(0x0007, Xcdr2)` → `0x0007` PLAIN_CDR2_LE
+/// * `(0x0007, Xcdr1)` → `0x0001` PLAIN_CDR_LE
+/// * `(0x0009, Xcdr2)` → `0x0009` D_CDR2_LE
+/// * `(0x0009, Xcdr1)` → `0x0001` PLAIN_CDR_LE  (XCDR1 has no `@appendable`
+///   wire concept; degrades to plain CDR per back-compat).
+/// * `(0x000B, Xcdr2)` → `0x000B` PL_CDR2_LE
+/// * `(0x000B, Xcdr1)` → `0x0003` PL_CDR_LE
+///
+/// Any other input is passed through unchanged so legacy callers that
+/// already store an XCDR1 wire code (`0x0001` or `0x0003`) keep working.
+pub fn encap_kind_for_version(canonical: u16, version: CdrVersion) -> u16 {
+    match (canonical, version) {
+        (0x0007, CdrVersion::Xcdr2) => 0x0007,
+        (0x0007, CdrVersion::Xcdr1) => 0x0001,
+        (0x0009, CdrVersion::Xcdr2) => 0x0009,
+        (0x0009, CdrVersion::Xcdr1) => 0x0001,
+        (0x000B, CdrVersion::Xcdr2) => 0x000B,
+        (0x000B, CdrVersion::Xcdr1) => 0x0003,
+        (other, _) => other,
     }
 }
 
@@ -161,20 +205,26 @@ pub(crate) fn pair_effective_cdr_version(
     offered: &[u16],
     accepted: &[u16],
 ) -> Result<CdrVersion, IncompatibleQos> {
-    if offered.is_empty() && accepted.is_empty() {
-        return Ok(CdrVersion::Xcdr2);
-    }
-    if offered.is_empty() {
-        return code_to_version(accepted[0]);
-    }
-    if accepted.is_empty() {
-        return code_to_version(offered[0]);
-    }
-    for &code in offered {
-        if accepted.contains(&code) {
+    const HDDS_DEFAULT_OFFERED: [u16; 2] = [XCDR2_CODE, XCDR1_CODE];
+    const SPEC_DEFAULT_ACCEPTED: [u16; 1] = [XCDR1_CODE];
+
+    let effective_offered: &[u16] = if offered.is_empty() {
+        &HDDS_DEFAULT_OFFERED
+    } else {
+        offered
+    };
+    let effective_accepted: &[u16] = if accepted.is_empty() {
+        &SPEC_DEFAULT_ACCEPTED
+    } else {
+        accepted
+    };
+
+    for &code in effective_offered {
+        if effective_accepted.contains(&code) {
             return code_to_version(code);
         }
     }
+
     Err(IncompatibleQos {
         policy_id: POLICY_ID_DATA_REPRESENTATION,
     })
@@ -278,16 +328,23 @@ mod tests {
     }
 
     #[test]
-    fn empty_offered_reader_unconstrained_defaults_to_xcdr2() {
+    fn empty_offered_empty_accepted_picks_xcdr1_per_back_compat() {
+        // DDS-XTypes v1.3 §7.6.3.1.2: empty reader data_representation is
+        // interpreted as [XCDR_V1] (back-compat). Writer empty offered
+        // expands to HDDS' default [XCDR2, XCDR1]; intersection picks the
+        // first writer code accepted by the back-compat reader = XCDR1.
         let matched = [reader_with(vec![])];
         assert_eq!(
             compute_effective_cdr_version(&[], &matched),
-            Ok(CdrVersion::Xcdr2)
+            Ok(CdrVersion::Xcdr1)
         );
     }
 
     #[test]
-    fn reader_with_empty_accepted_matches_any_offered() {
+    fn reader_with_empty_accepted_uses_back_compat_xcdr1() {
+        // Empty reader = [XCDR1] per DDS-XTypes v1.3 §7.6.3.1.2.
+        // Writer offered=[XCDR1] -> intersection {XCDR1} -> Xcdr1.
+        // Writer offered=[XCDR2] -> intersection empty -> INCOMPATIBLE.
         let matched = [reader_with(vec![])];
         assert_eq!(
             compute_effective_cdr_version(&[XCDR1_CODE], &matched),
@@ -295,7 +352,9 @@ mod tests {
         );
         assert_eq!(
             compute_effective_cdr_version(&[XCDR2_CODE], &matched),
-            Ok(CdrVersion::Xcdr2)
+            Err(IncompatibleQos {
+                policy_id: POLICY_ID_DATA_REPRESENTATION
+            })
         );
     }
 
@@ -395,19 +454,26 @@ mod tests {
     }
 
     #[test]
-    fn pair_empty_offered_empty_accepted_defaults_to_xcdr2() {
-        assert_eq!(pair_effective_cdr_version(&[], &[]), Ok(CdrVersion::Xcdr2));
+    fn pair_empty_offered_empty_accepted_picks_xcdr1() {
+        // Writer empty -> HDDS default [XCDR2, XCDR1].
+        // Reader empty -> back-compat [XCDR1] per DDS-XTypes v1.3 §7.6.3.1.2.
+        // Intersection picks XCDR1.
+        assert_eq!(pair_effective_cdr_version(&[], &[]), Ok(CdrVersion::Xcdr1));
     }
 
     #[test]
-    fn pair_writer_offered_no_reader_accepted_returns_offered_first() {
+    fn pair_writer_offered_empty_reader_uses_back_compat() {
+        // Reader empty -> [XCDR1] (back-compat). Writer XCDR1 only -> match.
         assert_eq!(
             pair_effective_cdr_version(&[XCDR1_CODE], &[]),
             Ok(CdrVersion::Xcdr1)
         );
+        // Writer XCDR2 only vs back-compat [XCDR1] reader -> incompatible.
         assert_eq!(
             pair_effective_cdr_version(&[XCDR2_CODE], &[]),
-            Ok(CdrVersion::Xcdr2)
+            Err(IncompatibleQos {
+                policy_id: POLICY_ID_DATA_REPRESENTATION
+            })
         );
     }
 
@@ -451,5 +517,92 @@ mod tests {
                 policy_id: POLICY_ID_DATA_REPRESENTATION
             })
         );
+    }
+
+    #[test]
+    fn encap_kind_for_version_final_xcdr2_keeps_plain_cdr2_le() {
+        assert_eq!(
+            encap_kind_for_version(0x0007, CdrVersion::Xcdr2),
+            0x0007,
+            "@final + Xcdr2 should stay PLAIN_CDR2_LE"
+        );
+    }
+
+    #[test]
+    fn encap_kind_for_version_final_xcdr1_degrades_to_plain_cdr_le() {
+        assert_eq!(
+            encap_kind_for_version(0x0007, CdrVersion::Xcdr1),
+            0x0001,
+            "@final + Xcdr1 should degrade to PLAIN_CDR_LE"
+        );
+    }
+
+    #[test]
+    fn encap_kind_for_version_appendable_xcdr2_keeps_d_cdr2_le() {
+        assert_eq!(
+            encap_kind_for_version(0x0009, CdrVersion::Xcdr2),
+            0x0009,
+            "@appendable + Xcdr2 should stay D_CDR2_LE"
+        );
+    }
+
+    #[test]
+    fn encap_kind_for_version_appendable_xcdr1_degrades_to_plain_cdr_le() {
+        // XCDR1 has no @appendable wire concept (no DHEADER); fall back to plain.
+        assert_eq!(
+            encap_kind_for_version(0x0009, CdrVersion::Xcdr1),
+            0x0001,
+            "@appendable + Xcdr1 should degrade to PLAIN_CDR_LE"
+        );
+    }
+
+    #[test]
+    fn encap_kind_for_version_mutable_xcdr2_keeps_pl_cdr2_le() {
+        assert_eq!(
+            encap_kind_for_version(0x000B, CdrVersion::Xcdr2),
+            0x000B,
+            "@mutable + Xcdr2 should stay PL_CDR2_LE"
+        );
+    }
+
+    #[test]
+    fn encap_kind_for_version_mutable_xcdr1_degrades_to_pl_cdr_le() {
+        assert_eq!(
+            encap_kind_for_version(0x000B, CdrVersion::Xcdr1),
+            0x0003,
+            "@mutable + Xcdr1 should degrade to PL_CDR_LE"
+        );
+    }
+
+    #[test]
+    fn encap_kind_for_version_passes_through_legacy_xcdr1_codes() {
+        // Legacy callers that already store an XCDR1 wire code keep it.
+        assert_eq!(encap_kind_for_version(0x0001, CdrVersion::Xcdr1), 0x0001);
+        assert_eq!(encap_kind_for_version(0x0001, CdrVersion::Xcdr2), 0x0001);
+        assert_eq!(encap_kind_for_version(0x0003, CdrVersion::Xcdr1), 0x0003);
+    }
+
+    #[test]
+    fn stable_writer_version_empty_qos_defaults_to_xcdr2() {
+        let qos = QoS::default();
+        assert_eq!(stable_writer_version(&qos), CdrVersion::Xcdr2);
+    }
+
+    #[test]
+    fn stable_writer_version_honors_first_offered_xcdr1() {
+        let qos = QoS {
+            data_representation: vec![XCDR1_CODE, XCDR2_CODE],
+            ..QoS::default()
+        };
+        assert_eq!(stable_writer_version(&qos), CdrVersion::Xcdr1);
+    }
+
+    #[test]
+    fn stable_writer_version_honors_first_offered_xcdr2() {
+        let qos = QoS {
+            data_representation: vec![XCDR2_CODE, XCDR1_CODE],
+            ..QoS::default()
+        };
+        assert_eq!(stable_writer_version(&qos), CdrVersion::Xcdr2);
     }
 }

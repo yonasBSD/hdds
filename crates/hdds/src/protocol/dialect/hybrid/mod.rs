@@ -148,6 +148,16 @@ impl DialectEncoder for HybridEncoder {
             if !q.partition_names.is_empty() {
                 result.partition = crate::qos::partition::Partition::new(q.partition_names.clone());
             }
+            // Data representation: propagate the offered list from the SEDP
+            // QoS profile so the legacy SEDP builder downstream emits
+            // PID_DATA_REPRESENTATION with the writer-side preference list
+            // (`[XCDR2, XCDR1]` for empty user QoS via build_sedp_rtps_packet).
+            // Without this, the QoS conversion would drop the list, the
+            // legacy builder would observe an empty `data_representation`,
+            // and fall back to `[XCDR2]`-only -- which makes FastDDS readers
+            // (whose empty data_representation is interpreted as `[XCDR1]`
+            // back-compat per DDS-XTypes v1.3 §7.6.3.1.2) reject the match.
+            result.data_representation = q.data_representation.clone();
             result
         });
 

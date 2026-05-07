@@ -47,6 +47,7 @@ use hdds::protocol::builder::{
     build_data_frag_packets, should_fragment, RtpsEndpointContext, DEFAULT_FRAGMENT_SIZE,
     DEFAULT_MAX_UNFRAGMENTED_SIZE,
 };
+use hdds::CdrVersion;
 
 /// Helper: create a deterministic payload of `size` bytes.
 ///
@@ -117,7 +118,8 @@ fn test_data_frag_packet_count() {
     let payload_size = 10 * 1024; // 10KB
     let payload = make_payload(payload_size);
 
-    let packets = build_data_frag_packets(&ctx, 1, &payload, DEFAULT_FRAGMENT_SIZE);
+    let packets =
+        build_data_frag_packets(&ctx, 1, &payload, DEFAULT_FRAGMENT_SIZE, CdrVersion::Xcdr2);
 
     // `build_data_frag_packets` prepends a 4-byte CDR encapsulation header
     // before fragmenting, so the wire total is payload + 4, not payload.
@@ -161,7 +163,13 @@ fn test_data_frag_small_payload_no_fragmentation() {
     let ctx = test_ctx();
     let small_payload = make_payload(1024); // 1KB - well under threshold
 
-    let packets = build_data_frag_packets(&ctx, 1, &small_payload, DEFAULT_FRAGMENT_SIZE);
+    let packets = build_data_frag_packets(
+        &ctx,
+        1,
+        &small_payload,
+        DEFAULT_FRAGMENT_SIZE,
+        CdrVersion::Xcdr2,
+    );
     assert!(
         packets.is_empty(),
         "Small payload ({} bytes) should not produce DATA_FRAG packets",
@@ -373,7 +381,7 @@ fn test_data_frag_custom_fragment_size() {
     let payload = make_payload(payload_size);
     let custom_frag_size = 512; // 512 bytes per fragment
 
-    let packets = build_data_frag_packets(&ctx, 1, &payload, custom_frag_size);
+    let packets = build_data_frag_packets(&ctx, 1, &payload, custom_frag_size, CdrVersion::Xcdr2);
 
     // +4 CDR encapsulation header prepended by `build_data_frag_packets`.
     const CDR_HEADER: usize = 4;
@@ -408,7 +416,13 @@ fn test_data_frag_exact_boundary() {
     // the unfragmented threshold: the function must NOT fragment.
     let payload_at_threshold =
         make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE.saturating_sub(CDR_HEADER));
-    let packets = build_data_frag_packets(&ctx, 1, &payload_at_threshold, DEFAULT_FRAGMENT_SIZE);
+    let packets = build_data_frag_packets(
+        &ctx,
+        1,
+        &payload_at_threshold,
+        DEFAULT_FRAGMENT_SIZE,
+        CdrVersion::Xcdr2,
+    );
     assert!(
         packets.is_empty(),
         "Payload that fills exactly the threshold once CDR header is added \
@@ -419,7 +433,13 @@ fn test_data_frag_exact_boundary() {
     // must fragment.
     let payload_over_threshold =
         make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE.saturating_sub(CDR_HEADER) + 1);
-    let packets = build_data_frag_packets(&ctx, 1, &payload_over_threshold, DEFAULT_FRAGMENT_SIZE);
+    let packets = build_data_frag_packets(
+        &ctx,
+        1,
+        &payload_over_threshold,
+        DEFAULT_FRAGMENT_SIZE,
+        CdrVersion::Xcdr2,
+    );
     assert!(
         !packets.is_empty(),
         "Payload 1 byte over threshold MUST produce DATA_FRAG packets"
@@ -445,7 +465,8 @@ fn test_data_frag_guid_prefix_in_header() {
     };
 
     let payload = make_payload(DEFAULT_MAX_UNFRAGMENTED_SIZE + 1);
-    let packets = build_data_frag_packets(&ctx, 1, &payload, DEFAULT_FRAGMENT_SIZE);
+    let packets =
+        build_data_frag_packets(&ctx, 1, &payload, DEFAULT_FRAGMENT_SIZE, CdrVersion::Xcdr2);
 
     for (i, pkt) in packets.iter().enumerate() {
         // RTPS header: magic(4) + version(2) + vendor(2) + guid_prefix(12)

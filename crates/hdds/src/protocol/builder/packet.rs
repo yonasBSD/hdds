@@ -4,6 +4,8 @@
 use super::helpers::build_inline_qos_with_topic;
 // v110: Removed unused imports (build_rtps_header, try_u16_from_usize)
 // - Now using DialectEncoder for DATA/GAP submessages
+use crate::dds::cdr_negotiation::encap_kind_for_version;
+use crate::dds::CdrVersion;
 use crate::protocol::constants::*;
 use crate::protocol::dialect::{get_encoder, Dialect};
 use crate::protocol::rtps::encode_info_ts;
@@ -28,12 +30,17 @@ pub struct RtpsEndpointContext {
     pub guid_prefix: [u8; 12],
     pub reader_entity_id: [u8; 4],
     pub writer_entity_id: [u8; 4],
-    /// CDR encapsulation kind for serialized payload.
+    /// Canonical (XCDR2) RTPS encapsulation kind for the type's extensibility.
     ///
-    /// Defaults to `PLAIN_CDR_LE` (0x0001) for `@final` types.
-    /// Set to `D_CDR2_LE` (0x0009) for `@appendable` types (XTypes v1.3 Sec.7.6.3.1.2,
-    /// delimited CDR2 with DHEADER).
-    /// Set to `PL_CDR2_LE` (0x000B) for `@mutable` types.
+    /// * `@final` → `PLAIN_CDR2_LE` (0x0007)
+    /// * `@appendable` → `D_CDR2_LE` (0x0009) — delimited CDR2 with DHEADER
+    ///   per DDS-XTypes v1.3 §7.6.3.1.2
+    /// * `@mutable` → `PL_CDR2_LE` (0x000B)
+    ///
+    /// The actual wire encap kind is derived per-write from this canonical
+    /// form combined with the writer's `effective_cdr_version()` via
+    /// [`encap_kind_for_version`]. Legacy XCDR1 wire codes (`0x0001`,
+    /// `0x0003`) are passed through unchanged for back-compat.
     pub encapsulation_kind: u16,
 }
 
@@ -306,20 +313,21 @@ pub fn build_gap_packet(payload: &[u8]) -> Vec<u8> {
 /// [encapsulation_kind: u16 BE][options: u16] + [CDR payload]
 /// ```
 ///
-/// RTI and FastDDS expect `PLAIN_CDR_LE` (0x0001) for user data.
-/// For `@appendable` types, XTypes v1.3 Sec.7.6.3.1.2 requires `D_CDR2_LE` (0x0009,
-/// delimited CDR2 with DHEADER).
-/// The encapsulation kind is taken from `ctx.encapsulation_kind`.
+/// The wire encap kind is derived from `ctx.encapsulation_kind` (the type's
+/// canonical XCDR2 form) and `version` via
+/// [`encap_kind_for_version`](crate::dds::cdr_negotiation::encap_kind_for_version),
+/// so the wire header stays consistent with the bytes produced by
+/// `T::encode(buf, version)`.
 pub fn build_data_packet_with_context(
     ctx: &RtpsEndpointContext,
     topic: &str,
     sequence: u64,
     payload: &[u8],
+    version: CdrVersion,
 ) -> Vec<u8> {
-    // v235/v240: Prepend CDR encapsulation header from context.
-    // @final types use PLAIN_CDR_LE (0x0001), @appendable use D_CDR2_LE (0x0009).
+    let wire_encap = encap_kind_for_version(ctx.encapsulation_kind, version);
     let mut encapsulated_payload = Vec::with_capacity(4 + payload.len());
-    let enc_bytes = ctx.encapsulation_kind.to_be_bytes();
+    let enc_bytes = wire_encap.to_be_bytes();
     encapsulated_payload.extend_from_slice(&[enc_bytes[0], enc_bytes[1], 0x00, 0x00]);
     encapsulated_payload.extend_from_slice(payload);
 
@@ -428,6 +436,7 @@ pub fn build_data_frag_packets(
     sequence: u64,
     payload: &[u8],
     fragment_size: usize,
+    version: CdrVersion,
 ) -> Vec<Vec<u8>> {
     // Prepend the CDR encapsulation header (4 bytes) like the non-fragmented
     // DATA path does. The encapsulation is part of the serialized sample, so
@@ -435,7 +444,8 @@ pub fn build_data_frag_packets(
     // reads the first 4 bytes of the first fragment as the encapsulation kind,
     // finds a garbage value (e.g. 0xbc86), and aborts reassembly with
     // "ShapeType:color deserialization error" on every LargeData sample.
-    let enc_bytes = ctx.encapsulation_kind.to_be_bytes();
+    let wire_encap = encap_kind_for_version(ctx.encapsulation_kind, version);
+    let enc_bytes = wire_encap.to_be_bytes();
     let mut encapsulated = Vec::with_capacity(4 + payload.len());
     encapsulated.extend_from_slice(&[enc_bytes[0], enc_bytes[1], 0x00, 0x00]);
     encapsulated.extend_from_slice(payload);

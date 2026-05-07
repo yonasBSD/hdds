@@ -350,6 +350,7 @@ pub fn build_sedp_rtps_packet(
     };
 
     // Map DDS QoS (if present) to dialect-agnostic QosProfile for SEDP PIDs.
+    let endpoint_kind_for_qos = endpoint_kind;
     let qos_profile: Option<QosProfile> = sedp_data.qos.as_ref().map(|q| {
         use crate::dds::qos::{Durability, History, OwnershipKind, Reliability};
 
@@ -409,7 +410,23 @@ pub fn build_sedp_rtps_packet(
             presentation_coherent: q.presentation.coherent_access,
             presentation_ordered: q.presentation.ordered_access,
             partition_names: q.partition.names.clone(),
-            data_representation: q.data_representation.clone(),
+            // Per DDS-XTypes v1.3 Sec.7.6.3.1.2, an endpoint with an
+            // empty DataRepresentationQosPolicy advertises a list that
+            // depends on its kind: writers offer XCDR1 (back-compat), and
+            // readers accept both XCDR1 and XCDR2. Hardcoding [XCDR2] for
+            // every empty-QoS endpoint, as the previous code did, made
+            // HDDS readers reject foreign writers that omit the PID
+            // (e.g. RTI Connext default profile) with INCOMPATIBLE_QOS.
+            // HDDS now encodes both versions (cdr_negotiation), so we
+            // can advertise the spec-compliant defaults.
+            data_representation: if q.data_representation.is_empty() {
+                match endpoint_kind_for_qos {
+                    SedpEndpointKind::Reader => vec![0x0000, 0x0002],
+                    SedpEndpointKind::Writer => vec![0x0002, 0x0000],
+                }
+            } else {
+                q.data_representation.clone()
+            },
             ..Default::default()
         }
     });

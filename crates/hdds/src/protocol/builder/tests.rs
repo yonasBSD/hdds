@@ -2,6 +2,7 @@
 // Copyright (c) 2025-2026 naskel.com
 
 use super::*;
+use crate::dds::CdrVersion;
 use crate::protocol::builder::helpers::find_data_submsg_offset;
 use crate::protocol::constants::RTPS_SUBMSG_DATA;
 use crate::reliability::{GapMsg, GapTx, RtpsRange};
@@ -30,12 +31,12 @@ fn builders_honor_reader_entity_id_offset() {
         guid_prefix: [0x11; 12],
         reader_entity_id: [0x00, 0x00, 0x01, 0x02],
         writer_entity_id: [0x00, 0x00, 0x01, 0x03],
-        encapsulation_kind: 0x0001,
+        encapsulation_kind: 0x0007,
     };
 
     // 1. build_data_packet_with_context
     let payload = vec![0xAAu8; 8];
-    let pkt = build_data_packet_with_context(&ctx, "topic", 1, &payload);
+    let pkt = build_data_packet_with_context(&ctx, "topic", 1, &payload, CdrVersion::Xcdr2);
     assert!(!pkt.is_empty(), "DATA packet must not be empty");
     let data_off =
         find_data_submsg_offset(&pkt).expect("DATA packet must have a findable DATA submessage");
@@ -62,7 +63,13 @@ fn builders_honor_reader_entity_id_offset() {
     //    manually: after scanning past the leading INFO_TS the submessage id
     //    at that position should be 0x16.
     let big_payload = vec![0xBBu8; DEFAULT_MAX_UNFRAGMENTED_SIZE + 512];
-    let frags = build_data_frag_packets(&ctx, 7, &big_payload, DEFAULT_FRAGMENT_SIZE);
+    let frags = build_data_frag_packets(
+        &ctx,
+        7,
+        &big_payload,
+        DEFAULT_FRAGMENT_SIZE,
+        CdrVersion::Xcdr2,
+    );
     assert!(
         !frags.is_empty(),
         "DATA_FRAG builder must yield at least one fragment"
@@ -104,10 +111,10 @@ fn data_packet_matches_golden_bytes() {
         ],
         reader_entity_id: [0x00, 0x00, 0x01, 0x02],
         writer_entity_id: [0x00, 0x00, 0x01, 0x03],
-        encapsulation_kind: 0x0001,
+        encapsulation_kind: 0x0007,
     };
     let payload: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
-    let mut pkt = build_data_packet_with_context(&ctx, "T", 1, payload);
+    let mut pkt = build_data_packet_with_context(&ctx, "T", 1, payload, CdrVersion::Xcdr2);
 
     // Mask out the time-dependent INFO_TS timestamp (bytes 24..32, after the
     // 4-byte INFO_TS submessage header at bytes 20..24).
@@ -144,6 +151,48 @@ fn data_packet_matches_golden_bytes() {
         &ctx.writer_entity_id,
         "writerEntityId position"
     );
+}
+
+/// Wire encap consistency: a canonical PLAIN_CDR2_LE context paired with
+/// `Xcdr2` keeps the wire encap at 0x0007, while the same context paired
+/// with `Xcdr1` degrades to PLAIN_CDR_LE (0x0001) per
+/// `encap_kind_for_version`. Catches the prior bug where the writer
+/// hard-coded 0x0001 for `@final` and contradicted the SEDP-advertised
+/// `[XCDR2, XCDR1]` offered list.
+#[test]
+fn data_packet_wire_encap_tracks_negotiated_version() {
+    let ctx = RtpsEndpointContext {
+        guid_prefix: [0x01; 12],
+        reader_entity_id: [0x00, 0x00, 0x01, 0x02],
+        writer_entity_id: [0x00, 0x00, 0x01, 0x03],
+        encapsulation_kind: 0x0007, // canonical @final form
+    };
+    let payload: &[u8] = &[0xDE, 0xAD, 0xBE, 0xEF];
+    let pkt_v2 = build_data_packet_with_context(&ctx, "T", 1, payload, CdrVersion::Xcdr2);
+    let pkt_v1 = build_data_packet_with_context(&ctx, "T", 1, payload, CdrVersion::Xcdr1);
+
+    // The CDR encapsulation header sits immediately after the inline QoS
+    // (PID_TOPIC_NAME for "T" → 12 bytes header+value+pad, plus 4-byte
+    // PID_SENTINEL = 16 bytes total). Search for "DEADBEEF" instead of
+    // hard-coding the offset to keep the test robust to inline-QoS
+    // layout tweaks.
+    let needle = [0xDE, 0xAD, 0xBE, 0xEF];
+    let off_v2 = pkt_v2
+        .windows(4)
+        .position(|w| w == needle)
+        .expect("payload must appear in v2 packet");
+    let off_v1 = pkt_v1
+        .windows(4)
+        .position(|w| w == needle)
+        .expect("payload must appear in v1 packet");
+    assert!(off_v2 >= 4, "encap header must precede the payload");
+    assert!(off_v1 >= 4, "encap header must precede the payload");
+
+    // Encap is encoded big-endian per RTPS v2.5 §10.7.
+    let encap_v2 = u16::from_be_bytes([pkt_v2[off_v2 - 4], pkt_v2[off_v2 - 3]]);
+    let encap_v1 = u16::from_be_bytes([pkt_v1[off_v1 - 4], pkt_v1[off_v1 - 3]]);
+    assert_eq!(encap_v2, 0x0007, "Xcdr2 should keep PLAIN_CDR2_LE");
+    assert_eq!(encap_v1, 0x0001, "Xcdr1 should degrade to PLAIN_CDR_LE");
 }
 
 #[test]

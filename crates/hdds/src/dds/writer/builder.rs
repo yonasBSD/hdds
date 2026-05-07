@@ -17,6 +17,7 @@ use super::runtime::WriterReplayState;
 use crate::core::discovery::ReplayRegistry;
 use crate::core::discovery::GUID;
 use crate::core::rt;
+use crate::dds::cdr_negotiation::stable_writer_version;
 use crate::dds::listener::DataWriterListener;
 use crate::dds::{DomainState, Error, MatchKey, QoS, Result, TypeId, DDS};
 use crate::protocol::builder::RtpsEndpointContext;
@@ -476,14 +477,19 @@ impl<T: DDS> WriterBuilder<T> {
             // interop (RTPS v2.3 Sec.8.3.7.2).
             let reader_entity_id = [0, 0, 0, 0x00];
 
-            // v240: Determine CDR encapsulation from type extensibility.
-            // @final -> PLAIN_CDR_LE (0x0001), backward-compatible default.
-            // @appendable -> D_CDR2_LE (0x0009), required by XTypes v1.3 Sec.7.6.3.1.2
-            // (delimited CDR2 with DHEADER).
-            // @mutable -> PL_CDR2_LE (0x000B).
-            // Fall back to T::get_type_object() when no explicit override is set,
-            // so that the normal topic.writer().build() path picks up the correct
-            // encapsulation from the type's DDS trait implementation.
+            // Determine the type's canonical (XCDR2) encapsulation kind from
+            // its extensibility flag. The wire encap is derived per-write
+            // from this canonical form combined with the negotiated CDR
+            // version (XCDR2 keeps it as-is; XCDR1 degrades to the matching
+            // XCDR1 wire code) -- see `encap_kind_for_version`.
+            //
+            // @final      -> PLAIN_CDR2_LE (0x0007)
+            // @appendable -> D_CDR2_LE     (0x0009) -- delimited CDR2 with DHEADER
+            // @mutable    -> PL_CDR2_LE    (0x000B)
+            //
+            // Falls back to T::get_type_object() when no override is set so
+            // the standard topic.writer().build() path picks up the correct
+            // canonical kind from the type's DDS trait implementation.
             let resolved_type_object = self
                 .type_object_override
                 .clone()
@@ -501,7 +507,7 @@ impl<T: DDS> WriterBuilder<T> {
                 {
                     0x0009u16
                 } // D_CDR2_LE (delimited, with DHEADER)
-                _ => 0x0001u16, // PLAIN_CDR_LE (default for @final or unknown)
+                _ => 0x0007u16, // PLAIN_CDR2_LE (default for @final or unknown)
             };
 
             Some(RtpsEndpointContext {
@@ -528,6 +534,7 @@ impl<T: DDS> WriterBuilder<T> {
                 transport.clone(),
                 metrics.clone(),
                 rtps_endpoint,
+                stable_writer_version(&self.qos),
             ));
             registry.register_nack_handler(handler);
 
@@ -540,6 +547,7 @@ impl<T: DDS> WriterBuilder<T> {
                     metrics.clone(),
                     Some(ctx),
                     ctx.writer_entity_id,
+                    stable_writer_version(&self.qos),
                 ));
                 registry.register_nack_frag_handler(frag_handler);
             }
@@ -610,6 +618,7 @@ impl<T: DDS> WriterBuilder<T> {
                     rtps_endpoint,
                     transport.clone(),
                     cache.clone(),
+                    stable_writer_version(&self.qos),
                 ));
                 let callback_state = Arc::clone(&state);
                 Some(registry.register(
