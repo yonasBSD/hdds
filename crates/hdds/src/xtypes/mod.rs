@@ -80,6 +80,7 @@
 /// Runtime helpers to build DDS TypeObjects from ROS 2 introspection metadata.
 pub mod builder;
 mod cdr2;
+pub(crate) mod discriminators;
 mod equivalence;
 mod type_id;
 mod type_kind;
