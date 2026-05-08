@@ -13,6 +13,7 @@
 use super::helpers::encode_fields_sequential;
 use super::primitives::{decode_u8, encode_u8};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
+use crate::xtypes::TypeKind;
 
 #[allow(clippy::wildcard_imports)]
 use crate::xtypes::type_object::*;
@@ -24,20 +25,22 @@ use crate::xtypes::type_object::*;
 impl Cdr2Encode for CompleteTypeObject {
     // @audit-ok: Closures with pattern matching (cyclo 24, cogni 4) - discriminant encoder + variant dispatcher
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        // Closure cognitive 2: Simple match variant->discriminant
+        // Per OMG DDS-XTypes v1.3 §7.3.4.5: the IDL union
+        // `CompleteTypeObject switch (octet)` uses TK_* values as case
+        // labels, so the discriminator octet IS the TypeKind value.
         let mut encode_discriminator = |buf: &mut [u8]| -> Result<usize, CdrError> {
             let mut local = 0;
             let discriminator: u8 = match self {
-                CompleteTypeObject::Struct(_) => 0x01,
-                CompleteTypeObject::Union(_) => 0x02,
-                CompleteTypeObject::Enumerated(_) => 0x03,
-                CompleteTypeObject::Bitmask(_) => 0x04,
-                CompleteTypeObject::Bitset(_) => 0x05,
-                CompleteTypeObject::Sequence(_) => 0x06,
-                CompleteTypeObject::Array(_) => 0x07,
-                CompleteTypeObject::Map(_) => 0x08,
-                CompleteTypeObject::Alias(_) => 0x09,
-                CompleteTypeObject::Annotation(_) => 0x0A,
+                CompleteTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
+                CompleteTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
+                CompleteTypeObject::Enumerated(_) => TypeKind::TK_ENUM.to_u8(),
+                CompleteTypeObject::Bitmask(_) => TypeKind::TK_BITMASK.to_u8(),
+                CompleteTypeObject::Bitset(_) => TypeKind::TK_BITSET.to_u8(),
+                CompleteTypeObject::Sequence(_) => TypeKind::TK_SEQUENCE.to_u8(),
+                CompleteTypeObject::Array(_) => TypeKind::TK_ARRAY.to_u8(),
+                CompleteTypeObject::Map(_) => TypeKind::TK_MAP.to_u8(),
+                CompleteTypeObject::Alias(_) => TypeKind::TK_ALIAS.to_u8(),
+                CompleteTypeObject::Annotation(_) => TypeKind::TK_ANNOTATION.to_u8(),
             };
             encode_u8(discriminator, buf, &mut local)?;
             Ok(local)
@@ -81,67 +84,70 @@ impl Cdr2Encode for CompleteTypeObject {
 impl Cdr2Decode for CompleteTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
+        // Spec discriminator labels — see Cdr2Encode for the §7.3.4.5
+        // citation. Local const required because `match` patterns must
+        // be const items, not `const fn` calls.
+        const TK_STRUCTURE: u8 = TypeKind::TK_STRUCTURE.to_u8();
+        const TK_UNION: u8 = TypeKind::TK_UNION.to_u8();
+        const TK_ENUM: u8 = TypeKind::TK_ENUM.to_u8();
+        const TK_BITMASK: u8 = TypeKind::TK_BITMASK.to_u8();
+        const TK_BITSET: u8 = TypeKind::TK_BITSET.to_u8();
+        const TK_SEQUENCE: u8 = TypeKind::TK_SEQUENCE.to_u8();
+        const TK_ARRAY: u8 = TypeKind::TK_ARRAY.to_u8();
+        const TK_MAP: u8 = TypeKind::TK_MAP.to_u8();
+        const TK_ALIAS: u8 = TypeKind::TK_ALIAS.to_u8();
+        const TK_ANNOTATION: u8 = TypeKind::TK_ANNOTATION.to_u8();
 
+        let mut offset = 0;
         let discriminator = decode_u8(src, &mut offset)?;
 
         match discriminator {
-            0x01 => {
-                // Struct
+            TK_STRUCTURE => {
                 let (s, used) = CompleteStructType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Struct(s), offset))
             }
-            0x02 => {
-                // Union
+            TK_UNION => {
                 let (u, used) = CompleteUnionType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Union(u), offset))
             }
-            0x03 => {
-                // Enumerated
+            TK_ENUM => {
                 let (e, used) = CompleteEnumeratedType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Enumerated(e), offset))
             }
-            0x04 => {
-                // Bitmask
+            TK_BITMASK => {
                 let (b, used) = CompleteBitmaskType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Bitmask(b), offset))
             }
-            0x05 => {
-                // Bitset
+            TK_BITSET => {
                 let (b, used) = CompleteBitsetType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Bitset(b), offset))
             }
-            0x06 => {
-                // Sequence
+            TK_SEQUENCE => {
                 let (s, used) = CompleteSequenceType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Sequence(s), offset))
             }
-            0x07 => {
-                // Array
+            TK_ARRAY => {
                 let (a, used) = CompleteArrayType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Array(a), offset))
             }
-            0x08 => {
-                // Map
+            TK_MAP => {
                 let (m, used) = CompleteMapType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Map(m), offset))
             }
-            0x09 => {
-                // Alias
+            TK_ALIAS => {
                 let (a, used) = CompleteAliasType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Alias(a), offset))
             }
-            0x0A => {
-                // Annotation
+            TK_ANNOTATION => {
                 let (a, used) = CompleteAnnotationType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((CompleteTypeObject::Annotation(a), offset))
@@ -154,20 +160,22 @@ impl Cdr2Decode for CompleteTypeObject {
 impl Cdr2Encode for MinimalTypeObject {
     // @audit-ok: Closures with pattern matching (cyclo 24, cogni 4) - discriminant encoder + variant dispatcher
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        // Closure cognitive 2: Simple match variant->discriminant
+        // Per OMG DDS-XTypes v1.3 §7.3.4.5: same TK_* discriminator
+        // labels as `CompleteTypeObject` (the Minimal variant uses the
+        // identical IDL switch (octet) labels).
         let mut encode_discriminator = |buf: &mut [u8]| -> Result<usize, CdrError> {
             let mut local = 0;
             let discriminator: u8 = match self {
-                MinimalTypeObject::Struct(_) => 0x01,
-                MinimalTypeObject::Union(_) => 0x02,
-                MinimalTypeObject::Enumerated(_) => 0x03,
-                MinimalTypeObject::Bitmask(_) => 0x04,
-                MinimalTypeObject::Bitset(_) => 0x05,
-                MinimalTypeObject::Sequence(_) => 0x06,
-                MinimalTypeObject::Array(_) => 0x07,
-                MinimalTypeObject::Map(_) => 0x08,
-                MinimalTypeObject::Alias(_) => 0x09,
-                MinimalTypeObject::Annotation(_) => 0x0A,
+                MinimalTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
+                MinimalTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
+                MinimalTypeObject::Enumerated(_) => TypeKind::TK_ENUM.to_u8(),
+                MinimalTypeObject::Bitmask(_) => TypeKind::TK_BITMASK.to_u8(),
+                MinimalTypeObject::Bitset(_) => TypeKind::TK_BITSET.to_u8(),
+                MinimalTypeObject::Sequence(_) => TypeKind::TK_SEQUENCE.to_u8(),
+                MinimalTypeObject::Array(_) => TypeKind::TK_ARRAY.to_u8(),
+                MinimalTypeObject::Map(_) => TypeKind::TK_MAP.to_u8(),
+                MinimalTypeObject::Alias(_) => TypeKind::TK_ALIAS.to_u8(),
+                MinimalTypeObject::Annotation(_) => TypeKind::TK_ANNOTATION.to_u8(),
             };
             encode_u8(discriminator, buf, &mut local)?;
             Ok(local)
@@ -212,67 +220,67 @@ impl Cdr2Encode for MinimalTypeObject {
 impl Cdr2Decode for MinimalTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
+        const TK_STRUCTURE: u8 = TypeKind::TK_STRUCTURE.to_u8();
+        const TK_UNION: u8 = TypeKind::TK_UNION.to_u8();
+        const TK_ENUM: u8 = TypeKind::TK_ENUM.to_u8();
+        const TK_BITMASK: u8 = TypeKind::TK_BITMASK.to_u8();
+        const TK_BITSET: u8 = TypeKind::TK_BITSET.to_u8();
+        const TK_SEQUENCE: u8 = TypeKind::TK_SEQUENCE.to_u8();
+        const TK_ARRAY: u8 = TypeKind::TK_ARRAY.to_u8();
+        const TK_MAP: u8 = TypeKind::TK_MAP.to_u8();
+        const TK_ALIAS: u8 = TypeKind::TK_ALIAS.to_u8();
+        const TK_ANNOTATION: u8 = TypeKind::TK_ANNOTATION.to_u8();
 
+        let mut offset = 0;
         let discriminator = decode_u8(src, &mut offset)?;
 
         match discriminator {
-            0x01 => {
-                // Struct
+            TK_STRUCTURE => {
                 let (s, used) = MinimalStructType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Struct(s), offset))
             }
-            0x02 => {
-                // Union
+            TK_UNION => {
                 let (u, used) = MinimalUnionType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Union(u), offset))
             }
-            0x03 => {
-                // Enumerated
+            TK_ENUM => {
                 let (e, used) = MinimalEnumeratedType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Enumerated(e), offset))
             }
-            0x04 => {
-                // Bitmask
+            TK_BITMASK => {
                 let (b, used) = MinimalBitmaskType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Bitmask(b), offset))
             }
-            0x05 => {
-                // Bitset
+            TK_BITSET => {
                 let (b, used) = MinimalBitsetType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Bitset(b), offset))
             }
-            0x06 => {
-                // Sequence
+            TK_SEQUENCE => {
                 let (s, used) = MinimalSequenceType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Sequence(s), offset))
             }
-            0x07 => {
-                // Array
+            TK_ARRAY => {
                 let (a, used) = MinimalArrayType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Array(a), offset))
             }
-            0x08 => {
-                // Map
+            TK_MAP => {
                 let (m, used) = MinimalMapType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Map(m), offset))
             }
-            0x09 => {
-                // Alias
+            TK_ALIAS => {
                 let (a, used) = MinimalAliasType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Alias(a), offset))
             }
-            0x0A => {
-                // Annotation
+            TK_ANNOTATION => {
                 let (a, used) = MinimalAnnotationType::decode_cdr2_le(&src[offset..])?;
                 offset += used;
                 Ok((MinimalTypeObject::Annotation(a), offset))

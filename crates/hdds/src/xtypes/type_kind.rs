@@ -76,31 +76,31 @@ pub enum TypeKind {
     TK_ALIAS = 0x30,
 
     /// Enumeration
-    TK_ENUM = 0x31,
+    TK_ENUM = 0x40,
 
     /// Bitmask
-    TK_BITMASK = 0x32,
+    TK_BITMASK = 0x41,
 
     /// Annotation (IDL 4.2)
-    TK_ANNOTATION = 0x33,
+    TK_ANNOTATION = 0x50,
 
     /// Structure (struct)
-    TK_STRUCTURE = 0x40,
+    TK_STRUCTURE = 0x51,
 
     /// Union (discriminated union)
-    TK_UNION = 0x41,
+    TK_UNION = 0x52,
 
     /// Bitset (IDL 4.2 bitfield struct)
-    TK_BITSET = 0x42,
+    TK_BITSET = 0x53,
 
     /// Sequence (bounded or unbounded)
-    TK_SEQUENCE = 0x50,
+    TK_SEQUENCE = 0x60,
 
     /// Array (fixed-size, multi-dimensional)
-    TK_ARRAY = 0x51,
+    TK_ARRAY = 0x61,
 
     /// Map (key-value collection)
-    TK_MAP = 0x52,
+    TK_MAP = 0x62,
 }
 
 impl TypeKind {
@@ -195,15 +195,15 @@ impl TypeKind {
             TypeKind::TK_STRING8 => 0x20,
             TypeKind::TK_STRING16 => 0x21,
             TypeKind::TK_ALIAS => 0x30,
-            TypeKind::TK_ENUM => 0x31,
-            TypeKind::TK_BITMASK => 0x32,
-            TypeKind::TK_ANNOTATION => 0x33,
-            TypeKind::TK_STRUCTURE => 0x40,
-            TypeKind::TK_UNION => 0x41,
-            TypeKind::TK_BITSET => 0x42,
-            TypeKind::TK_SEQUENCE => 0x50,
-            TypeKind::TK_ARRAY => 0x51,
-            TypeKind::TK_MAP => 0x52,
+            TypeKind::TK_ENUM => 0x40,
+            TypeKind::TK_BITMASK => 0x41,
+            TypeKind::TK_ANNOTATION => 0x50,
+            TypeKind::TK_STRUCTURE => 0x51,
+            TypeKind::TK_UNION => 0x52,
+            TypeKind::TK_BITSET => 0x53,
+            TypeKind::TK_SEQUENCE => 0x60,
+            TypeKind::TK_ARRAY => 0x61,
+            TypeKind::TK_MAP => 0x62,
         }
     }
 
@@ -229,15 +229,15 @@ impl TypeKind {
             0x20 => Some(TypeKind::TK_STRING8),
             0x21 => Some(TypeKind::TK_STRING16),
             0x30 => Some(TypeKind::TK_ALIAS),
-            0x31 => Some(TypeKind::TK_ENUM),
-            0x32 => Some(TypeKind::TK_BITMASK),
-            0x33 => Some(TypeKind::TK_ANNOTATION),
-            0x40 => Some(TypeKind::TK_STRUCTURE),
-            0x41 => Some(TypeKind::TK_UNION),
-            0x42 => Some(TypeKind::TK_BITSET),
-            0x50 => Some(TypeKind::TK_SEQUENCE),
-            0x51 => Some(TypeKind::TK_ARRAY),
-            0x52 => Some(TypeKind::TK_MAP),
+            0x40 => Some(TypeKind::TK_ENUM),
+            0x41 => Some(TypeKind::TK_BITMASK),
+            0x50 => Some(TypeKind::TK_ANNOTATION),
+            0x51 => Some(TypeKind::TK_STRUCTURE),
+            0x52 => Some(TypeKind::TK_UNION),
+            0x53 => Some(TypeKind::TK_BITSET),
+            0x60 => Some(TypeKind::TK_SEQUENCE),
+            0x61 => Some(TypeKind::TK_ARRAY),
+            0x62 => Some(TypeKind::TK_MAP),
             _ => None,
         }
     }
@@ -293,7 +293,7 @@ mod tests {
     fn test_typekind_from_u8() {
         assert_eq!(TypeKind::from_u8(0x01), Some(TypeKind::TK_BOOLEAN));
         assert_eq!(TypeKind::from_u8(0x04), Some(TypeKind::TK_INT32));
-        assert_eq!(TypeKind::from_u8(0x40), Some(TypeKind::TK_STRUCTURE));
+        assert_eq!(TypeKind::from_u8(0x51), Some(TypeKind::TK_STRUCTURE));
         assert_eq!(TypeKind::from_u8(0xFF), None);
     }
 
@@ -301,6 +301,45 @@ mod tests {
     fn test_typekind_repr() {
         assert_eq!(TypeKind::TK_BOOLEAN.to_u8(), 0x01);
         assert_eq!(TypeKind::TK_INT32.to_u8(), 0x04);
-        assert_eq!(TypeKind::TK_STRUCTURE.to_u8(), 0x40);
+        assert_eq!(TypeKind::TK_STRUCTURE.to_u8(), 0x51);
+    }
+
+    /// Lock all `TypeKind` octet values against the OMG DDS-XTypes v1.3
+    /// IDL block at lines 12193-12238 of the spec PDF
+    /// (`docs/_privates/specs/DDS-XTypes-1.3.txt:12219-12238`). Any drift
+    /// in these constants would silently break cross-vendor TypeObject
+    /// matching, since the same values are reused as discriminator
+    /// labels in the TypeObject IDL union (§7.3.4.5) and as case labels
+    /// in `AnnotationParameterValue` (§7.3.4.8.10).
+    #[test]
+    fn typekind_octets_match_xtypes_v1_3_spec() {
+        assert_eq!(TypeKind::TK_NONE.to_u8(), 0x00);
+        assert_eq!(TypeKind::TK_BOOLEAN.to_u8(), 0x01);
+        assert_eq!(TypeKind::TK_BYTE.to_u8(), 0x02);
+        assert_eq!(TypeKind::TK_INT16.to_u8(), 0x03);
+        assert_eq!(TypeKind::TK_INT32.to_u8(), 0x04);
+        assert_eq!(TypeKind::TK_INT64.to_u8(), 0x05);
+        assert_eq!(TypeKind::TK_UINT16.to_u8(), 0x06);
+        assert_eq!(TypeKind::TK_UINT32.to_u8(), 0x07);
+        assert_eq!(TypeKind::TK_UINT64.to_u8(), 0x08);
+        assert_eq!(TypeKind::TK_FLOAT32.to_u8(), 0x09);
+        assert_eq!(TypeKind::TK_FLOAT64.to_u8(), 0x0A);
+        assert_eq!(TypeKind::TK_FLOAT128.to_u8(), 0x0B);
+        assert_eq!(TypeKind::TK_INT8.to_u8(), 0x0C);
+        assert_eq!(TypeKind::TK_UINT8.to_u8(), 0x0D);
+        assert_eq!(TypeKind::TK_CHAR8.to_u8(), 0x10);
+        assert_eq!(TypeKind::TK_CHAR16.to_u8(), 0x11);
+        assert_eq!(TypeKind::TK_STRING8.to_u8(), 0x20);
+        assert_eq!(TypeKind::TK_STRING16.to_u8(), 0x21);
+        assert_eq!(TypeKind::TK_ALIAS.to_u8(), 0x30);
+        assert_eq!(TypeKind::TK_ENUM.to_u8(), 0x40);
+        assert_eq!(TypeKind::TK_BITMASK.to_u8(), 0x41);
+        assert_eq!(TypeKind::TK_ANNOTATION.to_u8(), 0x50);
+        assert_eq!(TypeKind::TK_STRUCTURE.to_u8(), 0x51);
+        assert_eq!(TypeKind::TK_UNION.to_u8(), 0x52);
+        assert_eq!(TypeKind::TK_BITSET.to_u8(), 0x53);
+        assert_eq!(TypeKind::TK_SEQUENCE.to_u8(), 0x60);
+        assert_eq!(TypeKind::TK_ARRAY.to_u8(), 0x61);
+        assert_eq!(TypeKind::TK_MAP.to_u8(), 0x62);
     }
 }
