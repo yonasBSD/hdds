@@ -313,9 +313,12 @@ mod tests {
     }
 
     /// `TypeIdentifier::StronglyConnected` -> TI_STRONGLY_CONNECTED_COMPONENT
-    /// (0xB0) per §7.3.4.4. Only the discriminator is migrated; the inner
-    /// payload layout still diverges from spec (no DHEADER, no inner
+    /// (0xB0) per §7.3.4.4. Only the top-level discriminator is migrated;
+    /// the inner payload still diverges from spec (no DHEADER, no inner
     /// `TypeObjectHashId` union discriminator) — flagged for a future fix.
+    /// The wire size is locked at 24 bytes: 1 octet discriminator + 14-byte
+    /// hash (offset 1..15) + 1 padding byte for CDR2 4-byte alignment of the
+    /// following `i32` (offset 15) + 4-byte `scc_length` + 4-byte `scc_index`.
     #[test]
     fn typeid_strongly_connected_writes_ti_scc_discriminator() {
         let id = TypeIdentifier::StronglyConnected(
@@ -328,10 +331,9 @@ mod tests {
         let mut buf = [0u8; 32];
         let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
         assert_eq!(buf[0], 0xB0);
-        assert!(
-            written >= 23,
-            "expected at least 23 wire bytes, got {}",
-            written
+        assert_eq!(
+            written, 24,
+            "SCC wire size must be exactly 24 bytes (1 discriminator + 14 hash + 1 pad + 2*4 i32)"
         );
     }
 
@@ -478,5 +480,49 @@ mod tests {
             TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode succeeds");
         assert_eq!(consumed, written);
         assert_eq!(decoded, original);
+    }
+
+    /// Symmetric round-trip for `TI_STRONGLY_CONNECTED_COMPONENT` (0xB0):
+    /// encoder writes 14-byte hash + 1 padding byte + two `i32`s (24 bytes
+    /// total), decoder consumes the same bytes and reconstructs the same
+    /// `StronglyConnectedComponentId`. Guards against asymmetric drift on
+    /// the SCC payload alignment between the two halves.
+    #[test]
+    fn typeid_strongly_connected_round_trip() {
+        let original = TypeIdentifier::StronglyConnected(
+            crate::xtypes::type_id::StronglyConnectedComponentId {
+                sc_component_id: EquivalenceHash::from_bytes([0xCC; 14]),
+                scc_length: 7,
+                scc_index: 3,
+            },
+        );
+        let mut buf = [0u8; 32];
+        let written = original.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0xB0);
+
+        let (decoded, consumed) =
+            TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode succeeds");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, original);
+    }
+
+    /// Per OMG DDS-XTypes v1.3 §7.3.4 IDL TypeKinds block, the
+    /// primitive-range bytes `0x0E` and `0x0F` are gaps (TK_UINT8 ends
+    /// at 0x0D, TK_CHAR8 starts at 0x10). The decoder must reject them
+    /// rather than silently widening the accepted set if a future
+    /// `TypeKind` variant is added in that range without coordination
+    /// with this match arm.
+    #[test]
+    fn typeid_decoder_rejects_undefined_primitive_bytes() {
+        for byte in [0x0E_u8, 0x0F] {
+            let buf = [byte];
+            let result = TypeIdentifier::decode_cdr2_le(&buf);
+            assert!(
+                matches!(result, Err(CdrError::Other(_))),
+                "byte 0x{:02X} must be rejected (undefined primitive TypeKind), got {:?}",
+                byte,
+                result
+            );
+        }
     }
 }
