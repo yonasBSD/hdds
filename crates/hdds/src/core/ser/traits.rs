@@ -292,6 +292,30 @@ macro_rules! impl_cdr2_primitive {
             fn max_cdr2_size(&self) -> usize {
                 $size
             }
+
+            /// Spec-compliant XCDR2 primitive encoding per
+            /// DDS-XTypes v1.3 §7.4.3.4.1 Tab.15. Alignment caps at 4 for
+            /// 8-byte primitives (i64/u64/f64); smaller types align on
+            /// their own size. Padding bytes are written as zeros to
+            /// match Fast DDS / Connext / OpenDDS / Cyclone DDS wire
+            /// output (XCDR2 §7.4.3.4.2 mandates zero padding for
+            /// reproducible hashing of TypeObject byte sequences).
+            fn encode_cdr2_le_at(
+                &self,
+                dst: &mut [u8],
+                offset: &mut usize,
+            ) -> Result<(), CdrError> {
+                let align: usize = if $size > 4 { 4 } else { $size };
+                let pad = (align - (*offset % align)) % align;
+                if *offset + pad + $size > dst.len() {
+                    return Err(CdrError::BufferTooSmall);
+                }
+                dst[*offset..*offset + pad].fill(0);
+                *offset += pad;
+                dst[*offset..*offset + $size].copy_from_slice(&self.to_le_bytes());
+                *offset += $size;
+                Ok(())
+            }
         }
 
         impl Cdr2Decode for $ty {
