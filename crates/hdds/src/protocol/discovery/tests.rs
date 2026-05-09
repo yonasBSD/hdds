@@ -302,6 +302,7 @@ fn test_build_sedp_roundtrip_with_type_object() {
         has_explicit_reliability: false,
         has_explicit_ownership: false,
         has_ownership_strength: false,
+        type_information: None,
     };
 
     let mut buf = vec![0u8; 2048];
@@ -329,6 +330,7 @@ fn test_build_sedp_roundtrip_without_type_object() {
         has_explicit_reliability: false,
         has_explicit_ownership: false,
         has_ownership_strength: false,
+        type_information: None,
     };
 
     let mut buf = vec![0u8; 1024];
@@ -356,6 +358,7 @@ fn test_sedp_pid_order_endpoint_then_participant() {
         has_explicit_reliability: false,
         has_explicit_ownership: false,
         has_ownership_strength: false,
+        type_information: None,
     };
 
     let mut buf = vec![0u8; 1024];
@@ -389,6 +392,7 @@ fn test_build_sedp_buffer_too_small() {
         has_explicit_reliability: false,
         has_explicit_ownership: false,
         has_ownership_strength: false,
+        type_information: None,
     };
 
     let mut buf = vec![0u8; 16];

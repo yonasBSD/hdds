@@ -18,11 +18,13 @@ use crate::protocol::discovery::constants::{
     PID_DATA_REPRESENTATION, PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE,
     PID_ENDPOINT_GUID, PID_HISTORY, PID_LIFESPAN, PID_METATRAFFIC_UNICAST_LOCATOR, PID_OWNERSHIP,
     PID_OWNERSHIP_STRENGTH, PID_PARTICIPANT_GUID, PID_PARTICIPANT_LEASE_DURATION, PID_PARTITION,
-    PID_PRESENTATION, PID_RELIABILITY, PID_SENTINEL, PID_TOPIC_NAME, PID_TYPE_NAME,
-    PID_TYPE_OBJECT, PID_TYPE_OBJECT_LB, PID_UNICAST_LOCATOR, PID_USER_DATA,
+    PID_PRESENTATION, PID_RELIABILITY, PID_SENTINEL, PID_TOPIC_NAME, PID_TYPE_INFORMATION,
+    PID_TYPE_NAME, PID_TYPE_OBJECT, PID_TYPE_OBJECT_LB, PID_UNICAST_LOCATOR, PID_USER_DATA,
 };
 use crate::protocol::discovery::hash::simple_hash;
-use crate::protocol::discovery::types::{ParseError, SedpData};
+use crate::protocol::discovery::types::{
+    ParseError, SedpData, TypeIdentifierWithDependencies, TypeInformation,
+};
 use crate::xtypes::{decompress_type_object, CompleteTypeObject};
 use crate::Cdr2Decode;
 
@@ -207,6 +209,114 @@ fn parse_presentation(
     ))
 }
 
+/// Parse `PID_TYPE_INFORMATION` (0x0075) per OMG DDS-XTypes v1.3 §7.6.3.2.
+///
+/// Wire layout (mirrors the encoder at
+/// `protocol::discovery::sedp::build::type_information`):
+///
+/// ```text
+/// PARAM_LEN = 92
+/// ├ DHEADER          u32 LE  = 88
+/// ├ Member 0x1001 (minimal)  — 44 bytes
+/// │ ├ EMHEADER1      u32 LE  (M=0, LC=5, MID=0x1001)
+/// │ ├ NEXTINT        u32 LE  = 36
+/// │ ├ INNER_LEN      u32 LE  = 20
+/// │ ├ EK_*           u8      = 0xF1 (minimal) or 0xF2 (complete)
+/// │ ├ hash           [u8;14]
+/// │ ├ pad            u8
+/// │ ├ size           u32 LE  (typeobject_serialized_size)
+/// │ └ tail           [u32;3] (Fast DDS sentinel, ignored)
+/// └ Member 0x1002 (complete) — 44 bytes (same shape)
+/// ```
+///
+/// The decoder is tolerant: any anomaly in DHEADER, EMHEADER, or member
+/// length is logged and the offending member is skipped without aborting
+/// the rest of the SEDP parse — `PID_TYPE_INFORMATION` is non-critical for
+/// discovery (matching falls back to `PID_TOPIC_NAME` + `PID_TYPE_NAME` +
+/// QoS), so a malformed value must never poison the SEDP packet.
+pub(crate) fn parse_type_information(buf: &[u8]) -> Option<TypeInformation> {
+    use crate::xtypes::EquivalenceHash;
+
+    if buf.len() < 92 {
+        log::debug!(
+            "[SEDP-PARSE] PID_TYPE_INFORMATION too short: {} bytes (need >= 92)",
+            buf.len()
+        );
+        return None;
+    }
+
+    // DHEADER: TypeInformation @mutable content size. Spec value is 88
+    // (PARAM_LEN 92 minus the 4-byte DHEADER itself); divergence is
+    // logged but not fatal.
+    let dheader = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    if dheader != 88 {
+        log::debug!(
+            "[SEDP-PARSE] PID_TYPE_INFORMATION DHEADER unexpected: {} (want 88)",
+            dheader
+        );
+    }
+
+    let mut info = TypeInformation::default();
+    let mut member_offset = 4;
+    for member_idx in 0..2 {
+        if member_offset + 44 > buf.len() {
+            log::debug!(
+                "[SEDP-PARSE] PID_TYPE_INFORMATION member {} truncated at offset {}",
+                member_idx,
+                member_offset
+            );
+            break;
+        }
+
+        // EMHEADER1: M=0, LC=5, MID=member_id (lower 28 bits).
+        let emheader = u32::from_le_bytes([
+            buf[member_offset],
+            buf[member_offset + 1],
+            buf[member_offset + 2],
+            buf[member_offset + 3],
+        ]);
+        let mid = emheader & 0x0FFF_FFFF;
+
+        // Skip NEXTINT (4) + INNER_LEN (4) -> 8 bytes, then read the
+        // TypeIdentifier discriminator + 14-byte hash + 1 byte pad + 4
+        // bytes typeobject_serialized_size. Trailing 12-byte sentinel is
+        // ignored on RX (Fast DDS-mimic, see ADR §7bis).
+        let inner_offset = member_offset + 12;
+        let _disc = buf[inner_offset]; // EK_MINIMAL or EK_COMPLETE; trusted but not enforced.
+        let mut hash_bytes = [0u8; 14];
+        hash_bytes.copy_from_slice(&buf[inner_offset + 1..inner_offset + 15]);
+        let hash = EquivalenceHash::from_bytes(hash_bytes);
+        // pad at inner_offset + 15
+        let size = u32::from_le_bytes([
+            buf[inner_offset + 16],
+            buf[inner_offset + 17],
+            buf[inner_offset + 18],
+            buf[inner_offset + 19],
+        ]);
+
+        let entry = TypeIdentifierWithDependencies {
+            hash,
+            typeobject_serialized_size: size,
+        };
+
+        match mid {
+            0x1001 => info.minimal = Some(entry),
+            0x1002 => info.complete = Some(entry),
+            other => log::debug!(
+                "[SEDP-PARSE] PID_TYPE_INFORMATION unknown member MID: 0x{:08X}",
+                other
+            ),
+        }
+
+        member_offset += 44;
+    }
+
+    if info.minimal.is_none() && info.complete.is_none() {
+        return None;
+    }
+    Some(info)
+}
+
 /// Parse SEDP DATA submessage payload.
 ///
 /// # Arguments
@@ -316,6 +426,7 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
     let mut participant_guid: Option<GUID> = None; // v110: Parse PID_PARTICIPANT_GUID for FastDDS interop
     let mut endpoint_guid: Option<GUID> = None;
     let mut type_object: Option<CompleteTypeObject> = None;
+    let mut type_information: Option<crate::protocol::discovery::types::TypeInformation> = None;
     let mut is_participant_data = false; // v59: Detect ParticipantData vs Publication/Subscription
 
     // v61: Build QoS from PIDs instead of throwing them away
@@ -438,6 +549,15 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
                             );
                         }
                     }
+                }
+            }
+            PID_TYPE_INFORMATION => {
+                // OMG DDS-XTypes v1.3 §7.6.3.2 — non-critical for matching
+                // (name-based fallback applies); decode best-effort and
+                // store on success. See `parse_type_information` docstring
+                // for the wire layout + tolerance policy.
+                if length > 0 {
+                    type_information = parse_type_information(&buf[offset..offset + length]);
                 }
             }
             PID_RELIABILITY => {
@@ -881,6 +1001,7 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
         has_ownership_strength: qos_ownership_strength.is_some(),
         qos, // v61: Return actual QoS parsed from PIDs!
         type_object,
+        type_information,
         unicast_locators, // v143: Now parsed from PID_UNICAST_LOCATOR for OpenDDS interop
         user_data,
     })

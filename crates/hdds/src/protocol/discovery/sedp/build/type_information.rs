@@ -59,7 +59,9 @@
 //! the same logical type.
 
 use crate::core::ser::traits::Cdr2Encode;
-use crate::protocol::discovery::types::ParseError;
+use crate::protocol::discovery::types::{
+    ParseError, TypeIdentifierWithDependencies, TypeInformation,
+};
 use crate::xtypes::discriminators::{EK_COMPLETE, EK_MINIMAL};
 use crate::xtypes::{
     CompleteStructType, CompleteTypeObject, EquivalenceHash, MinimalMemberDetail,
@@ -184,29 +186,48 @@ fn write_member(
     Ok(())
 }
 
-/// Emit `PID_TYPE_INFORMATION` (0x0075) for the given `CompleteTypeObject`.
+/// Derive a `TypeInformation` from a `CompleteTypeObject`. Returns `None`
+/// when the type cannot produce a `MinimalTypeObject` today (non-Struct
+/// variants — Chantier 1.6 will extend coverage), or when the underlying
+/// CDR2 encoding fails. Both fields of the returned struct are populated
+/// (`minimal` + `complete`) when derivation succeeds; partial derivation
+/// is currently not supported and would surface as `None` from this
+/// helper.
+pub(super) fn derive_type_information(type_obj: &CompleteTypeObject) -> Option<TypeInformation> {
+    let minimal_obj = derive_minimal(type_obj)?;
+    let complete_hash = type_obj.compute_equivalence_hash().ok()?;
+    let minimal_hash = minimal_obj.compute_equivalence_hash().ok()?;
+    let complete_size = cdr2_size_complete(type_obj).ok()?;
+    let minimal_size = cdr2_size_minimal(&minimal_obj).ok()?;
+    Some(TypeInformation {
+        minimal: Some(TypeIdentifierWithDependencies {
+            hash: minimal_hash,
+            typeobject_serialized_size: minimal_size,
+        }),
+        complete: Some(TypeIdentifierWithDependencies {
+            hash: complete_hash,
+            typeobject_serialized_size: complete_size,
+        }),
+    })
+}
+
+/// Emit `PID_TYPE_INFORMATION` (0x0075) for the given `TypeInformation`.
 ///
-/// Returns `Ok(false)` (without writing anything) when the type cannot
-/// produce a `MinimalTypeObject` today (non-Struct variants); the caller
-/// should treat this as a soft skip rather than a fatal error.
+/// Both members must be present (`minimal` + `complete`) — the wire
+/// layout reserves 92 bytes total for both, and Fast DDS / Connext / etc.
+/// expect the EMHEADER1 sequence `0x1001` followed by `0x1002`. Partial
+/// `TypeInformation` is rejected with a soft `Ok(false)` so the rest of
+/// the SEDP packet remains intact (caller must use `derive_type_information`
+/// upstream to populate both fields, or skip the PID emission).
 pub(super) fn write_type_information(
-    type_obj: &CompleteTypeObject,
+    info: &TypeInformation,
     buf: &mut [u8],
     offset: &mut usize,
 ) -> Result<bool, ParseError> {
-    let minimal = match derive_minimal(type_obj) {
-        Some(m) => m,
-        None => return Ok(false),
+    let (minimal, complete) = match (info.minimal.as_ref(), info.complete.as_ref()) {
+        (Some(m), Some(c)) => (m, c),
+        _ => return Ok(false),
     };
-
-    let complete_hash = type_obj
-        .compute_equivalence_hash()
-        .map_err(|_| ParseError::EncodingError)?;
-    let minimal_hash = minimal
-        .compute_equivalence_hash()
-        .map_err(|_| ParseError::EncodingError)?;
-    let complete_size = cdr2_size_complete(type_obj)?;
-    let minimal_size = cdr2_size_minimal(&minimal)?;
 
     let total = 4 + PAYLOAD_LEN as usize;
     if *offset + total > buf.len() {
@@ -224,15 +245,22 @@ pub(super) fn write_type_information(
     *offset += 4;
 
     // Member 0x1001: minimal
-    write_member(buf, offset, 0x1001, EK_MINIMAL, &minimal_hash, minimal_size)?;
+    write_member(
+        buf,
+        offset,
+        0x1001,
+        EK_MINIMAL,
+        &minimal.hash,
+        minimal.typeobject_serialized_size,
+    )?;
     // Member 0x1002: complete
     write_member(
         buf,
         offset,
         0x1002,
         EK_COMPLETE,
-        &complete_hash,
-        complete_size,
+        &complete.hash,
+        complete.typeobject_serialized_size,
     )?;
 
     Ok(true)
@@ -275,13 +303,20 @@ mod tests {
         })
     }
 
+    /// Convenience: derive the `TypeInformation` for the standard
+    /// Temperature fixture used across tests below.
+    fn temperature_info() -> TypeInformation {
+        derive_type_information(&temperature_complete())
+            .expect("Struct fixture must derive a TypeInformation")
+    }
+
     #[test]
     fn type_information_payload_is_92_bytes() {
-        let type_obj = temperature_complete();
+        let info = temperature_info();
         let mut buf = [0u8; 256];
         let mut offset = 0;
 
-        let written = write_type_information(&type_obj, &mut buf, &mut offset)
+        let written = write_type_information(&info, &mut buf, &mut offset)
             .expect("write should succeed for struct types");
         assert!(written, "Struct types must emit PID_TYPE_INFORMATION");
         assert_eq!(offset, 4 + 92, "PID header (4) + payload (92) bytes total");
@@ -289,11 +324,11 @@ mod tests {
 
     #[test]
     fn type_information_pid_and_length_header() {
-        let type_obj = temperature_complete();
+        let info = temperature_info();
         let mut buf = [0u8; 256];
         let mut offset = 0;
 
-        write_type_information(&type_obj, &mut buf, &mut offset).expect("emit succeeds");
+        write_type_information(&info, &mut buf, &mut offset).expect("emit succeeds");
 
         assert_eq!(&buf[0..2], &PID_TYPE_INFORMATION.to_le_bytes());
         assert_eq!(&buf[2..4], &PAYLOAD_LEN.to_le_bytes());
@@ -303,11 +338,11 @@ mod tests {
 
     #[test]
     fn type_information_emheaders_match_fastdds() {
-        let type_obj = temperature_complete();
+        let info = temperature_info();
         let mut buf = [0u8; 256];
         let mut offset = 0;
 
-        write_type_information(&type_obj, &mut buf, &mut offset).expect("emit succeeds");
+        write_type_information(&info, &mut buf, &mut offset).expect("emit succeeds");
 
         // Member 0x1001 EMHEADER1 starts at offset 8 (after PID header + DHEADER).
         let emheader_minimal = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
@@ -326,11 +361,11 @@ mod tests {
 
     #[test]
     fn type_information_discriminators_are_spec_compliant() {
-        let type_obj = temperature_complete();
+        let info = temperature_info();
         let mut buf = [0u8; 256];
         let mut offset = 0;
 
-        write_type_information(&type_obj, &mut buf, &mut offset).expect("emit succeeds");
+        write_type_information(&info, &mut buf, &mut offset).expect("emit succeeds");
 
         // Minimal TypeIdentifier discriminator at offset 8 + 12 = 20.
         assert_eq!(buf[20], EK_MINIMAL, "minimal must use EK_MINIMAL (0xF1)");
@@ -348,10 +383,11 @@ mod tests {
 
     #[test]
     fn derive_minimal_returns_none_for_non_struct() {
-        // Contract: `derive_minimal` returns Some only for the Struct
-        // variant; every other CompleteTypeObject must soft-skip
-        // PID_TYPE_INFORMATION emission today (Chantier 1.6 will extend
-        // coverage to collections/annotations).
+        // Contract: `derive_minimal` (and therefore `derive_type_information`)
+        // returns `Some` only for the Struct variant; every other
+        // `CompleteTypeObject` must soft-skip PID_TYPE_INFORMATION emission
+        // today (Chantier 1.6 will extend coverage to collections /
+        // annotations).
         use crate::xtypes::{
             AliasTypeFlag, CommonAliasBody, CompleteAliasBody, CompleteAliasHeader,
             CompleteAliasType, TypeRelationFlag,
@@ -362,6 +398,10 @@ mod tests {
         assert!(
             derive_minimal(&struct_to).is_some(),
             "Struct variant must produce a MinimalTypeObject"
+        );
+        assert!(
+            derive_type_information(&struct_to).is_some(),
+            "Struct variant must produce a TypeInformation"
         );
 
         // None for Alias -- one of the simplest non-Struct variants and
@@ -384,15 +424,44 @@ mod tests {
             derive_minimal(&alias_to).is_none(),
             "Alias variant must NOT produce a MinimalTypeObject (soft-skip)"
         );
+        assert!(
+            derive_type_information(&alias_to).is_none(),
+            "Alias variant must NOT produce a TypeInformation (soft-skip)"
+        );
 
-        // The end-to-end soft-skip: write_type_information must return
-        // Ok(false) and leave the buffer untouched.
+        // The end-to-end soft-skip: a `TypeInformation` with both fields
+        // missing must surface as `Ok(false)` and leave the buffer
+        // untouched.
+        let empty_info = TypeInformation::default();
         let mut buf = [0xAAu8; 256];
         let mut offset = 0;
-        let written = write_type_information(&alias_to, &mut buf, &mut offset)
-            .expect("non-Struct soft-skip must not be a fatal error");
-        assert!(!written, "non-Struct must soft-skip emission");
+        let written = write_type_information(&empty_info, &mut buf, &mut offset)
+            .expect("partial TypeInformation soft-skip must not be a fatal error");
+        assert!(!written, "default TypeInformation must soft-skip emission");
         assert_eq!(offset, 0, "offset must not advance on soft-skip");
         assert_eq!(buf[0], 0xAA, "buffer must remain untouched on soft-skip");
+    }
+
+    /// TX/RX symmetry: encode a TypeInformation, then decode the wire
+    /// bytes (skipping the 4-byte PID header) and assert the parsed
+    /// struct equals the input. Confirms the build/parse pair is a
+    /// faithful round-trip, including the FastDDS-mimic 12-byte sentinel
+    /// which the parser must consume without error.
+    #[test]
+    fn type_information_round_trip_via_parse() {
+        let info = temperature_info();
+        let mut buf = [0u8; 256];
+        let mut offset = 0;
+        let written = write_type_information(&info, &mut buf, &mut offset)
+            .expect("emit succeeds for Struct fixture");
+        assert!(written);
+
+        // The PID header occupies bytes 0..4; the parser receives the
+        // remaining `length` bytes (DHEADER + 2 members = 92 bytes).
+        let payload = &buf[4..offset];
+        let parsed = crate::protocol::discovery::sedp::parse::parse_type_information(payload)
+            .expect("parser accepts well-formed wire bytes");
+
+        assert_eq!(parsed, info, "round-trip must preserve TypeInformation");
     }
 }

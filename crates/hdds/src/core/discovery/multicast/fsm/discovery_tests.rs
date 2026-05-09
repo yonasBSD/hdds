@@ -153,6 +153,7 @@
             has_explicit_reliability: false,
             has_explicit_ownership: false,
             has_ownership_strength: false,
+            type_information: None,
         };
 
         fsm.handle_sedp(sedp_data);
@@ -192,6 +193,7 @@
             has_explicit_reliability: false,
             has_explicit_ownership: false,
             has_ownership_strength: false,
+            type_information: None,
         };
 
         fsm.handle_sedp(sedp_data);

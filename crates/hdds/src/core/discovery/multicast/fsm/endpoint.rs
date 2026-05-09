@@ -154,6 +154,7 @@ impl EndpointInfo {
     ///     qos_hash: 12345,
     ///     qos: None,
     ///     type_object: None,
+    ///     type_information: None,
     ///     unicast_locators: vec![],
     ///     user_data: None,
     ///     has_explicit_reliability: false,

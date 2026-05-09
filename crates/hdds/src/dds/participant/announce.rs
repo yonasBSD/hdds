@@ -130,6 +130,7 @@ impl Participant {
             has_explicit_reliability: false,
             has_explicit_ownership: false,
             has_ownership_strength: false,
+            type_information: None,
         };
 
         // Cache announcement for unicast replay / re-announces driven by SPDP
@@ -276,6 +277,7 @@ impl Participant {
             has_explicit_reliability: false,
             has_explicit_ownership: false,
             has_ownership_strength: false,
+            type_information: None,
         };
 
         // Cache announcement for unicast replay to discovered peers

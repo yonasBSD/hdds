@@ -23,6 +23,11 @@ pub(super) const PID_PROPERTY_LIST: u16 = 0x0059;
 pub(super) const PID_ENTITY_NAME: u16 = 0x0062;
 pub(super) const PID_TYPE_OBJECT: u16 = 0x0072;
 pub(super) const PID_DATA_REPRESENTATION: u16 = 0x0073;
+/// `PID_TYPE_INFORMATION` per OMG DDS-XTypes v1.3 §7.6.3.2 — carries
+/// `TypeIdentifierWithDependencies` for Minimal + Complete TypeObject views,
+/// consulted by cross-vendor readers (Fast DDS 3.x, Connext 7.x, ...) to
+/// resolve type-identifier matching alongside `PID_TYPE_OBJECT`.
+pub(crate) const PID_TYPE_INFORMATION: u16 = 0x0075;
 
 // Endpoint identification PIDs
 pub(crate) const PID_KEY_HASH: u16 = 0x0070; // DDS-RTPS Sec.9.6.2.2.1 - KeyHash_t parameter

@@ -8,16 +8,21 @@
 //! OpenDDS sends TypeInformation in its DATA(w) and expects it back in DATA(r)
 //! for proper endpoint matching.
 //!
-//! # Wire Format (from OpenDDS capture)
+//! # Wire Format (captured from OpenDDS over the wire)
 //!
-//! OpenDDS PID_TYPE_INFORMATION is 88 bytes:
+//! `OPENDDS_TEMPERATURE_TYPE_INFO` is 88 bytes total: a 4-byte
+//! TypeInformation DHEADER (value 0x54 = 84 bytes following) followed
+//! by 48 bytes of minimal `TypeIdentifierWithDependencies` and 36 bytes
+//! of complete `TypeIdentifierWithDependencies`.
+//!
 //! ```text
 //! PID: 75 00 (0x0075 = PID_TYPE_INFORMATION)
-//! LEN: 54 00 (0x0054 = 84 bytes payload)
+//! LEN: 58 00 (0x0058 = 88 bytes payload, matches captured array length)
 //!
-//! TypeInformation structure:
-//! - TypeIdentifierWithDependencies minimal (TypeFlag + TypeId + dep count)
-//! - TypeIdentifierWithDependencies complete (TypeFlag + TypeId + dep count)
+//! TypeInformation structure (88 bytes payload):
+//! - DHEADER (4 bytes, value 84)
+//! - TypeIdentifierWithDependencies minimal (48 bytes including empty deps)
+//! - TypeIdentifierWithDependencies complete (36 bytes)
 //! ```
 //!
 //! # Minimal TypeInformation for Basic Types

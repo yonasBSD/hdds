@@ -76,6 +76,7 @@ impl DialectEncoder for FastDdsEncoder {
             has_explicit_reliability: false,
             has_explicit_ownership: false,
             has_ownership_strength: false,
+            type_information: None,
         };
 
         // Use certified builder (8KB buffer matches original)

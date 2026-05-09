@@ -202,6 +202,7 @@ impl DialectEncoder for HddsEncoder {
             has_explicit_reliability: false,
             has_explicit_ownership: false,
             has_ownership_strength: false,
+            type_information: None,
         };
 
         let mut buf = vec![0u8; 8192];

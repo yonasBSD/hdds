@@ -81,9 +81,21 @@ pub fn build_sedp(data: &SedpEndpointData) -> EncodeResult<Vec<u8>> {
     // and may not expect it in DATA(r). The TypeInformation hash matching should suffice.
     // metadata::write_type_consistency(&mut buf, &mut offset)?;
 
-    // PID_TYPE_INFORMATION (0x0075) - XTypes TypeInformation
-    // Required for OpenDDS XTypes matching - TYPE_CONSISTENCY fallback doesn't work
-    type_info::write_type_information(&mut buf, &mut offset)?;
+    // PID_TYPE_INFORMATION (0x0075) — captured-bytes-replay scoped to
+    // `TemperatureModule::Temperature`. The captured payload encodes
+    // OpenDDS' MD5 hash for that specific type; re-emitting it for any
+    // other type would advertise a wrong hash and break matching. The
+    // generic SEDP path at `protocol::discovery::sedp::build::type_information`
+    // computes spec-compliant hashes for any struct type, but the
+    // OpenDDS dialect doesn't carry a `CompleteTypeObject` in
+    // `SedpEndpointData` yet — bridging that gap (and retiring this
+    // captured replay) is tracked in ADR §7bis as a Chantier 1.7+ item.
+    if data.type_name == "Temperature" || data.type_name == "TemperatureModule::Temperature" {
+        // Match both the short form emitted by HDDS' IDL codegen (which strips
+        // the module prefix) and the fully-qualified DCPS_DATA_TYPE name from
+        // OpenDDS' IDL pragma. Any other type would advertise a wrong hash.
+        type_info::write_type_information(&mut buf, &mut offset)?;
+    }
 
     // ===== QOS SECTION =====
     qos::write_durability(data.qos, &mut buf, &mut offset)?;

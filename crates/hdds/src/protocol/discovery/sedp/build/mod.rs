@@ -151,13 +151,14 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
         write_type_object(type_obj, buf, &mut offset)?;
         // PID_TYPE_INFORMATION (0x0075) per DDS-XTypes v1.3 §7.6.3.2.
         // Cross-vendor readers (Fast DDS 3.x in particular) consult this
-        // PID for type-identifier matching alongside PID_TYPE_OBJECT; the
-        // PID is required by the spec when the writer carries TypeObject.
-        // Soft-skip when the type cannot derive a MinimalTypeObject
+        // PID for type-identifier matching alongside PID_TYPE_OBJECT.
+        // Soft-skip when the type cannot derive a `MinimalTypeObject`
         // (non-Struct variants today) so the rest of the SEDP packet still
         // serialises cleanly. See `type_information` module docstring +
         // ADR-CHANTIER-1.5-PHASE-0 §7bis for the FastDDS-mimicry rationale.
-        let _ = type_information::write_type_information(type_obj, buf, &mut offset)?;
+        if let Some(info) = type_information::derive_type_information(type_obj) {
+            let _ = type_information::write_type_information(&info, buf, &mut offset)?;
+        }
     }
 
     // ===== SENTINEL =====
