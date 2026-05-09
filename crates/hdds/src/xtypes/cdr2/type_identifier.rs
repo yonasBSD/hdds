@@ -97,31 +97,15 @@ impl Cdr2Encode for TypeIdentifier {
                 encode_i32(sc.scc_length, dst, &mut offset)?;
                 encode_i32(sc.scc_index, dst, &mut offset)?;
             }
-            // `Inline` is not part of the OMG DDS-XTypes v1.3 §7.3.4.4
-            // `TypeIdentifier` union and has no on-the-wire encoding.
-            // Reject to surface any caller that still constructs it so
-            // the variant can be removed in a follow-up.
-            TypeIdentifier::Inline(_) => {
-                return Err(CdrError::Other(
-                    "TypeIdentifier::Inline has no spec-compliant wire encoding".to_string(),
-                ));
-            }
         }
 
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
-        match self {
-            // Inline produces no wire bytes (encode returns Err); reserve
-            // a conservative bound so callers that pre-size buffers from
-            // `max_cdr2_size` do not over-allocate beyond the spec
-            // variants below.
-            TypeIdentifier::Inline(_) => 1,
-            // Discriminator (1) + worst case (StronglyConnected: 14-byte
-            // hash + alignment padding + two i32 fields).
-            _ => 32,
-        }
+        // Discriminator (1) + worst case `StronglyConnected` payload
+        // (14-byte hash + two i32 fields = 22 bytes) + slack.
+        32
     }
 }
 
@@ -335,31 +319,6 @@ mod tests {
             written, 24,
             "SCC wire size must be exactly 24 bytes (1 discriminator + 14 hash + 1 pad + 2*4 i32)"
         );
-    }
-
-    /// `Inline` is an HDDS-internal variant with no spec encoding;
-    /// the encoder must surface this rather than producing wire bytes.
-    #[test]
-    fn typeid_inline_returns_error() {
-        use crate::xtypes::{
-            CompleteStructHeader, CompleteStructType, CompleteTypeDetail, CompleteTypeObject,
-            StructTypeFlag,
-        };
-        let type_obj = CompleteTypeObject::Struct(CompleteStructType {
-            struct_flags: StructTypeFlag::IS_FINAL,
-            header: CompleteStructHeader {
-                base_type: None,
-                detail: CompleteTypeDetail::new("Probe"),
-            },
-            member_seq: vec![],
-        });
-        let id = TypeIdentifier::Inline(Box::new(type_obj));
-        let mut buf = [0u8; 256];
-        let result = id.encode_cdr2_le(&mut buf);
-        match result {
-            Err(CdrError::Other(msg)) => assert!(msg.contains("Inline")),
-            other => panic!("expected CdrError::Other for Inline, got {:?}", other),
-        }
     }
 
     /// Sanity: every spec discriminator that the encoder emits is a valid

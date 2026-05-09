@@ -438,8 +438,6 @@ fn type_identifier_to_descriptor<R: TypeRegistry>(
         TypeIdentifier::StronglyConnected { .. } => {
             Arc::new(TypeDescriptor::primitive("cyclic", PrimitiveKind::U8))
         }
-        // Inline type object (hdds extension): recurse directly.
-        TypeIdentifier::Inline(type_object) => convert_type_object(type_object, registry),
     }
 }
 

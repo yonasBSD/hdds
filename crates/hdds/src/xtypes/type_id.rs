@@ -143,19 +143,10 @@ pub enum TypeIdentifier {
     /// };
     /// ```
     StronglyConnected(StronglyConnectedComponentId),
-
-    /// Inline type object (hdds extension)
-    ///
-    /// Embeds a complete type definition directly in the parent TypeObject,
-    /// making it self-contained without requiring hash-based registry lookups.
-    /// Used by hdds_gen for nested struct/enum fields so that XTypes auto-decode
-    /// can resolve the full type hierarchy from a single discovered TypeObject.
-    Inline(Box<super::type_object::CompleteTypeObject>),
 }
 
-// Manual PartialEq/Eq/Hash because CompleteTypeObject does not derive Eq/Hash.
 impl PartialEq for TypeIdentifier {
-    // @audit-ok: flat enum variant dispatch (9 arms), no nesting
+    // @audit-ok: flat enum variant dispatch (8 arms), no nesting
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Primitive(a), Self::Primitive(b)) => a == b,
@@ -166,7 +157,6 @@ impl PartialEq for TypeIdentifier {
             (Self::Minimal(a), Self::Minimal(b)) => a == b,
             (Self::Complete(a), Self::Complete(b)) => a == b,
             (Self::StronglyConnected(a), Self::StronglyConnected(b)) => a == b,
-            (Self::Inline(a), Self::Inline(b)) => a == b,
             _ => false,
         }
     }
@@ -186,11 +176,6 @@ impl std::hash::Hash for TypeIdentifier {
             Self::Minimal(hash) => hash.hash(state),
             Self::Complete(hash) => hash.hash(state),
             Self::StronglyConnected(sc) => sc.hash(state),
-            Self::Inline(_) => {
-                // Inline objects are not expected to be used as map keys;
-                // hash discriminant only (collisions are acceptable).
-                0u8.hash(state);
-            }
         }
     }
 }
@@ -282,19 +267,6 @@ impl TypeIdentifier {
             _ => None,
         }
     }
-
-    /// Returns true if this is an inline type object
-    pub const fn is_inline(&self) -> bool {
-        matches!(self, TypeIdentifier::Inline(_))
-    }
-
-    /// Get the inline CompleteTypeObject if this is an Inline variant
-    pub fn get_inline(&self) -> Option<&super::type_object::CompleteTypeObject> {
-        match self {
-            TypeIdentifier::Inline(obj) => Some(obj),
-            _ => None,
-        }
-    }
 }
 
 impl fmt::Debug for TypeIdentifier {
@@ -322,7 +294,6 @@ impl fmt::Debug for TypeIdentifier {
                     sc.sc_component_id, sc.scc_index, sc.scc_length
                 )
             }
-            TypeIdentifier::Inline(obj) => write!(f, "TypeId::Inline({:?})", obj),
         }
     }
 }
@@ -340,7 +311,6 @@ impl fmt::Display for TypeIdentifier {
             TypeIdentifier::StronglyConnected(sc) => {
                 write!(f, "TypeId(SC:{})", sc.sc_component_id)
             }
-            TypeIdentifier::Inline(_) => write!(f, "TypeId(Inline)"),
         }
     }
 }
