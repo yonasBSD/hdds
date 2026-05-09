@@ -19,6 +19,7 @@ mod locators;
 mod metadata;
 /// QoS PID serialization for SEDP endpoint discovery.
 pub mod qos;
+mod type_information;
 
 use crate::protocol::discovery::constants::{PID_SENTINEL, PID_TYPE_OBJECT};
 use crate::protocol::discovery::types::{ParseError, SedpData};
@@ -114,22 +115,14 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
     //     metadata::write_expects_virtual_hb(buf, &mut offset)?;  // 0x8009
     // }
 
-    // XTypes compatibility
-    //
-    // FastDDS expects TypeConsistencyEnforcementQos only when using its full
-    // XTypes type propagation (with type_information). In static-type interop
-    // mode we deliberately do NOT send TypeObject/TypeInformation to keep
-    // things simple. For this scenario, FastDDS logs an error if it sees
-    // PID_TYPE_CONSISTENCY on writer endpoints.
-    //
-    // To avoid that and simplify interop, allow this PID to be disabled via
-    // an environment flag. Default behaviour (no flag) remains unchanged.
-    // NOTE: Removed for RTI interop - these cause issues
-    // if !crate::interop_legacy::compat::drop_type_consistency_for_fastdds() {
-    //     metadata::write_type_consistency(buf, &mut offset)?;
-    // }
-    // NOTE: Removed PID_ENDPOINT_PROPERTY_CHANGE_EPOCH (0x8015) - RTI vendor PID
-    // metadata::write_endpoint_property_change_epoch(buf, &mut offset)?;
+    // PID_TYPE_CONSISTENCY remains intentionally unsent: it would advertise
+    // a `TypeConsistencyEnforcementQos` policy that we do not currently
+    // honour at runtime, and FastDDS readers log an error if the QoS is
+    // present without an accompanying matched-type-information validation
+    // path. The actual TypeInformation now ships via PID_TYPE_INFORMATION
+    // (see TYPE OBJECT / TYPE INFORMATION SECTION below).
+    // PID_ENDPOINT_PROPERTY_CHANGE_EPOCH (0x8015) is an RTI vendor PID and
+    // remains unsent.
 
     // ===== LOCATORS SECTION =====
     locators::write_unicast_locators(&sedp_data.unicast_locators, buf, &mut offset)?;
@@ -152,10 +145,19 @@ pub fn build_sedp(sedp_data: &SedpData, buf: &mut [u8]) -> Result<usize, ParseEr
     qos::write_resource_limits(sedp_data.qos.as_ref(), buf, &mut offset)?;
     qos::write_presentation(sedp_data.qos.as_ref(), buf, &mut offset)?;
 
-    // ===== TYPE OBJECT SECTION =====
+    // ===== TYPE OBJECT / TYPE INFORMATION SECTION =====
     // PID_TYPE_OBJECT (0x0072) - CDR2-encoded CompleteTypeObject
     if let Some(ref type_obj) = sedp_data.type_object {
         write_type_object(type_obj, buf, &mut offset)?;
+        // PID_TYPE_INFORMATION (0x0075) per DDS-XTypes v1.3 §7.6.3.2.
+        // Cross-vendor readers (Fast DDS 3.x in particular) consult this
+        // PID for type-identifier matching alongside PID_TYPE_OBJECT; the
+        // PID is required by the spec when the writer carries TypeObject.
+        // Soft-skip when the type cannot derive a MinimalTypeObject
+        // (non-Struct variants today) so the rest of the SEDP packet still
+        // serialises cleanly. See `type_information` module docstring +
+        // ADR-CHANTIER-1.5-PHASE-0 §7bis for the FastDDS-mimicry rationale.
+        let _ = type_information::write_type_information(type_obj, buf, &mut offset)?;
     }
 
     // ===== SENTINEL =====
