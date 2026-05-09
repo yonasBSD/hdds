@@ -63,19 +63,19 @@
 //! - `xtypes` (default): Enable TypeIdentifier and EquivalenceHash (requires `md5` crate)
 //! - `xtypes-complete` (future): Enable Complete TypeObject (additional metadata)
 //!
-//! # Implementation Status (v0.8.0)
+//! # Implementation Status
 //!
-//! - \[OK\] TypeIdentifier (Phase 1)
-//! - \[OK\] EquivalenceHash (MD5, 14 bytes)
-//! - [...] TypeObject (Phase 2 - in progress)
-//! - [...] Type Evolution rules (Phase 3)
-//! - [...] SEDP integration (Phase 4)
-//!
-//! # Future (v0.9.0)
-//!
-//! - Dynamic Types (create types at runtime)
-//! - TypeObject persistence (cache to disk)
-//! - Advanced evolution rules
+//! - \[OK\] TypeIdentifier (spec-compliant discriminator octets, Chantier 1)
+//! - \[OK\] EquivalenceHash (MD5, 14 bytes; cross-vendor byte-equivalent
+//!   to Fast DDS 3.x for the canonical Temperature fixture, Chantier 1.5)
+//! - \[OK\] TypeObject (Minimal + Complete, spec-compliant discriminator
+//!   labels per §7.3.4.5, Chantier 1.5b)
+//! - \[OK\] AnnotationParameterValue (spec-compliant discriminator labels
+//!   for the 4 supported variants, Chantier 1.5c)
+//! - \[OK\] PID_TYPE_INFORMATION emit + decode on SEDP (Chantier 1.5e)
+//! - [...] XTypes Assignability runtime (Chantier 2)
+//! - [...] TI_PLAIN_SEQUENCE / TI_PLAIN_ARRAY / TI_PLAIN_MAP variants (Chantier 1.6)
+//! - [...] StronglyConnectedComponent for cyclic types (Chantier 1.6)
 
 /// Runtime helpers to build DDS TypeObjects from ROS 2 introspection metadata.
 pub mod builder;

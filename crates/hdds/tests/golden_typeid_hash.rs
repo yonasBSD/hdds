@@ -12,10 +12,13 @@
 //! below are byte-comparable with what Fast DDS, Connext, OpenDDS, or
 //! Cyclone DDS would produce for the same logical IDL type.
 //!
-//! Cross-vendor empirical verification (extracting a Fast DDS-emitted
-//! hash via `tshark` on `PID_TYPE_INFORMATION`) is deferred to Chantier
-//! 1.5f / Phase 1 measure; this test acts as the in-tree regression
-//! guard until then.
+//! Cross-vendor empirical verification: confirmed 2026-05-09 in
+//! Chantier 1.5f against Fast DDS 3.x — the locked bytes here are
+//! byte-identical to the value Fast DDS emits over the wire for the
+//! same logical type (extracted via `tshark` on `PID_TYPE_INFORMATION`
+//! from `interop/fastdds2hdds.pcap` Gate 05 capture). See
+//! `docs/_privates/VERDICT-CHANTIER-1.5-CROSSVENDOR.md` for the full
+//! verdict + raw bytes.
 
 #![cfg(feature = "xtypes")]
 
