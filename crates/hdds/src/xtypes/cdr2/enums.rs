@@ -9,7 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.3 (Enumerated Types)
 
-use super::helpers::{checked_usize, encode_fields_sequential};
+use super::helpers::checked_usize;
 use super::primitives::{
     align_offset, decode_i16, decode_i32, decode_u16, decode_u32, encode_i16, encode_i32,
     encode_u16, encode_vec,
@@ -25,22 +25,23 @@ use crate::xtypes::type_object::*;
 
 impl Cdr2Encode for CommonEnumeratedLiteral {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_value = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_i32(self.value, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_flags = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u16(self.flags.0, buf, &mut local)?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_value, &mut encode_flags])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4 + 2 // i32 + u16
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_i32(self.value, dst, offset)?;
+        encode_u16(self.flags.0, dst, offset)?;
+        Ok(())
     }
 }
 
@@ -69,14 +70,23 @@ pub(super) fn decode_common_enumerated_literal_internal(
 
 impl Cdr2Encode for CompleteEnumeratedLiteral {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_common = |buf: &mut [u8]| self.common.encode_cdr2_le(buf);
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_common, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.common.encode_cdr2_le_at(dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -103,14 +113,23 @@ pub(super) fn decode_complete_enumerated_literal_internal(
 
 impl Cdr2Encode for MinimalEnumeratedLiteral {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_common = |buf: &mut [u8]| self.common.encode_cdr2_le(buf);
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_common, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.common.encode_cdr2_le_at(dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -141,18 +160,23 @@ pub(super) fn decode_minimal_enumerated_literal_internal(
 
 impl Cdr2Encode for CompleteEnumeratedHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_bit_bound = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_i16(self.bit_bound, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_bit_bound, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         2 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_i16(self.bit_bound, dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -180,19 +204,22 @@ pub(super) fn decode_complete_enumerated_header_internal(
 impl Cdr2Encode for MinimalEnumeratedHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Encode bit_bound (i16)
-        encode_i16(self.bit_bound, dst, &mut offset)?;
-
-        // Encode detail (empty for MinimalTypeDetail)
-        let detail_len = self.detail.encode_cdr2_le(&mut dst[offset..])?;
-        offset += detail_len;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         2 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_i16(self.bit_bound, dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -225,23 +252,7 @@ pub(super) fn decode_minimal_enumerated_header_internal(
 impl Cdr2Encode for CompleteEnumeratedType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Encode header
-        let header_len = self.header.encode_cdr2_le(&mut dst[offset..])?;
-        offset += header_len;
-
-        // Encode literal_seq (Vec<CompleteEnumeratedLiteral>)
-        encode_vec(
-            &self.literal_seq,
-            dst,
-            &mut offset,
-            |literal, dst, offset| {
-                let len = literal.encode_cdr2_le(&mut dst[*offset..])?;
-                *offset += len;
-                Ok(())
-            },
-        )?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
@@ -253,6 +264,18 @@ impl Cdr2Encode for CompleteEnumeratedType {
                 .iter()
                 .map(|l| l.max_cdr2_size())
                 .sum::<usize>()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.literal_seq, dst, offset, |literal, dst, offset| {
+            literal.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -287,23 +310,7 @@ impl Cdr2Decode for CompleteEnumeratedType {
 impl Cdr2Encode for MinimalEnumeratedType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Encode header
-        let header_len = self.header.encode_cdr2_le(&mut dst[offset..])?;
-        offset += header_len;
-
-        // Encode literal_seq (Vec<MinimalEnumeratedLiteral>)
-        encode_vec(
-            &self.literal_seq,
-            dst,
-            &mut offset,
-            |literal, dst, offset| {
-                let len = literal.encode_cdr2_le(&mut dst[*offset..])?;
-                *offset += len;
-                Ok(())
-            },
-        )?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
@@ -315,6 +322,18 @@ impl Cdr2Encode for MinimalEnumeratedType {
                 .iter()
                 .map(|l| l.max_cdr2_size())
                 .sum::<usize>()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.literal_seq, dst, offset, |literal, dst, offset| {
+            literal.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 

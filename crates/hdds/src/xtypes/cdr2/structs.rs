@@ -8,7 +8,6 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.1 (Struct Types)
 
-use super::helpers::encode_fields_sequential;
 use super::members::{
     decode_complete_struct_member_internal, decode_minimal_struct_member_internal,
 };
@@ -25,22 +24,25 @@ use crate::xtypes::type_object::*;
 
 impl Cdr2Encode for CompleteStructHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_base_type = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_option(&self.base_type, buf, &mut local, |type_id, buf, offset| {
-                let len = type_id.encode_cdr2_le(&mut buf[*offset..])?;
-                *offset += len;
-                Ok(())
-            })?;
-            Ok(local)
-        };
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_base_type, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         32 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
+            type_id.encode_cdr2_le_at(dst, offset)
+        })?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -68,22 +70,25 @@ pub(super) fn decode_complete_struct_header_internal(
 
 impl Cdr2Encode for MinimalStructHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_base_type = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_option(&self.base_type, buf, &mut local, |type_id, buf, offset| {
-                let len = type_id.encode_cdr2_le(&mut buf[*offset..])?;
-                *offset += len;
-                Ok(())
-            })?;
-            Ok(local)
-        };
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_base_type, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         32 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
+            type_id.encode_cdr2_le_at(dst, offset)
+        })?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -117,26 +122,25 @@ pub(super) fn decode_minimal_struct_header_internal(
 impl Cdr2Encode for CompleteStructType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Flags
-        encode_u16(self.struct_flags.0, dst, &mut offset)?;
-
-        // Header (sub-buffer OK: decode also uses sub-slicing for header internals)
-        let header_len = self.header.encode_cdr2_le(&mut dst[offset..])?;
-        offset += header_len;
-
-        // Member sequence: use global offset so encode_u32 alignment matches decoder
-        encode_vec(&self.member_seq, dst, &mut offset, |member, buf, offset| {
-            let len = member.encode_cdr2_le(&mut buf[*offset..])?;
-            *offset += len;
-            Ok(())
-        })?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.struct_flags.0, dst, offset)?;
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
+            member.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -170,26 +174,25 @@ impl Cdr2Decode for CompleteStructType {
 impl Cdr2Encode for MinimalStructType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Flags
-        encode_u16(self.struct_flags.0, dst, &mut offset)?;
-
-        // Header (sub-buffer OK: decode also uses sub-slicing for header internals)
-        let header_len = self.header.encode_cdr2_le(&mut dst[offset..])?;
-        offset += header_len;
-
-        // Member sequence: use global offset so encode_u32 alignment matches decoder
-        encode_vec(&self.member_seq, dst, &mut offset, |member, buf, offset| {
-            let len = member.encode_cdr2_le(&mut buf[*offset..])?;
-            *offset += len;
-            Ok(())
-        })?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.struct_flags.0, dst, offset)?;
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
+            member.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 

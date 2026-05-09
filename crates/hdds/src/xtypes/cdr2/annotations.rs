@@ -9,7 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.10 (Annotation Types)
 
-use super::helpers::{checked_usize, encode_fields_sequential};
+use super::helpers::checked_usize;
 use super::primitives::{
     align_offset, decode_bool, decode_i32, decode_option, decode_string, decode_u16, decode_u32,
     decode_u8, encode_bool, encode_i32, encode_option, encode_string, encode_u16, encode_u32,
@@ -35,6 +35,14 @@ impl Cdr2Encode for AnnotationParameterFlag {
 
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.0, dst, offset)
     }
 }
 
@@ -89,6 +97,32 @@ impl Cdr2Encode for AnnotationParameterValue {
             AnnotationParameterValue::Enumerated(_) => 4 + 4,
         }
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        match self {
+            AnnotationParameterValue::Boolean(b) => {
+                encode_u8(TypeKind::TK_BOOLEAN.to_u8(), dst, offset)?;
+                encode_bool(*b, dst, offset)?;
+            }
+            AnnotationParameterValue::Int32(i) => {
+                encode_u8(TypeKind::TK_INT32.to_u8(), dst, offset)?;
+                encode_i32(*i, dst, offset)?;
+            }
+            AnnotationParameterValue::String(s) => {
+                encode_u8(TypeKind::TK_STRING8.to_u8(), dst, offset)?;
+                encode_string(s, dst, offset)?;
+            }
+            AnnotationParameterValue::Enumerated(e) => {
+                encode_u8(TypeKind::TK_ENUM.to_u8(), dst, offset)?;
+                encode_i32(*e, dst, offset)?;
+            }
+        }
+        Ok(())
+    }
 }
 
 impl Cdr2Decode for AnnotationParameterValue {
@@ -141,6 +175,14 @@ impl Cdr2Encode for CompleteAnnotationHeader {
     fn max_cdr2_size(&self) -> usize {
         self.detail.max_cdr2_size()
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.detail.encode_cdr2_le_at(dst, offset)
+    }
 }
 
 impl Cdr2Decode for CompleteAnnotationHeader {
@@ -158,6 +200,14 @@ impl Cdr2Encode for MinimalAnnotationHeader {
     fn max_cdr2_size(&self) -> usize {
         self.detail.max_cdr2_size()
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.detail.encode_cdr2_le_at(dst, offset)
+    }
 }
 
 impl Cdr2Decode for MinimalAnnotationHeader {
@@ -170,14 +220,23 @@ impl Cdr2Decode for MinimalAnnotationHeader {
 // CommonAnnotationParameter
 impl Cdr2Encode for CommonAnnotationParameter {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_flags = |buf: &mut [u8]| self.member_flags.encode_cdr2_le(buf);
-        let mut encode_type = |buf: &mut [u8]| self.member_type_id.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_flags, &mut encode_type])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.member_flags.max_cdr2_size() + self.member_type_id.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.member_flags.encode_cdr2_le_at(dst, offset)?;
+        self.member_type_id.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -204,31 +263,9 @@ impl Cdr2Decode for CommonAnnotationParameter {
 // CompleteAnnotationParameter
 impl Cdr2Encode for CompleteAnnotationParameter {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_common = |buf: &mut [u8]| self.common.encode_cdr2_le(buf);
-        let mut encode_name = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_string(&self.name, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_default = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_option(
-                &self.default_value,
-                buf,
-                &mut local,
-                |value, buf, offset| {
-                    let len = value.encode_cdr2_le(&mut buf[*offset..])?;
-                    *offset += len;
-                    Ok(())
-                },
-            )?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(
-            dst,
-            &mut [&mut encode_common, &mut encode_name, &mut encode_default],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -237,6 +274,19 @@ impl Cdr2Encode for CompleteAnnotationParameter {
             Some(v) => 4 + v.max_cdr2_size(),
         };
         self.common.max_cdr2_size() + 4 + self.name.len() + 1 + default_value_size
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.common.encode_cdr2_le_at(dst, offset)?;
+        encode_string(&self.name, dst, offset)?;
+        encode_option(&self.default_value, dst, offset, |value, dst, offset| {
+            value.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -269,35 +319,9 @@ impl Cdr2Decode for CompleteAnnotationParameter {
 // MinimalAnnotationParameter
 impl Cdr2Encode for MinimalAnnotationParameter {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_common = |buf: &mut [u8]| self.common.encode_cdr2_le(buf);
-        let mut encode_name_hash = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u32(self.name_hash, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_default = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_option(
-                &self.default_value,
-                buf,
-                &mut local,
-                |value, buf, offset| {
-                    let len = value.encode_cdr2_le(&mut buf[*offset..])?;
-                    *offset += len;
-                    Ok(())
-                },
-            )?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(
-            dst,
-            &mut [
-                &mut encode_common,
-                &mut encode_name_hash,
-                &mut encode_default,
-            ],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -306,6 +330,19 @@ impl Cdr2Encode for MinimalAnnotationParameter {
             Some(v) => 4 + v.max_cdr2_size(),
         };
         self.common.max_cdr2_size() + 4 + default_value_size
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.common.encode_cdr2_le_at(dst, offset)?;
+        encode_u32(self.name_hash, dst, offset)?;
+        encode_option(&self.default_value, dst, offset, |value, dst, offset| {
+            value.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -338,23 +375,9 @@ impl Cdr2Decode for MinimalAnnotationParameter {
 // Complete/Minimal AnnotationType
 impl Cdr2Encode for CompleteAnnotationType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_params = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_vec(
-                &self.member_seq,
-                buf,
-                &mut local,
-                |param: &CompleteAnnotationParameter, buf, offset| {
-                    let len = param.encode_cdr2_le(&mut buf[*offset..])?;
-                    *offset += len;
-                    Ok(())
-                },
-            )?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_header, &mut encode_params])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -365,6 +388,23 @@ impl Cdr2Encode for CompleteAnnotationType {
                 .iter()
                 .map(|p| p.max_cdr2_size())
                 .sum::<usize>()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(
+            &self.member_seq,
+            dst,
+            offset,
+            |param: &CompleteAnnotationParameter, dst, offset| {
+                param.encode_cdr2_le_at(dst, offset)
+            },
+        )?;
+        Ok(())
     }
 }
 
@@ -397,23 +437,9 @@ impl Cdr2Decode for CompleteAnnotationType {
 
 impl Cdr2Encode for MinimalAnnotationType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_params = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_vec(
-                &self.member_seq,
-                buf,
-                &mut local,
-                |param: &MinimalAnnotationParameter, buf, offset| {
-                    let len = param.encode_cdr2_le(&mut buf[*offset..])?;
-                    *offset += len;
-                    Ok(())
-                },
-            )?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_header, &mut encode_params])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -424,6 +450,23 @@ impl Cdr2Encode for MinimalAnnotationType {
                 .iter()
                 .map(|p| p.max_cdr2_size())
                 .sum::<usize>()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(
+            &self.member_seq,
+            dst,
+            offset,
+            |param: &MinimalAnnotationParameter, dst, offset| {
+                param.encode_cdr2_le_at(dst, offset)
+            },
+        )?;
+        Ok(())
     }
 }
 

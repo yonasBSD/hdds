@@ -339,6 +339,14 @@ mod tests {
             fn max_cdr2_size(&self) -> usize {
                 16
             }
+            fn encode_cdr2_le_at(
+                &self,
+                _dst: &mut [u8],
+                offset: &mut usize,
+            ) -> Result<(), CdrError> {
+                *offset += 16;
+                Ok(())
+            }
         }
 
         struct MockMember;
@@ -348,6 +356,14 @@ mod tests {
             }
             fn max_cdr2_size(&self) -> usize {
                 8
+            }
+            fn encode_cdr2_le_at(
+                &self,
+                _dst: &mut [u8],
+                offset: &mut usize,
+            ) -> Result<(), CdrError> {
+                *offset += 8;
+                Ok(())
             }
         }
 
@@ -368,6 +384,14 @@ mod tests {
             }
             fn max_cdr2_size(&self) -> usize {
                 16
+            }
+            fn encode_cdr2_le_at(
+                &self,
+                _dst: &mut [u8],
+                offset: &mut usize,
+            ) -> Result<(), CdrError> {
+                *offset += 16;
+                Ok(())
             }
         }
 

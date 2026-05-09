@@ -692,6 +692,16 @@ fn test_roundtrip_cdr2_struct_manual_impl() {
         fn max_cdr2_size(&self) -> usize {
             9
         }
+
+        fn encode_cdr2_le_at(
+            &self,
+            dst: &mut [u8],
+            offset: &mut usize,
+        ) -> Result<(), hdds::CdrError> {
+            let len = self.encode_cdr2_le(&mut dst[*offset..])?;
+            *offset += len;
+            Ok(())
+        }
     }
 
     impl Cdr2Decode for Point3D {
@@ -740,6 +750,16 @@ fn test_roundtrip_cdr2_struct_with_string() {
 
         fn max_cdr2_size(&self) -> usize {
             8 + self.label.max_cdr2_size()
+        }
+
+        fn encode_cdr2_le_at(
+            &self,
+            dst: &mut [u8],
+            offset: &mut usize,
+        ) -> Result<(), hdds::CdrError> {
+            let len = self.encode_cdr2_le(&mut dst[*offset..])?;
+            *offset += len;
+            Ok(())
         }
     }
 
@@ -791,6 +811,16 @@ fn test_roundtrip_cdr2_struct_with_sequence() {
 
         fn max_cdr2_size(&self) -> usize {
             4 + self.x_coords.max_cdr2_size() + self.y_coords.max_cdr2_size()
+        }
+
+        fn encode_cdr2_le_at(
+            &self,
+            dst: &mut [u8],
+            offset: &mut usize,
+        ) -> Result<(), hdds::CdrError> {
+            let len = self.encode_cdr2_le(&mut dst[*offset..])?;
+            *offset += len;
+            Ok(())
         }
     }
 

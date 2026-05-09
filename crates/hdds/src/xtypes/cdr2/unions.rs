@@ -8,7 +8,6 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.2 (Union Types)
 
-use super::helpers::encode_fields_sequential;
 use super::members::{decode_complete_union_member_internal, decode_minimal_union_member_internal};
 use super::primitives::{decode_u16, encode_u16, encode_vec};
 use super::type_identifier::decode_type_identifier_internal;
@@ -23,14 +22,23 @@ use crate::xtypes::type_object::*;
 
 impl Cdr2Encode for CompleteUnionHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_discriminator = |buf: &mut [u8]| self.discriminator.encode_cdr2_le(buf);
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_discriminator, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         32 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.discriminator.encode_cdr2_le_at(dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -58,14 +66,23 @@ pub(super) fn decode_complete_union_header_internal(
 
 impl Cdr2Encode for MinimalUnionHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_discriminator = |buf: &mut [u8]| self.discriminator.encode_cdr2_le(buf);
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_discriminator, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         32 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.discriminator.encode_cdr2_le_at(dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -100,26 +117,25 @@ pub(super) fn decode_minimal_union_header_internal(
 impl Cdr2Encode for CompleteUnionType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Flags
-        encode_u16(self.union_flags.0, dst, &mut offset)?;
-
-        // Header (sub-buffer OK: decode also uses sub-slicing for header internals)
-        let header_len = self.header.encode_cdr2_le(&mut dst[offset..])?;
-        offset += header_len;
-
-        // Member sequence: use global offset so encode_u32 alignment matches decoder
-        encode_vec(&self.member_seq, dst, &mut offset, |member, buf, offset| {
-            let len = member.encode_cdr2_le(&mut buf[*offset..])?;
-            *offset += len;
-            Ok(())
-        })?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.union_flags.0, dst, offset)?;
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
+            member.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -153,26 +169,25 @@ impl Cdr2Decode for CompleteUnionType {
 impl Cdr2Encode for MinimalUnionType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Encode union_flags (u16)
-        encode_u16(self.union_flags.0, dst, &mut offset)?;
-
-        // Encode header
-        let header_len = self.header.encode_cdr2_le(&mut dst[offset..])?;
-        offset += header_len;
-
-        // Encode member_seq (Vec<MinimalUnionMember>)
-        encode_vec(&self.member_seq, dst, &mut offset, |member, dst, offset| {
-            let len = member.encode_cdr2_le(&mut dst[*offset..])?;
-            *offset += len;
-            Ok(())
-        })?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.union_flags.0, dst, offset)?;
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
+            member.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 

@@ -10,7 +10,6 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.5 (TypeObject)
 
-use super::helpers::encode_fields_sequential;
 use super::primitives::{decode_u8, encode_u8};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 use crate::xtypes::TypeKind;
@@ -25,43 +24,9 @@ use crate::xtypes::type_object::*;
 impl Cdr2Encode for CompleteTypeObject {
     // @audit-ok: Closures with pattern matching (cyclo 24, cogni 4) - discriminant encoder + variant dispatcher
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        // Per OMG DDS-XTypes v1.3 §7.3.4.5: the IDL union
-        // `CompleteTypeObject switch (octet)` uses TK_* values as case
-        // labels, so the discriminator octet IS the TypeKind value.
-        let mut encode_discriminator = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            let discriminator: u8 = match self {
-                CompleteTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
-                CompleteTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
-                CompleteTypeObject::Enumerated(_) => TypeKind::TK_ENUM.to_u8(),
-                CompleteTypeObject::Bitmask(_) => TypeKind::TK_BITMASK.to_u8(),
-                CompleteTypeObject::Bitset(_) => TypeKind::TK_BITSET.to_u8(),
-                CompleteTypeObject::Sequence(_) => TypeKind::TK_SEQUENCE.to_u8(),
-                CompleteTypeObject::Array(_) => TypeKind::TK_ARRAY.to_u8(),
-                CompleteTypeObject::Map(_) => TypeKind::TK_MAP.to_u8(),
-                CompleteTypeObject::Alias(_) => TypeKind::TK_ALIAS.to_u8(),
-                CompleteTypeObject::Annotation(_) => TypeKind::TK_ANNOTATION.to_u8(),
-            };
-            encode_u8(discriminator, buf, &mut local)?;
-            Ok(local)
-        };
-        // @audit-ok: flat enum variant dispatch (10 arms), no nesting
-        let mut encode_variant = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            match self {
-                CompleteTypeObject::Struct(s) => s.encode_cdr2_le(buf),
-                CompleteTypeObject::Union(u) => u.encode_cdr2_le(buf),
-                CompleteTypeObject::Enumerated(e) => e.encode_cdr2_le(buf),
-                CompleteTypeObject::Bitmask(b) => b.encode_cdr2_le(buf),
-                CompleteTypeObject::Bitset(b) => b.encode_cdr2_le(buf),
-                CompleteTypeObject::Sequence(s) => s.encode_cdr2_le(buf),
-                CompleteTypeObject::Array(a) => a.encode_cdr2_le(buf),
-                CompleteTypeObject::Map(m) => m.encode_cdr2_le(buf),
-                CompleteTypeObject::Alias(a) => a.encode_cdr2_le(buf),
-                CompleteTypeObject::Annotation(a) => a.encode_cdr2_le(buf),
-            }
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_discriminator, &mut encode_variant])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     // @audit-ok: Simple pattern matching (cyclo 11, cogni 1) - dispatch to variant max_cdr2_size
@@ -77,6 +42,38 @@ impl Cdr2Encode for CompleteTypeObject {
             CompleteTypeObject::Map(m) => m.max_cdr2_size(),
             CompleteTypeObject::Alias(a) => a.max_cdr2_size(),
             CompleteTypeObject::Annotation(a) => a.max_cdr2_size(),
+        }
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let discriminator: u8 = match self {
+            CompleteTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
+            CompleteTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
+            CompleteTypeObject::Enumerated(_) => TypeKind::TK_ENUM.to_u8(),
+            CompleteTypeObject::Bitmask(_) => TypeKind::TK_BITMASK.to_u8(),
+            CompleteTypeObject::Bitset(_) => TypeKind::TK_BITSET.to_u8(),
+            CompleteTypeObject::Sequence(_) => TypeKind::TK_SEQUENCE.to_u8(),
+            CompleteTypeObject::Array(_) => TypeKind::TK_ARRAY.to_u8(),
+            CompleteTypeObject::Map(_) => TypeKind::TK_MAP.to_u8(),
+            CompleteTypeObject::Alias(_) => TypeKind::TK_ALIAS.to_u8(),
+            CompleteTypeObject::Annotation(_) => TypeKind::TK_ANNOTATION.to_u8(),
+        };
+        encode_u8(discriminator, dst, offset)?;
+        match self {
+            CompleteTypeObject::Struct(s) => s.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Union(u) => u.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Enumerated(e) => e.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Bitmask(b) => b.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Bitset(b) => b.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Sequence(s) => s.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Array(a) => a.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Map(m) => m.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Alias(a) => a.encode_cdr2_le_at(dst, offset),
+            CompleteTypeObject::Annotation(a) => a.encode_cdr2_le_at(dst, offset),
         }
     }
 }
@@ -160,43 +157,9 @@ impl Cdr2Decode for CompleteTypeObject {
 impl Cdr2Encode for MinimalTypeObject {
     // @audit-ok: Closures with pattern matching (cyclo 24, cogni 4) - discriminant encoder + variant dispatcher
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        // Per OMG DDS-XTypes v1.3 §7.3.4.5: same TK_* discriminator
-        // labels as `CompleteTypeObject` (the Minimal variant uses the
-        // identical IDL switch (octet) labels).
-        let mut encode_discriminator = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            let discriminator: u8 = match self {
-                MinimalTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
-                MinimalTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
-                MinimalTypeObject::Enumerated(_) => TypeKind::TK_ENUM.to_u8(),
-                MinimalTypeObject::Bitmask(_) => TypeKind::TK_BITMASK.to_u8(),
-                MinimalTypeObject::Bitset(_) => TypeKind::TK_BITSET.to_u8(),
-                MinimalTypeObject::Sequence(_) => TypeKind::TK_SEQUENCE.to_u8(),
-                MinimalTypeObject::Array(_) => TypeKind::TK_ARRAY.to_u8(),
-                MinimalTypeObject::Map(_) => TypeKind::TK_MAP.to_u8(),
-                MinimalTypeObject::Alias(_) => TypeKind::TK_ALIAS.to_u8(),
-                MinimalTypeObject::Annotation(_) => TypeKind::TK_ANNOTATION.to_u8(),
-            };
-            encode_u8(discriminator, buf, &mut local)?;
-            Ok(local)
-        };
-        // @audit-ok: flat enum variant dispatch (10 arms), no nesting
-        let mut encode_variant = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            match self {
-                MinimalTypeObject::Struct(s) => s.encode_cdr2_le(buf),
-                MinimalTypeObject::Union(u) => u.encode_cdr2_le(buf),
-                MinimalTypeObject::Enumerated(e) => e.encode_cdr2_le(buf),
-                MinimalTypeObject::Bitmask(b) => b.encode_cdr2_le(buf),
-                MinimalTypeObject::Bitset(b) => b.encode_cdr2_le(buf),
-                MinimalTypeObject::Sequence(s) => s.encode_cdr2_le(buf),
-                MinimalTypeObject::Array(a) => a.encode_cdr2_le(buf),
-                MinimalTypeObject::Map(m) => m.encode_cdr2_le(buf),
-                MinimalTypeObject::Alias(a) => a.encode_cdr2_le(buf),
-                MinimalTypeObject::Annotation(a) => a.encode_cdr2_le(buf),
-            }
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_discriminator, &mut encode_variant])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     // @audit-ok: Simple pattern matching (cyclo 11, cogni 1) - dispatch to variant max_cdr2_size
@@ -213,6 +176,38 @@ impl Cdr2Encode for MinimalTypeObject {
             MinimalTypeObject::Alias(a) => a.max_cdr2_size(),
             // Other variants not handled (Annotation) - use conservative estimate
             _ => 4096,
+        }
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let discriminator: u8 = match self {
+            MinimalTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
+            MinimalTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
+            MinimalTypeObject::Enumerated(_) => TypeKind::TK_ENUM.to_u8(),
+            MinimalTypeObject::Bitmask(_) => TypeKind::TK_BITMASK.to_u8(),
+            MinimalTypeObject::Bitset(_) => TypeKind::TK_BITSET.to_u8(),
+            MinimalTypeObject::Sequence(_) => TypeKind::TK_SEQUENCE.to_u8(),
+            MinimalTypeObject::Array(_) => TypeKind::TK_ARRAY.to_u8(),
+            MinimalTypeObject::Map(_) => TypeKind::TK_MAP.to_u8(),
+            MinimalTypeObject::Alias(_) => TypeKind::TK_ALIAS.to_u8(),
+            MinimalTypeObject::Annotation(_) => TypeKind::TK_ANNOTATION.to_u8(),
+        };
+        encode_u8(discriminator, dst, offset)?;
+        match self {
+            MinimalTypeObject::Struct(s) => s.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Union(u) => u.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Enumerated(e) => e.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Bitmask(b) => b.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Bitset(b) => b.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Sequence(s) => s.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Array(a) => a.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Map(m) => m.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Alias(a) => a.encode_cdr2_le_at(dst, offset),
+            MinimalTypeObject::Annotation(a) => a.encode_cdr2_le_at(dst, offset),
         }
     }
 }

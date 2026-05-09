@@ -25,32 +25,33 @@ use crate::xtypes::type_object::*;
 impl Cdr2Encode for CompleteTypeDetail {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Encode type_name
-        encode_string(&self.type_name, dst, &mut offset)?;
-
-        // Encode ann_builtin (Option)
-        encode_option(&self.ann_builtin, dst, &mut offset, |ann, dst, offset| {
-            encode_option(&ann.verbatim, dst, offset, |s: &String, dst, offset| {
-                encode_string(s.as_str(), dst, offset)
-            })
-        })?;
-
-        // Encode ann_custom (Option<Vec>)
-        encode_option(&self.ann_custom, dst, &mut offset, |vec, dst, offset| {
-            let len = u32::try_from(vec.len())
-                .map_err(|_| CdrError::Other("Annotation list exceeds u32::MAX entries".into()))?;
-            encode_u32(len, dst, offset)?;
-            // For now, skip encoding AppliedAnnotation (complex, will add later)
-            Ok(())
-        })?;
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate: name (256) + annotations (512)
         1024
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_string(&self.type_name, dst, offset)?;
+        encode_option(&self.ann_builtin, dst, offset, |ann, dst, offset| {
+            encode_option(&ann.verbatim, dst, offset, |s: &String, dst, offset| {
+                encode_string(s.as_str(), dst, offset)
+            })
+        })?;
+        encode_option(&self.ann_custom, dst, offset, |vec, dst, offset| {
+            let len = u32::try_from(vec.len())
+                .map_err(|_| CdrError::Other("Annotation list exceeds u32::MAX entries".into()))?;
+            encode_u32(len, dst, offset)?;
+            Ok(())
+        })?;
+        Ok(())
     }
 }
 
@@ -91,6 +92,14 @@ impl Cdr2Encode for MinimalTypeDetail {
     fn max_cdr2_size(&self) -> usize {
         0
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        _dst: &mut [u8],
+        _offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        Ok(())
+    }
 }
 
 impl Cdr2Decode for MinimalTypeDetail {
@@ -103,35 +112,36 @@ impl Cdr2Encode for CompleteMemberDetail {
     // @audit-ok: Sequential encoding (cyclo 12, cogni 0) - linear option encoding without branching logic
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
+    }
 
-        // Encode name
-        encode_string(&self.name, dst, &mut offset)?;
+    fn max_cdr2_size(&self) -> usize {
+        512
+    }
 
-        // Encode ann_builtin (Option)
-        encode_option(&self.ann_builtin, dst, &mut offset, |ann, dst, offset| {
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_string(&self.name, dst, offset)?;
+        encode_option(&self.ann_builtin, dst, offset, |ann, dst, offset| {
             encode_option(&ann.unit, dst, offset, |s: &String, dst, offset| {
                 encode_string(s.as_str(), dst, offset)
             })?;
-            // Skip min/max (f64) for now
             encode_option(&ann.hash_id, dst, offset, |s: &String, dst, offset| {
                 encode_string(s.as_str(), dst, offset)
             })
         })?;
-
-        // Encode ann_custom (Option<Vec>)
-        encode_option(&self.ann_custom, dst, &mut offset, |vec, dst, offset| {
+        encode_option(&self.ann_custom, dst, offset, |vec, dst, offset| {
             let len = u32::try_from(vec.len()).map_err(|_| {
                 CdrError::Other("Member annotation list exceeds u32::MAX entries".into())
             })?;
             encode_u32(len, dst, offset)?;
             Ok(())
         })?;
-
-        Ok(offset)
-    }
-
-    fn max_cdr2_size(&self) -> usize {
-        512
+        Ok(())
     }
 }
 
@@ -177,6 +187,14 @@ impl Cdr2Encode for MinimalMemberDetail {
 
     fn max_cdr2_size(&self) -> usize {
         8 // 4 bytes + alignment
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u32(self.name_hash, dst, offset)
     }
 }
 

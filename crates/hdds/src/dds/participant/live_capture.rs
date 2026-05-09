@@ -43,6 +43,19 @@ impl Cdr2Encode for RawBytes {
     fn max_cdr2_size(&self) -> usize {
         self.0.len()
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        buf: &mut [u8],
+        offset: &mut usize,
+    ) -> std::result::Result<(), CdrError> {
+        if *offset + self.0.len() > buf.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        buf[*offset..*offset + self.0.len()].copy_from_slice(&self.0);
+        *offset += self.0.len();
+        Ok(())
+    }
 }
 
 impl DdsTrait for RawBytes {

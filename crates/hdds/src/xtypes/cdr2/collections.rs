@@ -9,7 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.5 (Collection Types)
 
-use super::helpers::{checked_usize, encode_fields_sequential};
+use super::helpers::checked_usize;
 use super::primitives::{decode_u16, decode_u32, encode_u16, encode_u32, encode_vec};
 use super::type_identifier::decode_type_identifier_internal;
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
@@ -32,6 +32,14 @@ impl Cdr2Encode for CollectionElementFlag {
     fn max_cdr2_size(&self) -> usize {
         4 // u16 + 2-byte alignment padding
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.0, dst, offset)
+    }
 }
 
 impl Cdr2Decode for CollectionElementFlag {
@@ -48,18 +56,23 @@ impl Cdr2Decode for CollectionElementFlag {
 
 impl Cdr2Encode for CompleteCollectionHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_bound = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u32(self.bound, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_bound, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u32(self.bound, dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -89,15 +102,20 @@ pub(super) fn decode_complete_collection_header_internal(
 impl Cdr2Encode for MinimalCollectionHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        // Encode bound (u32)
         encode_u32(self.bound, dst, &mut offset)?;
-
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u32(self.bound, dst, offset)
     }
 }
 
@@ -115,18 +133,23 @@ impl Cdr2Decode for MinimalCollectionHeader {
 
 impl Cdr2Encode for CompleteCollectionElement {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_flags = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u16(self.flags.0, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_type_id = |buf: &mut [u8]| self.type_id.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_flags, &mut encode_type_id])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4 + self.type_id.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.flags.0, dst, offset)?;
+        self.type_id.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -155,18 +178,23 @@ pub(super) fn decode_complete_collection_element_internal(
 
 impl Cdr2Encode for MinimalCollectionElement {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_flags = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u16(self.flags.0, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_type_id = |buf: &mut [u8]| self.type_id.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_flags, &mut encode_type_id])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4 + self.type_id.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.flags.0, dst, offset)?;
+        self.type_id.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -199,14 +227,23 @@ pub(super) fn decode_minimal_collection_element_internal(
 
 impl Cdr2Encode for CompleteSequenceType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_element = |buf: &mut [u8]| self.element.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_header, &mut encode_element])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size() + self.element.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        self.element.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -226,14 +263,23 @@ impl Cdr2Decode for CompleteSequenceType {
 
 impl Cdr2Encode for MinimalSequenceType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_element = |buf: &mut [u8]| self.element.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_header, &mut encode_element])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size() + self.element.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        self.element.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -258,25 +304,26 @@ impl Cdr2Decode for MinimalSequenceType {
 
 impl Cdr2Encode for CompleteArrayType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_element = |buf: &mut [u8]| self.element.encode_cdr2_le(buf);
-        let mut encode_bounds = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_vec(&self.bound_seq, buf, &mut local, |item, buf, offset| {
-                encode_u32(*item, buf, offset)?;
-                Ok(())
-            })?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(
-            dst,
-            &mut [&mut encode_header, &mut encode_element, &mut encode_bounds],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size() + self.element.max_cdr2_size() + 4 + (self.bound_seq.len() * 4)
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        self.element.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.bound_seq, dst, offset, |item, dst, offset| {
+            encode_u32(*item, dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -314,25 +361,26 @@ impl Cdr2Decode for CompleteArrayType {
 
 impl Cdr2Encode for MinimalArrayType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_element = |buf: &mut [u8]| self.element.encode_cdr2_le(buf);
-        let mut encode_bounds = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_vec(&self.bound_seq, buf, &mut local, |item, buf, offset| {
-                encode_u32(*item, buf, offset)?;
-                Ok(())
-            })?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(
-            dst,
-            &mut [&mut encode_header, &mut encode_element, &mut encode_bounds],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size() + self.element.max_cdr2_size() + 4 + (self.bound_seq.len() * 4)
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        self.element.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.bound_seq, dst, offset, |item, dst, offset| {
+            encode_u32(*item, dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -373,18 +421,24 @@ impl Cdr2Decode for MinimalArrayType {
 
 impl Cdr2Encode for CompleteMapType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_key = |buf: &mut [u8]| self.key.encode_cdr2_le(buf);
-        let mut encode_element = |buf: &mut [u8]| self.element.encode_cdr2_le(buf);
-
-        encode_fields_sequential(
-            dst,
-            &mut [&mut encode_header, &mut encode_key, &mut encode_element],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size() + self.key.max_cdr2_size() + self.element.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        self.key.encode_cdr2_le_at(dst, offset)?;
+        self.element.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -417,18 +471,24 @@ impl Cdr2Decode for CompleteMapType {
 
 impl Cdr2Encode for MinimalMapType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_key = |buf: &mut [u8]| self.key.encode_cdr2_le(buf);
-        let mut encode_element = |buf: &mut [u8]| self.element.encode_cdr2_le(buf);
-
-        encode_fields_sequential(
-            dst,
-            &mut [&mut encode_header, &mut encode_key, &mut encode_element],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size() + self.key.max_cdr2_size() + self.element.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        self.key.encode_cdr2_le_at(dst, offset)?;
+        self.element.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 

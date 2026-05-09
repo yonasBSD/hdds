@@ -4,7 +4,6 @@
 //! Bitfield encoding for different bit widths.
 //!
 
-use super::super::helpers::encode_fields_sequential;
 use super::super::primitives::{decode_u16, decode_u8, encode_u16, encode_u8};
 use super::super::type_identifier::decode_type_identifier_internal;
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
@@ -19,37 +18,26 @@ use crate::xtypes::type_object::{
 
 impl Cdr2Encode for CommonBitfield {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_position = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u16(self.position, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_flags = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u16(self.flags.0, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_bit_count = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_u8(self.bit_count, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_holder = |buf: &mut [u8]| self.holder_type.encode_cdr2_le(buf);
-
-        encode_fields_sequential(
-            dst,
-            &mut [
-                &mut encode_position,
-                &mut encode_flags,
-                &mut encode_bit_count,
-                &mut encode_holder,
-            ],
-        )
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         // position (2) + flags (2) + bit_count (1) + holder_type (32) + alignment
         64
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_u16(self.position, dst, offset)?;
+        encode_u16(self.flags.0, dst, offset)?;
+        encode_u8(self.bit_count, dst, offset)?;
+        self.holder_type.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -87,14 +75,23 @@ pub(super) fn decode_common_bitfield_internal(
 
 impl Cdr2Encode for CompleteBitfield {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_common = |buf: &mut [u8]| self.common.encode_cdr2_le(buf);
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_common, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.common.encode_cdr2_le_at(dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -121,14 +118,23 @@ pub(super) fn decode_complete_bitfield_internal(
 
 impl Cdr2Encode for MinimalBitfield {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_common = |buf: &mut [u8]| self.common.encode_cdr2_le(buf);
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_common, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.common.encode_cdr2_le_at(dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 

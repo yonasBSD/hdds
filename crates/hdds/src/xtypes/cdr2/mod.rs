@@ -103,7 +103,7 @@ mod type_objects;
 // The CDR2 module provides serialization traits for TypeObject types.
 // TypeObject types themselves are defined and exported from `crate::xtypes::type_object`.
 #[allow(unused_imports)] // Re-exported for public API
-pub use traits::{Cdr2Decode, Cdr2Encode};
+pub use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode};
 
 // NOTE: `primitives`, `flags`, `details`, etc. are NOT re-exported
 // They are internal implementation modules that provide `Cdr2Encode`/`Cdr2Decode`

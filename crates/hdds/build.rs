@@ -274,6 +274,16 @@ impl Cdr2Encode for Temperature {{
     fn max_cdr2_size(&self) -> usize {{
         8  // Fixed size: f32 (4) + i32 (4)
     }}
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), hdds::core::ser::CdrError> {{
+        Cdr2Encode::encode_cdr2_le_at(&self.value, dst, offset)?;
+        Cdr2Encode::encode_cdr2_le_at(&self.timestamp, dst, offset)?;
+        Ok(())
+    }}
 }}
 
 impl Cdr2Decode for Temperature {{

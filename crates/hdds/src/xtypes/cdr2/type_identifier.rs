@@ -30,75 +30,7 @@ impl Cdr2Encode for TypeIdentifier {
     /// as the discriminator and carry no payload.
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
-
-        match self {
-            // §7.3.4.4: primitive `TypeIdentifier`s are encoded as the
-            // `TypeKind` octet alone (TK_BOOLEAN..TK_CHAR16 in the
-            // 0x00..0x11 range), with no payload following.
-            TypeIdentifier::Primitive(kind) => {
-                encode_u8(kind.to_u8(), dst, &mut offset)?;
-            }
-            // §7.3.4.4: `case TI_STRING8_SMALL: StringSTypeDefn { SBound bound; };`
-            TypeIdentifier::StringSmall { bound } => {
-                encode_u8(TI_STRING8_SMALL, dst, &mut offset)?;
-                encode_u8(*bound, dst, &mut offset)?;
-            }
-            // §7.3.4.4: `case TI_STRING8_LARGE: StringLTypeDefn { LBound bound; };`
-            TypeIdentifier::StringLarge { bound } => {
-                encode_u8(TI_STRING8_LARGE, dst, &mut offset)?;
-                encode_u32(*bound, dst, &mut offset)?;
-            }
-            // §7.3.4.4: `case TI_STRING16_SMALL: StringSTypeDefn { SBound bound; };`
-            TypeIdentifier::WStringSmall { bound } => {
-                encode_u8(TI_STRING16_SMALL, dst, &mut offset)?;
-                encode_u8(*bound, dst, &mut offset)?;
-            }
-            // §7.3.4.4: `case TI_STRING16_LARGE: StringLTypeDefn { LBound bound; };`
-            TypeIdentifier::WStringLarge { bound } => {
-                encode_u8(TI_STRING16_LARGE, dst, &mut offset)?;
-                encode_u32(*bound, dst, &mut offset)?;
-            }
-            // §7.3.4.4: `case EK_MINIMAL: EquivalenceHash equivalence_hash;`
-            TypeIdentifier::Minimal(hash) => {
-                encode_u8(EK_MINIMAL, dst, &mut offset)?;
-                if offset + 14 > dst.len() {
-                    return Err(CdrError::BufferTooSmall);
-                }
-                dst[offset..offset + 14].copy_from_slice(hash.as_bytes());
-                offset += 14;
-            }
-            // §7.3.4.4: `case EK_COMPLETE: EquivalenceHash equivalence_hash;`
-            TypeIdentifier::Complete(hash) => {
-                encode_u8(EK_COMPLETE, dst, &mut offset)?;
-                if offset + 14 > dst.len() {
-                    return Err(CdrError::BufferTooSmall);
-                }
-                dst[offset..offset + 14].copy_from_slice(hash.as_bytes());
-                offset += 14;
-            }
-            // §7.3.4.4: `case TI_STRONGLY_CONNECTED_COMPONENT:
-            //               StronglyConnectedComponentId sc_component_id;`
-            //
-            // The spec layout for `StronglyConnectedComponentId` is
-            // `@extensibility(APPENDABLE)` and wraps a `TypeObjectHashId`
-            // union (1 discriminator + 14-byte hash) plus two `long`
-            // fields. This emitter writes the 14-byte hash + two `i32`s
-            // without the spec's outer DHEADER nor the inner
-            // `TypeObjectHashId` union discriminator; payload-shape
-            // alignment with §7.3.4.4 is tracked separately and only the
-            // top-level discriminator is migrated here.
-            TypeIdentifier::StronglyConnected(sc) => {
-                encode_u8(TI_STRONGLY_CONNECTED_COMPONENT, dst, &mut offset)?;
-                if offset + 14 > dst.len() {
-                    return Err(CdrError::BufferTooSmall);
-                }
-                dst[offset..offset + 14].copy_from_slice(sc.sc_component_id.as_bytes());
-                offset += 14;
-                encode_i32(sc.scc_length, dst, &mut offset)?;
-                encode_i32(sc.scc_index, dst, &mut offset)?;
-            }
-        }
-
+        self.encode_cdr2_le_at(dst, &mut offset)?;
         Ok(offset)
     }
 
@@ -106,6 +38,61 @@ impl Cdr2Encode for TypeIdentifier {
         // Discriminator (1) + worst case `StronglyConnected` payload
         // (14-byte hash + two i32 fields = 22 bytes) + slack.
         32
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        match self {
+            TypeIdentifier::Primitive(kind) => {
+                encode_u8(kind.to_u8(), dst, offset)?;
+            }
+            TypeIdentifier::StringSmall { bound } => {
+                encode_u8(TI_STRING8_SMALL, dst, offset)?;
+                encode_u8(*bound, dst, offset)?;
+            }
+            TypeIdentifier::StringLarge { bound } => {
+                encode_u8(TI_STRING8_LARGE, dst, offset)?;
+                encode_u32(*bound, dst, offset)?;
+            }
+            TypeIdentifier::WStringSmall { bound } => {
+                encode_u8(TI_STRING16_SMALL, dst, offset)?;
+                encode_u8(*bound, dst, offset)?;
+            }
+            TypeIdentifier::WStringLarge { bound } => {
+                encode_u8(TI_STRING16_LARGE, dst, offset)?;
+                encode_u32(*bound, dst, offset)?;
+            }
+            TypeIdentifier::Minimal(hash) => {
+                encode_u8(EK_MINIMAL, dst, offset)?;
+                if *offset + 14 > dst.len() {
+                    return Err(CdrError::BufferTooSmall);
+                }
+                dst[*offset..*offset + 14].copy_from_slice(hash.as_bytes());
+                *offset += 14;
+            }
+            TypeIdentifier::Complete(hash) => {
+                encode_u8(EK_COMPLETE, dst, offset)?;
+                if *offset + 14 > dst.len() {
+                    return Err(CdrError::BufferTooSmall);
+                }
+                dst[*offset..*offset + 14].copy_from_slice(hash.as_bytes());
+                *offset += 14;
+            }
+            TypeIdentifier::StronglyConnected(sc) => {
+                encode_u8(TI_STRONGLY_CONNECTED_COMPONENT, dst, offset)?;
+                if *offset + 14 > dst.len() {
+                    return Err(CdrError::BufferTooSmall);
+                }
+                dst[*offset..*offset + 14].copy_from_slice(sc.sc_component_id.as_bytes());
+                *offset += 14;
+                encode_i32(sc.scc_length, dst, offset)?;
+                encode_i32(sc.scc_index, dst, offset)?;
+            }
+        }
+        Ok(())
     }
 }
 

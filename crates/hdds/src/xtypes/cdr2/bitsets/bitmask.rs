@@ -4,7 +4,7 @@
 //! Bitmask encoding for Complete/Minimal types.
 //!
 
-use super::super::helpers::{checked_usize, encode_fields_sequential};
+use super::super::helpers::checked_usize;
 use super::super::primitives::{align_offset, decode_i16, decode_u32, encode_i16, encode_vec};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 use crate::xtypes::type_object::{
@@ -20,18 +20,23 @@ use super::bitflag::{decode_complete_bitflag_internal, decode_minimal_bitflag_in
 
 impl Cdr2Encode for CompleteBitmaskHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_bit_bound = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_i16(self.bit_bound, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_bit_bound, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_i16(self.bit_bound, dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -58,18 +63,23 @@ pub(super) fn decode_complete_bitmask_header_internal(
 
 impl Cdr2Encode for MinimalBitmaskHeader {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_bit_bound = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_i16(self.bit_bound, buf, &mut local)?;
-            Ok(local)
-        };
-        let mut encode_detail = |buf: &mut [u8]| self.detail.encode_cdr2_le(buf);
-
-        encode_fields_sequential(dst, &mut [&mut encode_bit_bound, &mut encode_detail])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         4 + self.detail.max_cdr2_size()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        encode_i16(self.bit_bound, dst, offset)?;
+        self.detail.encode_cdr2_le_at(dst, offset)?;
+        Ok(())
     }
 }
 
@@ -101,18 +111,9 @@ pub(super) fn decode_minimal_bitmask_header_internal(
 
 impl Cdr2Encode for CompleteBitmaskType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_flags = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_vec(&self.flag_seq, buf, &mut local, |flag, buf, offset| {
-                let len = flag.encode_cdr2_le(&mut buf[*offset..])?;
-                *offset += len;
-                Ok(())
-            })?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_header, &mut encode_flags])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -124,6 +125,18 @@ impl Cdr2Encode for CompleteBitmaskType {
                 .iter()
                 .map(|f| f.max_cdr2_size())
                 .sum::<usize>()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
+            flag.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 
@@ -151,18 +164,9 @@ impl Cdr2Decode for CompleteBitmaskType {
 
 impl Cdr2Encode for MinimalBitmaskType {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut encode_header = |buf: &mut [u8]| self.header.encode_cdr2_le(buf);
-        let mut encode_flags = |buf: &mut [u8]| -> Result<usize, CdrError> {
-            let mut local = 0;
-            encode_vec(&self.flag_seq, buf, &mut local, |flag, buf, offset| {
-                let len = flag.encode_cdr2_le(&mut buf[*offset..])?;
-                *offset += len;
-                Ok(())
-            })?;
-            Ok(local)
-        };
-
-        encode_fields_sequential(dst, &mut [&mut encode_header, &mut encode_flags])
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -174,6 +178,18 @@ impl Cdr2Encode for MinimalBitmaskType {
                 .iter()
                 .map(|f| f.max_cdr2_size())
                 .sum::<usize>()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.header.encode_cdr2_le_at(dst, offset)?;
+        encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
+            flag.encode_cdr2_le_at(dst, offset)
+        })?;
+        Ok(())
     }
 }
 

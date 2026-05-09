@@ -247,6 +247,32 @@ impl Cdr2Encode for String {
     fn max_cdr2_size(&self) -> usize {
         4 + self.len() + 1
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let bytes = self.as_bytes();
+        let str_len = bytes.len();
+        let cdr_len: u32 = (str_len + 1)
+            .try_into()
+            .map_err(|_| CdrError::DataTooLarge)?;
+
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 + str_len + 1 > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..*offset + pad].fill(0);
+        *offset += pad;
+        dst[*offset..*offset + 4].copy_from_slice(&cdr_len.to_le_bytes());
+        *offset += 4;
+        dst[*offset..*offset + str_len].copy_from_slice(bytes);
+        *offset += str_len;
+        dst[*offset] = 0;
+        *offset += 1;
+        Ok(())
+    }
 }
 
 /// CDR2 decoding for String
@@ -371,6 +397,26 @@ impl<T: Cdr2Encode> Cdr2Encode for Vec<T> {
         // Conservative estimate: 4 bytes for length + sum of element sizes
         4 + self.iter().map(|e| e.max_cdr2_size()).sum::<usize>()
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let len = u32::try_from(self.len()).map_err(|_| CdrError::DataTooLarge)?;
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..*offset + pad].fill(0);
+        *offset += pad;
+        dst[*offset..*offset + 4].copy_from_slice(&len.to_le_bytes());
+        *offset += 4;
+        for elem in self {
+            elem.encode_cdr2_le_at(dst, offset)?;
+        }
+        Ok(())
+    }
 }
 
 impl<T: Cdr2Decode> Cdr2Decode for Vec<T> {
@@ -431,6 +477,27 @@ impl<K: Cdr2Encode, V: Cdr2Encode> Cdr2Encode for std::collections::HashMap<K, V
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate
         4 + self.len() * 64 // rough estimate per entry
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let len = u32::try_from(self.len()).map_err(|_| CdrError::DataTooLarge)?;
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..*offset + pad].fill(0);
+        *offset += pad;
+        dst[*offset..*offset + 4].copy_from_slice(&len.to_le_bytes());
+        *offset += 4;
+        for (key, value) in self {
+            key.encode_cdr2_le_at(dst, offset)?;
+            value.encode_cdr2_le_at(dst, offset)?;
+        }
+        Ok(())
     }
 }
 
@@ -495,6 +562,32 @@ impl Cdr2Encode for &str {
     fn max_cdr2_size(&self) -> usize {
         4 + self.len() + 1
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let bytes = self.as_bytes();
+        let str_len = bytes.len();
+        let cdr_len: u32 = (str_len + 1)
+            .try_into()
+            .map_err(|_| CdrError::DataTooLarge)?;
+
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 + str_len + 1 > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..*offset + pad].fill(0);
+        *offset += pad;
+        dst[*offset..*offset + 4].copy_from_slice(&cdr_len.to_le_bytes());
+        *offset += 4;
+        dst[*offset..*offset + str_len].copy_from_slice(bytes);
+        *offset += str_len;
+        dst[*offset] = 0;
+        *offset += 1;
+        Ok(())
+    }
 }
 
 // ============================================================================
@@ -512,6 +605,19 @@ impl Cdr2Encode for bool {
     }
     fn max_cdr2_size(&self) -> usize {
         1
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        if *offset >= dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset] = u8::from(*self);
+        *offset += 1;
+        Ok(())
     }
 }
 
@@ -548,6 +654,22 @@ impl Cdr2Encode for char {
     fn max_cdr2_size(&self) -> usize {
         1
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        if *offset >= dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        if !self.is_ascii() {
+            return Err(CdrError::InvalidEncoding);
+        }
+        dst[*offset] = *self as u8;
+        *offset += 1;
+        Ok(())
+    }
 }
 
 impl Cdr2Decode for char {
@@ -577,6 +699,17 @@ impl<T: Cdr2Encode, const N: usize> Cdr2Encode for [T; N] {
     }
     fn max_cdr2_size(&self) -> usize {
         self.iter().map(|e| e.max_cdr2_size()).sum()
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        for elem in self {
+            elem.encode_cdr2_le_at(dst, offset)?;
+        }
+        Ok(())
     }
 }
 
@@ -621,6 +754,28 @@ impl<T: Cdr2Encode> Cdr2Encode for Option<T> {
             Some(val) => 1 + val.max_cdr2_size(),
         }
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        if *offset >= dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        match self {
+            None => {
+                dst[*offset] = 0;
+                *offset += 1;
+                Ok(())
+            }
+            Some(val) => {
+                dst[*offset] = 1;
+                *offset += 1;
+                val.encode_cdr2_le_at(dst, offset)
+            }
+        }
+    }
 }
 
 impl<T: Cdr2Decode> Cdr2Decode for Option<T> {
@@ -663,6 +818,27 @@ impl<K: Cdr2Encode + Ord, V: Cdr2Encode> Cdr2Encode for std::collections::BTreeM
     }
     fn max_cdr2_size(&self) -> usize {
         4 + self.len() * 64
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        let len = u32::try_from(self.len()).map_err(|_| CdrError::DataTooLarge)?;
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..*offset + pad].fill(0);
+        *offset += pad;
+        dst[*offset..*offset + 4].copy_from_slice(&len.to_le_bytes());
+        *offset += 4;
+        for (key, value) in self {
+            key.encode_cdr2_le_at(dst, offset)?;
+            value.encode_cdr2_le_at(dst, offset)?;
+        }
+        Ok(())
     }
 }
 
@@ -715,6 +891,16 @@ mod tests {
 
         fn max_cdr2_size(&self) -> usize {
             8
+        }
+
+        fn encode_cdr2_le_at(
+            &self,
+            dst: &mut [u8],
+            offset: &mut usize,
+        ) -> Result<(), CdrError> {
+            self.x.encode_cdr2_le_at(dst, offset)?;
+            self.y.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
         }
     }
 

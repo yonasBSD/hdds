@@ -69,6 +69,16 @@ impl hdds::Cdr2Encode for Temperature {
     fn max_cdr2_size(&self) -> usize {
         16
     }
+
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), hdds::CdrError> {
+        let len = self.encode_cdr2_le(&mut dst[*offset..])?;
+        *offset += len;
+        Ok(())
+    }
 }
 
 impl hdds::Cdr2Decode for Temperature {

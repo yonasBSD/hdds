@@ -46,45 +46,53 @@ pub(super) fn encode_u8(value: u8, dst: &mut [u8], offset: &mut usize) -> Result
     Ok(())
 }
 
-/// Encode u16 (2-byte alignment)
+/// Encode u16 (2-byte alignment, zero-fills any padding gap per XCDR2 §7.4.3.4.2).
 pub(super) fn encode_u16(value: u16, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-    *offset = align_offset(*offset, 2);
-    if *offset + 2 > dst.len() {
+    let aligned = align_offset(*offset, 2);
+    if aligned + 2 > dst.len() {
         return Err(CdrError::BufferTooSmall);
     }
+    dst[*offset..aligned].fill(0);
+    *offset = aligned;
     dst[*offset..*offset + 2].copy_from_slice(&value.to_le_bytes());
     *offset += 2;
     Ok(())
 }
 
-/// Encode u32 (4-byte alignment)
+/// Encode u32 (4-byte alignment, zero-fills any padding gap per XCDR2 §7.4.3.4.2).
 pub(super) fn encode_u32(value: u32, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-    *offset = align_offset(*offset, 4);
-    if *offset + 4 > dst.len() {
+    let aligned = align_offset(*offset, 4);
+    if aligned + 4 > dst.len() {
         return Err(CdrError::BufferTooSmall);
     }
+    dst[*offset..aligned].fill(0);
+    *offset = aligned;
     dst[*offset..*offset + 4].copy_from_slice(&value.to_le_bytes());
     *offset += 4;
     Ok(())
 }
 
-/// Encode i16 (2-byte alignment)
+/// Encode i16 (2-byte alignment, zero-fills any padding gap per XCDR2 §7.4.3.4.2).
 pub(super) fn encode_i16(value: i16, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-    *offset = align_offset(*offset, 2);
-    if *offset + 2 > dst.len() {
+    let aligned = align_offset(*offset, 2);
+    if aligned + 2 > dst.len() {
         return Err(CdrError::BufferTooSmall);
     }
+    dst[*offset..aligned].fill(0);
+    *offset = aligned;
     dst[*offset..*offset + 2].copy_from_slice(&value.to_le_bytes());
     *offset += 2;
     Ok(())
 }
 
-/// Encode i32 (4-byte alignment)
+/// Encode i32 (4-byte alignment, zero-fills any padding gap per XCDR2 §7.4.3.4.2).
 pub(super) fn encode_i32(value: i32, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-    *offset = align_offset(*offset, 4);
-    if *offset + 4 > dst.len() {
+    let aligned = align_offset(*offset, 4);
+    if aligned + 4 > dst.len() {
         return Err(CdrError::BufferTooSmall);
     }
+    dst[*offset..aligned].fill(0);
+    *offset = aligned;
     dst[*offset..*offset + 4].copy_from_slice(&value.to_le_bytes());
     *offset += 4;
     Ok(())
@@ -156,8 +164,12 @@ where
 
     encode_u32(len, dst, offset)?;
     for item in vec {
-        // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-        *offset = align_offset(*offset, 4);
+        let aligned = align_offset(*offset, 4);
+        if aligned > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..aligned].fill(0);
+        *offset = aligned;
         encode_fn(item, dst, offset)?;
     }
     Ok(())

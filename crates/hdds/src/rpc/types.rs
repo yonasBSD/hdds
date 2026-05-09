@@ -173,29 +173,30 @@ impl RemoteExceptionCode {
 // CDR encoding for SampleIdentity
 impl Cdr2Encode for SampleIdentity {
     fn encode_cdr2_le(&self, buf: &mut [u8]) -> Result<usize, CdrError> {
-        if buf.len() < Self::CDR_SIZE {
-            return Err(CdrError::BufferTooSmall);
-        }
-
         let mut offset = 0;
-
-        // GUID prefix (12 bytes)
-        buf[offset..offset + 12].copy_from_slice(&self.writer_guid.prefix);
-        offset += 12;
-
-        // Entity ID (4 bytes)
-        buf[offset..offset + 4].copy_from_slice(&self.writer_guid.entity_id);
-        offset += 4;
-
-        // Sequence number (8 bytes, i64 LE)
-        buf[offset..offset + 8].copy_from_slice(&self.sequence_number.to_le_bytes());
-        offset += 8;
-
+        self.encode_cdr2_le_at(buf, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         Self::CDR_SIZE
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        buf: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        if *offset + Self::CDR_SIZE > buf.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        buf[*offset..*offset + 12].copy_from_slice(&self.writer_guid.prefix);
+        *offset += 12;
+        buf[*offset..*offset + 4].copy_from_slice(&self.writer_guid.entity_id);
+        *offset += 4;
+        buf[*offset..*offset + 8].copy_from_slice(&self.sequence_number.to_le_bytes());
+        *offset += 8;
+        Ok(())
     }
 }
 
@@ -233,18 +234,23 @@ impl Cdr2Decode for SampleIdentity {
 // CDR encoding for RequestHeader
 impl Cdr2Encode for RequestHeader {
     fn encode_cdr2_le(&self, buf: &mut [u8]) -> Result<usize, CdrError> {
-        if buf.len() < Self::CDR_SIZE {
-            return Err(CdrError::BufferTooSmall);
-        }
-
-        let mut offset = self.request_id.encode_cdr2_le(buf)?;
-        offset += self.instance_id.encode_cdr2_le(&mut buf[offset..])?;
-
+        let mut offset = 0;
+        self.encode_cdr2_le_at(buf, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         Self::CDR_SIZE
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        buf: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.request_id.encode_cdr2_le_at(buf, offset)?;
+        self.instance_id.encode_cdr2_le_at(buf, offset)?;
+        Ok(())
     }
 }
 
@@ -275,20 +281,28 @@ impl Cdr2Decode for RequestHeader {
 // CDR encoding for ReplyHeader
 impl Cdr2Encode for ReplyHeader {
     fn encode_cdr2_le(&self, buf: &mut [u8]) -> Result<usize, CdrError> {
-        if buf.len() < Self::CDR_SIZE {
-            return Err(CdrError::BufferTooSmall);
-        }
-
-        let mut offset = self.related_request_id.encode_cdr2_le(buf)?;
-
-        buf[offset..offset + 4].copy_from_slice(&self.remote_exception_code.as_i32().to_le_bytes());
-        offset += 4;
-
+        let mut offset = 0;
+        self.encode_cdr2_le_at(buf, &mut offset)?;
         Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
         Self::CDR_SIZE
+    }
+
+    fn encode_cdr2_le_at(
+        &self,
+        buf: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError> {
+        self.related_request_id.encode_cdr2_le_at(buf, offset)?;
+        if *offset + 4 > buf.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        buf[*offset..*offset + 4]
+            .copy_from_slice(&self.remote_exception_code.as_i32().to_le_bytes());
+        *offset += 4;
+        Ok(())
     }
 }
 
