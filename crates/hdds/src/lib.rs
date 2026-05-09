@@ -88,8 +88,6 @@ extern crate self as hdds;
 
 /// Administration and monitoring API (metrics, mesh introspection).
 pub mod admin;
-/// CDR (Common Data Representation) encoding/decoding for DDS wire format.
-pub mod cdr;
 /// Global configuration (RTPS constants, runtime config, QoS store).
 pub mod config;
 /// Congestion control (rate limiting, priority queues, AIMD adaptation).

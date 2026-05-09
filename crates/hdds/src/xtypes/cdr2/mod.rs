@@ -76,7 +76,6 @@
 // Foundation
 mod helpers;
 mod primitives;
-mod traits; // Shared helpers for encoding/decoding
 
 // Core types
 mod details;

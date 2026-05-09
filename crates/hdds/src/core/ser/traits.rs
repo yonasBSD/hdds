@@ -121,6 +121,45 @@ pub trait Cdr2Encode {
     fn encode_xcdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         self.encode_cdr2_le(dst)
     }
+
+    /// Encode into a parent buffer at a global offset cursor.
+    ///
+    /// This is the spec-compliant entry point per OMG DDS-XTypes v1.3
+    /// §7.4.3.4.1 Tab.15. Implementations MUST propagate `offset` to
+    /// internal field encoders so alignment is computed against the
+    /// real wire position rather than against `0` in a sub-buffer slice
+    /// (see audit finding F01 / `cdr2_alignment` systemic for the bug
+    /// that this method retires; cf. `ADR-CHANTIER-1.6-AUDIT-RESPONSE.md`
+    /// §10.1 + `ADR-1.6.1-PHASE-0-CARTOGRAPHIE.md` §6.1).
+    ///
+    /// # Arguments
+    /// * `dst` — parent buffer; the implementation writes starting at
+    ///   `dst[*offset]` and advances `*offset` by the number of bytes
+    ///   written (including any padding emitted for alignment).
+    /// * `offset` — global cursor, mutated in-place. The caller is
+    ///   responsible for any pre-call alignment; the implementation
+    ///   handles its own internal alignment relative to the supplied
+    ///   `*offset` value.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, `Err(CdrError::BufferTooSmall)` if `dst`
+    /// is too short to hold the encoding starting at `*offset`.
+    ///
+    /// # Migration note (Chantier 1.6.1)
+    /// This method is `REQUIRED` (no default impl on purpose). The
+    /// migration explicitly opts out of opt-in correctness so the
+    /// compiler enforces exhaustive coverage of all `Cdr2Encode`
+    /// impls. Types whose encoding has no internal alignment may
+    /// delegate via the trivial body
+    /// `let len = self.encode_cdr2_le(&mut dst[*offset..])?; *offset += len; Ok(())`
+    /// — but every such delegation should be accompanied by a
+    /// `// SAFETY: type has no internal alignment requirement` comment
+    /// so reviewers can confirm the choice.
+    fn encode_cdr2_le_at(
+        &self,
+        dst: &mut [u8],
+        offset: &mut usize,
+    ) -> Result<(), CdrError>;
 }
 
 /// CDR2 decoding trait (Little-Endian)
