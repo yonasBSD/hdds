@@ -8,6 +8,33 @@
 //
 // Each test encodes a known deterministic value and verifies byte-exact
 // roundtrip: encode -> decode -> re-encode == original bytes.
+//
+// Post-Chantier 1.6.1 status (verified 2026-05-10, sub-commit 1.6.1b):
+//   The 43 .bin goldens remain byte-identical to their 2026-03-12 lock.
+//   The F01 alignment migration (1.6.1a-impls-lib) was intentionally
+//   scoped to NOT change the wire format of these blanket / custom-mock
+//   paths: primitive `encode_cdr2_le` delegates to `_at` (byte-identical
+//   at offset=0), `Vec<T>` / `HashMap<K,V>` / `BTreeMap<K,V>` / `Option<T>` /
+//   `[T;N]` blanket impls keep their legacy sub-buffer bodies (cf
+//   `// NOTE:` comments in `core/ser/traits.rs`), and the custom struct
+//   mocks below (Point3D, LabelledValue, Segment, SortedMap) define
+//   their own `encode_cdr2_le` bodies that do not delegate.
+//
+//   The diff-validation helper `tools/diff-golden-bytes.py` (added in
+//   1.6.1b) is the script that future relock waves (e.g., post-F29
+//   DHEADER fix in 1.6.10 or post-decode_cdr2_le_at migration in 1.6.11)
+//   will run to confirm any byte drift is alignment-induced and not a
+//   regression. See `LIMITATION:` note in the script: positional diff
+//   handles tail-padding growth but NOT middle-insertion shifts (use
+//   diff/LCS or manual hex inspection for those scenarios).
+//
+//   Coverage gap (tracked in ADR-CHANTIER-1.6 §10.16): the current
+//   fixtures do not exercise the misaligned-outer-offset → inner-primitive
+//   case. `golden_map_string_struct_nested` happens to land its `Point3D`
+//   payloads on 4-aligned global offsets by data-luck (key lengths
+//   produce 4-aligned post-padding boundaries), so a future regression
+//   of the inner Point3D mock's encoder would not be caught here. A
+//   dedicated `..._misaligned` canary fixture is the follow-up after F29.
 
 #![allow(clippy::float_cmp)]
 #![allow(clippy::unreadable_literal)]
@@ -341,6 +368,13 @@ where
     }
 }
 
+// TEST-ONLY: this mock reproduces the legacy sub-buffer behavior (does NOT
+// use the spec-correct `_at` offset propagation). It exists to lock the
+// pre-1.6.1a wire format for self-roundtrip; do NOT copy this pattern into
+// production code. See `core/ser/traits.rs` `// NOTE:` blocks on the
+// blanket Vec/HashMap/BTreeMap/Option/[T;N] impls for the canonical
+// rationale, and the per-type spec-aligned override on cdr2/* TypeObject
+// impls for the production-correct pattern.
 impl<K, V> Cdr2Encode for SortedMap<K, V>
 where
     K: Ord + Clone + Cdr2Encode,
@@ -451,6 +485,7 @@ struct Point3D {
     z: f64,
 }
 
+// TEST-ONLY: legacy sub-buffer behavior. See note above SortedMap.
 impl Cdr2Encode for Point3D {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         if dst.len() < 24 {
@@ -500,6 +535,7 @@ struct LabelledValue {
     label: String,
 }
 
+// TEST-ONLY: legacy sub-buffer behavior. See note above SortedMap.
 impl Cdr2Encode for LabelledValue {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
@@ -551,6 +587,7 @@ struct Segment {
     name: String,
 }
 
+// TEST-ONLY: legacy sub-buffer behavior. See note above SortedMap.
 impl Cdr2Encode for Segment {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
