@@ -236,28 +236,9 @@ pub trait Cdr2Decode: Sized {
 /// - null terminator (0x00)
 impl Cdr2Encode for String {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let bytes = self.as_bytes();
-        let str_len = bytes.len();
-
-        // CDR: length field includes null terminator
-        let cdr_len: u32 = (str_len + 1)
-            .try_into()
-            .map_err(|_| CdrError::DataTooLarge)?;
-
-        let total_size = 4 + str_len + 1; // length prefix + bytes + null terminator
-
-        if dst.len() < total_size {
-            return Err(CdrError::BufferTooSmall);
-        }
-
-        // Write CDR length (includes null terminator)
-        dst[0..4].copy_from_slice(&cdr_len.to_le_bytes());
-        // Write string bytes
-        dst[4..4 + str_len].copy_from_slice(bytes);
-        // Write null terminator
-        dst[4 + str_len] = 0;
-
-        Ok(total_size)
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -321,11 +302,9 @@ macro_rules! impl_cdr2_primitive {
     ($ty:ty, $size:expr) => {
         impl Cdr2Encode for $ty {
             fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-                if dst.len() < $size {
-                    return Err(CdrError::BufferTooSmall);
-                }
-                dst[..$size].copy_from_slice(&self.to_le_bytes());
-                Ok($size)
+                let mut offset = 0;
+                self.encode_cdr2_le_at(dst, &mut offset)?;
+                Ok(offset)
             }
             fn max_cdr2_size(&self) -> usize {
                 $size
@@ -384,6 +363,17 @@ impl_cdr2_primitive!(f64, 8);
 // Vec<T> Implementation
 // ============================================================================
 
+// NOTE: encode_cdr2_le keeps the legacy sub-buffer body — it does NOT
+// delegate to encode_cdr2_le_at. Reason: encode_cdr2_le_at aligns inner
+// elements per the XCDR2 spec, while the symmetric Cdr2Decode for
+// Vec<T> reads elements without alignment via sub-buffer slicing
+// (no decode_cdr2_le_at exists yet on the trait). Switching the
+// encoder to delegate would emit aligned bytes that the legacy
+// decoder cannot read back symmetrically. The two paths are
+// intentionally separate wire formats: _le for legacy roundtrip
+// contracts, _at for spec-aligned offset propagation in composite
+// outer encoders. Migration of the decoder to a symmetric aligned
+// path (decode_cdr2_le_at) is tracked as a follow-up post-1.6.1f.
 impl<T: Cdr2Encode> Cdr2Encode for Vec<T> {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
@@ -459,6 +449,9 @@ impl<T: Cdr2Decode> Cdr2Decode for Vec<T> {
 // HashMap<K, V> Implementation
 // ============================================================================
 
+// NOTE: encode_cdr2_le keeps the legacy sub-buffer body. See the same
+// note on `impl Cdr2Encode for Vec<T>` for the rationale (legacy decoder
+// does not align; encoder must stay symmetric).
 impl<K: Cdr2Encode, V: Cdr2Encode> Cdr2Encode for std::collections::HashMap<K, V> {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
@@ -542,25 +535,9 @@ where
 /// CDR2 encoding for &str (borrows to String encoding)
 impl Cdr2Encode for &str {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let bytes = self.as_bytes();
-        let str_len = bytes.len();
-
-        // CDR: length field includes null terminator
-        let cdr_len: u32 = (str_len + 1)
-            .try_into()
-            .map_err(|_| CdrError::DataTooLarge)?;
-
-        let total_size = 4 + str_len + 1;
-
-        if dst.len() < total_size {
-            return Err(CdrError::BufferTooSmall);
-        }
-
-        dst[0..4].copy_from_slice(&cdr_len.to_le_bytes());
-        dst[4..4 + str_len].copy_from_slice(bytes);
-        dst[4 + str_len] = 0;
-
-        Ok(total_size)
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
 
     fn max_cdr2_size(&self) -> usize {
@@ -597,11 +574,9 @@ impl Cdr2Encode for &str {
 
 impl Cdr2Encode for bool {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        if dst.is_empty() {
-            return Err(CdrError::BufferTooSmall);
-        }
-        dst[0] = u8::from(*self);
-        Ok(1)
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
     fn max_cdr2_size(&self) -> usize {
         1
@@ -637,15 +612,9 @@ impl Cdr2Decode for bool {
 
 impl Cdr2Encode for char {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        if dst.is_empty() {
-            return Err(CdrError::BufferTooSmall);
-        }
-        // char8 is a single ASCII byte per spec
-        if !self.is_ascii() {
-            return Err(CdrError::InvalidEncoding);
-        }
-        dst[0] = *self as u8;
-        Ok(1)
+        let mut offset = 0;
+        self.encode_cdr2_le_at(dst, &mut offset)?;
+        Ok(offset)
     }
     fn max_cdr2_size(&self) -> usize {
         1
@@ -680,6 +649,8 @@ impl Cdr2Decode for char {
 // CDR2 array: N elements encoded sequentially, NO length prefix
 // ============================================================================
 
+// NOTE: encode_cdr2_le keeps the legacy sub-buffer body. See the same
+// note on `impl Cdr2Encode for Vec<T>` for the rationale.
 impl<T: Cdr2Encode, const N: usize> Cdr2Encode for [T; N] {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         let mut offset = 0;
@@ -719,6 +690,13 @@ impl<T: Cdr2Decode + Default + Copy, const N: usize> Cdr2Decode for [T; N] {
 // CDR2 optional: 1-byte presence flag (0x00 absent, 0x01 present) + value
 // ============================================================================
 
+// NOTE: encode_cdr2_le keeps the legacy unaligned body — Option<u32>
+// produces 5 bytes (1 flag + 4 unaligned u32) here, while
+// encode_cdr2_le_at aligns to 4 after the flag (8 bytes total).
+// The legacy decoder Cdr2Decode for Option<T> reads without alignment;
+// changing the encoder would break roundtrip symmetry. Spec-aligned
+// optional encoding for composite outer types goes through the
+// _at path, not this method.
 impl<T: Cdr2Encode> Cdr2Encode for Option<T> {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         if dst.is_empty() {
@@ -784,6 +762,8 @@ impl<T: Cdr2Decode> Cdr2Decode for Option<T> {
 // Deterministic iteration order (sorted by key).
 // ============================================================================
 
+// NOTE: encode_cdr2_le keeps the legacy sub-buffer body. See the same
+// note on `impl Cdr2Encode for Vec<T>` for the rationale.
 impl<K: Cdr2Encode + Ord, V: Cdr2Encode> Cdr2Encode for std::collections::BTreeMap<K, V> {
     fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
         if dst.len() < 4 {
@@ -861,12 +841,9 @@ mod tests {
 
     impl Cdr2Encode for TestPoint {
         fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-            if dst.len() < 8 {
-                return Err(CdrError::BufferTooSmall);
-            }
-            dst[0..4].copy_from_slice(&self.x.to_le_bytes());
-            dst[4..8].copy_from_slice(&self.y.to_le_bytes());
-            Ok(8)
+            let mut offset = 0;
+            self.encode_cdr2_le_at(dst, &mut offset)?;
+            Ok(offset)
         }
 
         fn max_cdr2_size(&self) -> usize {
