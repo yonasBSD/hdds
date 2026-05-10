@@ -33,11 +33,7 @@ impl Cdr2Encode for CompleteBitsetHeader {
         1 + 32 + self.detail.max_cdr2_size() // flag + optional TypeIdentifier + detail
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if let Some(ref base) = self.base_type {
             encode_u8(1, dst, offset)?;
             base.encode_cdr2_le_at(dst, offset)?;
@@ -87,11 +83,7 @@ impl Cdr2Encode for MinimalBitsetHeader {
         1 + 32 + self.detail.max_cdr2_size() // flag + optional TypeIdentifier + detail
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if let Some(ref base) = self.base_type {
             encode_u8(1, dst, offset)?;
             base.encode_cdr2_le_at(dst, offset)?;
@@ -153,11 +145,7 @@ impl Cdr2Encode for CompleteBitsetType {
                 .sum::<usize>()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.bitset_flags.0, dst, offset)?;
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.field_seq, dst, offset, |field, dst, offset| {
@@ -216,11 +204,7 @@ impl Cdr2Encode for MinimalBitsetType {
                 .sum::<usize>()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.bitset_flags.0, dst, offset)?;
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.field_seq, dst, offset, |field, dst, offset| {

@@ -34,11 +34,7 @@ impl Cdr2Encode for CompleteTypeDetail {
         1024
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_string(&self.type_name, dst, offset)?;
         encode_option(&self.ann_builtin, dst, offset, |ann, dst, offset| {
             encode_option(&ann.verbatim, dst, offset, |s: &String, dst, offset| {
@@ -93,11 +89,7 @@ impl Cdr2Encode for MinimalTypeDetail {
         0
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        _dst: &mut [u8],
-        _offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, _dst: &mut [u8], _offset: &mut usize) -> Result<(), CdrError> {
         Ok(())
     }
 }
@@ -120,11 +112,7 @@ impl Cdr2Encode for CompleteMemberDetail {
         512
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_string(&self.name, dst, offset)?;
         encode_option(&self.ann_builtin, dst, offset, |ann, dst, offset| {
             encode_option(&ann.unit, dst, offset, |s: &String, dst, offset| {
@@ -189,11 +177,7 @@ impl Cdr2Encode for MinimalMemberDetail {
         8 // 4 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u32(self.name_hash, dst, offset)
     }
 }

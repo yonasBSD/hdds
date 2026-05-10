@@ -28,11 +28,7 @@ impl Cdr2Encode for CommonBitfield {
         64
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.position, dst, offset)?;
         encode_u16(self.flags.0, dst, offset)?;
         encode_u8(self.bit_count, dst, offset)?;
@@ -84,11 +80,7 @@ impl Cdr2Encode for CompleteBitfield {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -127,11 +119,7 @@ impl Cdr2Encode for MinimalBitfield {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())

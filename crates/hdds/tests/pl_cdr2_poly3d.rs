@@ -56,11 +56,7 @@ impl Cdr2Encode for Point3D {
         7 + 8 + 7 + 8 + 7 + 8
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())
@@ -188,11 +184,7 @@ impl Cdr2Encode for Poly3D {
         12 + points_stride * self.points.len() + altitude_max
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())

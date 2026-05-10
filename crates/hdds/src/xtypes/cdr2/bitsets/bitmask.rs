@@ -29,11 +29,7 @@ impl Cdr2Encode for CompleteBitmaskHeader {
         4 + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_i16(self.bit_bound, dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -72,11 +68,7 @@ impl Cdr2Encode for MinimalBitmaskHeader {
         4 + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_i16(self.bit_bound, dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -127,11 +119,7 @@ impl Cdr2Encode for CompleteBitmaskType {
                 .sum::<usize>()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
             flag.encode_cdr2_le_at(dst, offset)
@@ -180,11 +168,7 @@ impl Cdr2Encode for MinimalBitmaskType {
                 .sum::<usize>()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
             flag.encode_cdr2_le_at(dst, offset)

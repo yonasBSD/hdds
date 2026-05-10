@@ -182,11 +182,7 @@ impl Cdr2Encode for SampleIdentity {
         Self::CDR_SIZE
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        buf: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, buf: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if *offset + Self::CDR_SIZE > buf.len() {
             return Err(CdrError::BufferTooSmall);
         }
@@ -243,11 +239,7 @@ impl Cdr2Encode for RequestHeader {
         Self::CDR_SIZE
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        buf: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, buf: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.request_id.encode_cdr2_le_at(buf, offset)?;
         self.instance_id.encode_cdr2_le_at(buf, offset)?;
         Ok(())
@@ -290,11 +282,7 @@ impl Cdr2Encode for ReplyHeader {
         Self::CDR_SIZE
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        buf: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, buf: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.related_request_id.encode_cdr2_le_at(buf, offset)?;
         if *offset + 4 > buf.len() {
             return Err(CdrError::BufferTooSmall);

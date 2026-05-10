@@ -155,11 +155,27 @@ pub trait Cdr2Encode {
     /// — but every such delegation should be accompanied by a
     /// `// SAFETY: type has no internal alignment requirement` comment
     /// so reviewers can confirm the choice.
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError>;
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError>;
+
+    /// XTypes v1.3 §7.4.3.4 — XCDR1 offset-aware sub-encoder. Default
+    /// delegates to `encode_cdr2_le_at` (XCDR2 alignment rules); generated
+    /// types that implement strict XCDR1 alignment override this with an
+    /// inherent method via Rust method resolution. The same byte-format
+    /// caveat as `encode_xcdr1_le` applies: byte-identical to XCDR2 only
+    /// when elements are ≤4-byte aligned. Codegen output (hddsgen ≥1.1.0)
+    /// calls `inner.encode_xcdr1_le_at(...)` on every nested field; this
+    /// default makes container/primitive blanket impls work without per-
+    /// type overrides.
+    fn encode_xcdr1_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
+        self.encode_cdr2_le_at(dst, offset)
+    }
+
+    /// XTypes v1.3 §7.4.3.4 — XCDR2 offset-aware sub-encoder. Default
+    /// delegates to `encode_cdr2_le_at`; generated types override with an
+    /// inherent method (hddsgen ≥1.1.0). Symmetric to `encode_xcdr2_le`.
+    fn encode_xcdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
+        self.encode_cdr2_le_at(dst, offset)
+    }
 }
 
 /// CDR2 decoding trait (Little-Endian)
@@ -248,11 +264,7 @@ impl Cdr2Encode for String {
         4 + self.len() + 1
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let bytes = self.as_bytes();
         let str_len = bytes.len();
         let cdr_len: u32 = (str_len + 1)
@@ -398,11 +410,7 @@ impl<T: Cdr2Encode> Cdr2Encode for Vec<T> {
         4 + self.iter().map(|e| e.max_cdr2_size()).sum::<usize>()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = u32::try_from(self.len()).map_err(|_| CdrError::DataTooLarge)?;
         let pad = (4 - (*offset % 4)) % 4;
         if *offset + pad + 4 > dst.len() {
@@ -479,11 +487,7 @@ impl<K: Cdr2Encode, V: Cdr2Encode> Cdr2Encode for std::collections::HashMap<K, V
         4 + self.len() * 64 // rough estimate per entry
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = u32::try_from(self.len()).map_err(|_| CdrError::DataTooLarge)?;
         let pad = (4 - (*offset % 4)) % 4;
         if *offset + pad + 4 > dst.len() {
@@ -563,11 +567,7 @@ impl Cdr2Encode for &str {
         4 + self.len() + 1
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let bytes = self.as_bytes();
         let str_len = bytes.len();
         let cdr_len: u32 = (str_len + 1)
@@ -607,11 +607,7 @@ impl Cdr2Encode for bool {
         1
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if *offset >= dst.len() {
             return Err(CdrError::BufferTooSmall);
         }
@@ -655,11 +651,7 @@ impl Cdr2Encode for char {
         1
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if *offset >= dst.len() {
             return Err(CdrError::BufferTooSmall);
         }
@@ -701,11 +693,7 @@ impl<T: Cdr2Encode, const N: usize> Cdr2Encode for [T; N] {
         self.iter().map(|e| e.max_cdr2_size()).sum()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         for elem in self {
             elem.encode_cdr2_le_at(dst, offset)?;
         }
@@ -755,11 +743,7 @@ impl<T: Cdr2Encode> Cdr2Encode for Option<T> {
         }
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if *offset >= dst.len() {
             return Err(CdrError::BufferTooSmall);
         }
@@ -820,11 +804,7 @@ impl<K: Cdr2Encode + Ord, V: Cdr2Encode> Cdr2Encode for std::collections::BTreeM
         4 + self.len() * 64
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = u32::try_from(self.len()).map_err(|_| CdrError::DataTooLarge)?;
         let pad = (4 - (*offset % 4)) % 4;
         if *offset + pad + 4 > dst.len() {
@@ -893,11 +873,7 @@ mod tests {
             8
         }
 
-        fn encode_cdr2_le_at(
-            &self,
-            dst: &mut [u8],
-            offset: &mut usize,
-        ) -> Result<(), CdrError> {
+        fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
             self.x.encode_cdr2_le_at(dst, offset)?;
             self.y.encode_cdr2_le_at(dst, offset)?;
             Ok(())

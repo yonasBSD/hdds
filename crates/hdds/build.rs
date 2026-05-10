@@ -95,6 +95,9 @@ impl Cdr2Encode for SensorReading {
         panic!(\"stub: run scripts/test-sdk-typed.sh to generate real interop types\")
     }
     fn max_cdr2_size(&self) -> usize { 0 }
+    fn encode_cdr2_le_at(&self, _buf: &mut [u8], _offset: &mut usize) -> Result<(), CdrError> {
+        panic!(\"stub: run scripts/test-sdk-typed.sh to generate real interop types\")
+    }
 }
 
 impl Cdr2Decode for SensorReading {
@@ -118,6 +121,9 @@ impl Cdr2Encode for KeyedSample {
         panic!(\"stub: run scripts/test-sdk-typed.sh to generate real interop types\")
     }
     fn max_cdr2_size(&self) -> usize { 0 }
+    fn encode_cdr2_le_at(&self, _buf: &mut [u8], _offset: &mut usize) -> Result<(), CdrError> {
+        panic!(\"stub: run scripts/test-sdk-typed.sh to generate real interop types\")
+    }
 }
 
 impl Cdr2Decode for KeyedSample {

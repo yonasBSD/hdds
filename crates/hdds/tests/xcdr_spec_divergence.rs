@@ -54,11 +54,7 @@ impl Cdr2Encode for Probe {
         1 + 7 + 8
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())

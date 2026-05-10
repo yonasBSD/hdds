@@ -26,11 +26,7 @@ impl Cdr2Encode for CommonBitflag {
         8 // position (2) + flags (2) + alignment (4)
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.position, dst, offset)?;
         encode_u16(self.flags.0, dst, offset)?;
         Ok(())
@@ -71,11 +67,7 @@ impl Cdr2Encode for CompleteBitflag {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -114,11 +106,7 @@ impl Cdr2Encode for MinimalBitflag {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())

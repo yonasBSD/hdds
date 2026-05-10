@@ -45,11 +45,7 @@ impl Cdr2Encode for CompleteTypeObject {
         }
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let discriminator: u8 = match self {
             CompleteTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
             CompleteTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),
@@ -179,11 +175,7 @@ impl Cdr2Encode for MinimalTypeObject {
         }
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let discriminator: u8 = match self {
             MinimalTypeObject::Struct(_) => TypeKind::TK_STRUCTURE.to_u8(),
             MinimalTypeObject::Union(_) => TypeKind::TK_UNION.to_u8(),

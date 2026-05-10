@@ -58,6 +58,20 @@ pub mod TemperatureData {
         fn max_cdr2_size(&self) -> usize {
             8 // f32 (4) + i32 (4), no padding needed (both 4-byte aligned)
         }
+
+        // SAFETY: type has no internal alignment requirement — both fields
+        // (f32, i32) align on 4 and the local-offset path emits the same
+        // bytes as a global-offset path for any 4-byte-aligned outer
+        // position.
+        fn encode_cdr2_le_at(
+            &self,
+            dst: &mut [u8],
+            offset: &mut usize,
+        ) -> Result<(), hdds::CdrError> {
+            let len = self.encode_cdr2_le(&mut dst[*offset..])?;
+            *offset += len;
+            Ok(())
+        }
     }
 
     impl Cdr2Decode for Temperature {

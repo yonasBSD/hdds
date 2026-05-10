@@ -553,6 +553,17 @@ impl Cdr2Encode for ShapeType {
         12 + // x, y, shapesize
         4 + self.additional_payload_size.len() // sequence
     }
+
+    // SAFETY: type has no internal alignment requirement that depends on
+    // the global cursor — encode_cdr2_le emits its own DHEADER + per-field
+    // alignment relative to local offset 0, byte-identical to what would
+    // be emitted at the global *offset for the wire ranges this type
+    // produces.
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
+        let len = self.encode_cdr2_le(&mut dst[*offset..])?;
+        *offset += len;
+        Ok(())
+    }
 }
 
 impl Cdr2Decode for ShapeType {

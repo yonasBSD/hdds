@@ -29,11 +29,7 @@ impl Cdr2Encode for StructTypeFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -57,11 +53,7 @@ impl Cdr2Encode for MemberFlag {
         4
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -85,11 +77,7 @@ impl Cdr2Encode for UnionTypeFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -113,11 +101,7 @@ impl Cdr2Encode for BitflagFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -141,11 +125,7 @@ impl Cdr2Encode for BitsetTypeFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -169,11 +149,7 @@ impl Cdr2Encode for BitfieldFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -197,11 +173,7 @@ impl Cdr2Encode for AliasTypeFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }
@@ -225,11 +197,7 @@ impl Cdr2Encode for TypeRelationFlag {
         4 // 2 bytes + alignment
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.0, dst, offset)
     }
 }

@@ -34,11 +34,7 @@ impl Cdr2Encode for CommonStructMember {
         64
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u32(self.member_id, dst, offset)?;
         encode_u16(self.member_flags.0, dst, offset)?;
         self.member_type_id.encode_cdr2_le_at(dst, offset)?;
@@ -87,11 +83,7 @@ impl Cdr2Encode for CompleteStructMember {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -129,11 +121,7 @@ impl Cdr2Encode for MinimalStructMember {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -176,11 +164,7 @@ impl Cdr2Encode for CommonUnionMember {
         128 + self.label_seq.len() * 4
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u32(self.member_id, dst, offset)?;
         encode_u16(self.member_flags.0, dst, offset)?;
         self.member_type_id.encode_cdr2_le_at(dst, offset)?;
@@ -244,11 +228,7 @@ impl Cdr2Encode for CompleteUnionMember {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -286,11 +266,7 @@ impl Cdr2Encode for MinimalUnionMember {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.common.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())

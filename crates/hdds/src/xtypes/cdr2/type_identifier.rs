@@ -40,11 +40,7 @@ impl Cdr2Encode for TypeIdentifier {
         32
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         match self {
             TypeIdentifier::Primitive(kind) => {
                 encode_u8(kind.to_u8(), dst, offset)?;

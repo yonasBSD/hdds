@@ -21,8 +21,8 @@
 //!
 //! All 18 tests are `#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]`
 //! today. They become live in 1.6.1d-unignore-cross-vendor once the
-//! migration chain (impls-macro-primitives + impls-lib + codegen-rust
-//! + callers-internal) restores green compile and the spec-compliant
+//! migration chain (impls-macro-primitives, impls-lib, codegen-rust,
+//! callers-internal) restores green compile and the spec-compliant
 //! alignment is active end-to-end.
 //!
 //! ## Self-contained design
@@ -50,11 +50,7 @@ impl Probe {
     /// Spec-compliant XCDR2 encoder for the Probe IDL type.
     /// 8-byte primitive (`f64`) aligns to `min(8, 4) = 4` per
     /// DDS-XTypes v1.3 §7.4.3.4.1 Tab.15 (XCDR2 cap).
-    fn encode_xcdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), LocalCdrError> {
+    fn encode_xcdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), LocalCdrError> {
         // octet a — alignment 1
         if *offset + 1 > dst.len() {
             return Err(LocalCdrError::BufferTooSmall);
@@ -80,11 +76,7 @@ impl Probe {
 
     /// Spec-compliant XCDR1 encoder for the Probe IDL type.
     /// 8-byte primitive (`f64`) aligns to 8 in XCDR1 (no cap).
-    fn encode_xcdr1_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), LocalCdrError> {
+    fn encode_xcdr1_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), LocalCdrError> {
         // octet a — alignment 1
         if *offset + 1 > dst.len() {
             return Err(LocalCdrError::BufferTooSmall);
@@ -151,7 +143,14 @@ fn fastdds_xcdr2_nominal() {
 #[test]
 #[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
 fn fastdds_xcdr2_nan() {
-    assert_probe_matches_golden(Probe { a: 0x42, b: f64::NAN }, FASTDDS_X2_NAN, true);
+    assert_probe_matches_golden(
+        Probe {
+            a: 0x42,
+            b: f64::NAN,
+        },
+        FASTDDS_X2_NAN,
+        true,
+    );
 }
 
 #[test]
@@ -177,7 +176,14 @@ fn rti6_xcdr2_nominal() {
 #[test]
 #[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
 fn rti6_xcdr2_nan() {
-    assert_probe_matches_golden(Probe { a: 0x42, b: f64::NAN }, RTI6_X2_NAN, true);
+    assert_probe_matches_golden(
+        Probe {
+            a: 0x42,
+            b: f64::NAN,
+        },
+        RTI6_X2_NAN,
+        true,
+    );
 }
 
 #[test]
@@ -203,7 +209,14 @@ fn rti7_xcdr2_nominal() {
 #[test]
 #[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
 fn rti7_xcdr2_nan() {
-    assert_probe_matches_golden(Probe { a: 0x42, b: f64::NAN }, RTI7_X2_NAN, true);
+    assert_probe_matches_golden(
+        Probe {
+            a: 0x42,
+            b: f64::NAN,
+        },
+        RTI7_X2_NAN,
+        true,
+    );
 }
 
 #[test]
@@ -231,7 +244,14 @@ fn fastdds_xcdr1_nominal() {
 #[test]
 #[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
 fn fastdds_xcdr1_nan() {
-    assert_probe_matches_golden(Probe { a: 0x42, b: f64::NAN }, FASTDDS_X1_NAN, false);
+    assert_probe_matches_golden(
+        Probe {
+            a: 0x42,
+            b: f64::NAN,
+        },
+        FASTDDS_X1_NAN,
+        false,
+    );
 }
 
 #[test]
@@ -257,7 +277,14 @@ fn rti6_xcdr1_nominal() {
 #[test]
 #[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
 fn rti6_xcdr1_nan() {
-    assert_probe_matches_golden(Probe { a: 0x42, b: f64::NAN }, RTI6_X1_NAN, false);
+    assert_probe_matches_golden(
+        Probe {
+            a: 0x42,
+            b: f64::NAN,
+        },
+        RTI6_X1_NAN,
+        false,
+    );
 }
 
 #[test]
@@ -283,7 +310,14 @@ fn rti7_xcdr1_nominal() {
 #[test]
 #[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
 fn rti7_xcdr1_nan() {
-    assert_probe_matches_golden(Probe { a: 0x42, b: f64::NAN }, RTI7_X1_NAN, false);
+    assert_probe_matches_golden(
+        Probe {
+            a: 0x42,
+            b: f64::NAN,
+        },
+        RTI7_X1_NAN,
+        false,
+    );
 }
 
 #[test]

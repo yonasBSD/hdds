@@ -33,11 +33,7 @@ impl Cdr2Encode for CompleteStructHeader {
         32 + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
             type_id.encode_cdr2_le_at(dst, offset)
         })?;
@@ -79,11 +75,7 @@ impl Cdr2Encode for MinimalStructHeader {
         32 + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
             type_id.encode_cdr2_le_at(dst, offset)
         })?;
@@ -130,11 +122,7 @@ impl Cdr2Encode for CompleteStructType {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.struct_flags.0, dst, offset)?;
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
@@ -182,11 +170,7 @@ impl Cdr2Encode for MinimalStructType {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.struct_flags.0, dst, offset)?;
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {

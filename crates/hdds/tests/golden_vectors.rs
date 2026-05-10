@@ -371,11 +371,7 @@ where
         size
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())
@@ -468,11 +464,7 @@ impl Cdr2Encode for Point3D {
     fn max_cdr2_size(&self) -> usize {
         24
     }
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())
@@ -523,11 +515,7 @@ impl Cdr2Encode for LabelledValue {
     fn max_cdr2_size(&self) -> usize {
         8 + self.label.max_cdr2_size()
     }
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())
@@ -574,11 +562,7 @@ impl Cdr2Encode for Segment {
     fn max_cdr2_size(&self) -> usize {
         self.start.max_cdr2_size() + self.end.max_cdr2_size() + self.name.max_cdr2_size()
     }
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         let len = self.encode_cdr2_le(&mut dst[*offset..])?;
         *offset += len;
         Ok(())

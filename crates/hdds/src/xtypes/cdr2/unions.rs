@@ -31,11 +31,7 @@ impl Cdr2Encode for CompleteUnionHeader {
         32 + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.discriminator.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -75,11 +71,7 @@ impl Cdr2Encode for MinimalUnionHeader {
         32 + self.detail.max_cdr2_size()
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.discriminator.encode_cdr2_le_at(dst, offset)?;
         self.detail.encode_cdr2_le_at(dst, offset)?;
         Ok(())
@@ -125,11 +117,7 @@ impl Cdr2Encode for CompleteUnionType {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.union_flags.0, dst, offset)?;
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
@@ -177,11 +165,7 @@ impl Cdr2Encode for MinimalUnionType {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
     }
 
-    fn encode_cdr2_le_at(
-        &self,
-        dst: &mut [u8],
-        offset: &mut usize,
-    ) -> Result<(), CdrError> {
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_u16(self.union_flags.0, dst, offset)?;
         self.header.encode_cdr2_le_at(dst, offset)?;
         encode_vec(&self.member_seq, dst, offset, |member, dst, offset| {
