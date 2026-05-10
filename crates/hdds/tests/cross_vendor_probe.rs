@@ -17,23 +17,31 @@
 //! interop on the XCDR2 wire. The fix lives in the F01 / 1.6.1
 //! `encode_cdr2_le_at` migration; this file gates progress empirically.
 //!
-//! ## Status (1.6.1a-empirical-anchor, 2026-05-09)
+//! ## Status (1.6.1d-unignore-cross-vendor, 2026-05-10)
 //!
-//! All 18 tests are `#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]`
-//! today. They become live in 1.6.1d-unignore-cross-vendor once the
+//! The 18 tests are LIVE — `#[ignore]` markers removed after the
 //! migration chain (impls-macro-primitives, impls-lib, codegen-rust,
-//! callers-internal) restores green compile and the spec-compliant
-//! alignment is active end-to-end.
+//! codegen-encode, sdk-samples-regen) landed and the spec-compliant
+//! XCDR2 alignment is active end-to-end. The tests validate F01
+//! (cdr2_alignment systemic) + F04 (macro alignment) byte-for-byte
+//! against cross-vendor golden hex sequences for user-struct types
+//! (`struct Probe { octet a; double b }`).
+//!
+//! The independently-tracked F29 (DHEADER missing for
+//! @extensibility(APPENDABLE) `MinimalTypeObject` / `CompleteTypeObject`
+//! containers) does NOT affect these tests: Probe is a regular user
+//! data type, not a TypeObject, so the spec framing required for
+//! cross-vendor `EquivalenceHash` matching is out of scope here.
 //!
 //! ## Self-contained design
 //!
 //! The test fixture defines its own `Probe` struct + `encode_xcdr2_le_at`
 //! / `encode_xcdr1_le_at` inherent methods so it does NOT depend on any
 //! type pulled from the `hdds` crate's broken-during-migration lib build.
-//! Once the migration completes, a follow-up may rewire the assertions
-//! through the canonical `hdds::Cdr2Encode` trait.
+//! Now that the migration is complete, a follow-up may rewire the
+//! assertions through the canonical `hdds::Cdr2Encode` trait.
 
-#![allow(dead_code)] // ad-hoc fixture; helpers used inside #[ignore] tests
+#![allow(dead_code)] // ad-hoc fixture; helpers may not all be reached every run
 
 #[derive(Debug, Clone, PartialEq)]
 struct Probe {
@@ -135,13 +143,13 @@ const FASTDDS_X2_NEG_ZERO: &[u8] =
     include_bytes!("golden/xcdr2_crossvendor/fastdds/probe_neg_zero.bin");
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn fastdds_xcdr2_nominal() {
     assert_probe_matches_golden(Probe { a: 0x42, b: 1.0 }, FASTDDS_X2_NOMINAL, true);
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn fastdds_xcdr2_nan() {
     assert_probe_matches_golden(
         Probe {
@@ -154,7 +162,7 @@ fn fastdds_xcdr2_nan() {
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn fastdds_xcdr2_neg_zero() {
     assert_probe_matches_golden(Probe { a: 0x42, b: -0.0 }, FASTDDS_X2_NEG_ZERO, true);
 }
@@ -168,13 +176,13 @@ const RTI6_X2_NAN: &[u8] = include_bytes!("golden/xcdr2_crossvendor/rti6/probe_n
 const RTI6_X2_NEG_ZERO: &[u8] = include_bytes!("golden/xcdr2_crossvendor/rti6/probe_neg_zero.bin");
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti6_xcdr2_nominal() {
     assert_probe_matches_golden(Probe { a: 0x42, b: 1.0 }, RTI6_X2_NOMINAL, true);
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti6_xcdr2_nan() {
     assert_probe_matches_golden(
         Probe {
@@ -187,7 +195,7 @@ fn rti6_xcdr2_nan() {
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti6_xcdr2_neg_zero() {
     assert_probe_matches_golden(Probe { a: 0x42, b: -0.0 }, RTI6_X2_NEG_ZERO, true);
 }
@@ -201,13 +209,13 @@ const RTI7_X2_NAN: &[u8] = include_bytes!("golden/xcdr2_crossvendor/rti7/probe_n
 const RTI7_X2_NEG_ZERO: &[u8] = include_bytes!("golden/xcdr2_crossvendor/rti7/probe_neg_zero.bin");
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti7_xcdr2_nominal() {
     assert_probe_matches_golden(Probe { a: 0x42, b: 1.0 }, RTI7_X2_NOMINAL, true);
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti7_xcdr2_nan() {
     assert_probe_matches_golden(
         Probe {
@@ -220,7 +228,7 @@ fn rti7_xcdr2_nan() {
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti7_xcdr2_neg_zero() {
     assert_probe_matches_golden(Probe { a: 0x42, b: -0.0 }, RTI7_X2_NEG_ZERO, true);
 }
@@ -236,13 +244,13 @@ const FASTDDS_X1_NEG_ZERO: &[u8] =
     include_bytes!("golden/xcdr1_crossvendor/fastdds/probe_neg_zero.bin");
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn fastdds_xcdr1_nominal() {
     assert_probe_matches_golden(Probe { a: 0x42, b: 1.0 }, FASTDDS_X1_NOMINAL, false);
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn fastdds_xcdr1_nan() {
     assert_probe_matches_golden(
         Probe {
@@ -255,7 +263,7 @@ fn fastdds_xcdr1_nan() {
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn fastdds_xcdr1_neg_zero() {
     assert_probe_matches_golden(Probe { a: 0x42, b: -0.0 }, FASTDDS_X1_NEG_ZERO, false);
 }
@@ -269,13 +277,13 @@ const RTI6_X1_NAN: &[u8] = include_bytes!("golden/xcdr1_crossvendor/rti6/probe_n
 const RTI6_X1_NEG_ZERO: &[u8] = include_bytes!("golden/xcdr1_crossvendor/rti6/probe_neg_zero.bin");
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti6_xcdr1_nominal() {
     assert_probe_matches_golden(Probe { a: 0x42, b: 1.0 }, RTI6_X1_NOMINAL, false);
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti6_xcdr1_nan() {
     assert_probe_matches_golden(
         Probe {
@@ -288,7 +296,7 @@ fn rti6_xcdr1_nan() {
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti6_xcdr1_neg_zero() {
     assert_probe_matches_golden(Probe { a: 0x42, b: -0.0 }, RTI6_X1_NEG_ZERO, false);
 }
@@ -302,13 +310,13 @@ const RTI7_X1_NAN: &[u8] = include_bytes!("golden/xcdr1_crossvendor/rti7/probe_n
 const RTI7_X1_NEG_ZERO: &[u8] = include_bytes!("golden/xcdr1_crossvendor/rti7/probe_neg_zero.bin");
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti7_xcdr1_nominal() {
     assert_probe_matches_golden(Probe { a: 0x42, b: 1.0 }, RTI7_X1_NOMINAL, false);
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti7_xcdr1_nan() {
     assert_probe_matches_golden(
         Probe {
@@ -321,7 +329,7 @@ fn rti7_xcdr1_nan() {
 }
 
 #[test]
-#[ignore = "F01 not yet fixed (cdr2_alignment systemic)"]
+
 fn rti7_xcdr1_neg_zero() {
     assert_probe_matches_golden(Probe { a: 0x42, b: -0.0 }, RTI7_X1_NEG_ZERO, false);
 }
