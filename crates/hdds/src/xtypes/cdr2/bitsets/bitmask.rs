@@ -19,12 +19,6 @@ use super::bitflag::{decode_complete_bitflag_internal, decode_minimal_bitflag_in
 // ============================================================================
 
 impl Cdr2Encode for CompleteBitmaskHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 + self.detail.max_cdr2_size()
     }
@@ -58,12 +52,6 @@ pub(super) fn decode_complete_bitmask_header_internal(
 }
 
 impl Cdr2Encode for MinimalBitmaskHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 + self.detail.max_cdr2_size()
     }
@@ -102,12 +90,6 @@ pub(super) fn decode_minimal_bitmask_header_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteBitmaskType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate
         self.header.max_cdr2_size()
@@ -151,12 +133,6 @@ impl Cdr2Decode for CompleteBitmaskType {
 }
 
 impl Cdr2Encode for MinimalBitmaskType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate
         self.header.max_cdr2_size()

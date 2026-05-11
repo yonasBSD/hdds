@@ -23,12 +23,6 @@ use crate::xtypes::type_object::*;
 // ============================================================================
 
 impl Cdr2Encode for CompleteTypeDetail {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate: name (256) + annotations (512)
         1024
@@ -80,11 +74,6 @@ impl Cdr2Decode for CompleteTypeDetail {
 }
 
 impl Cdr2Encode for MinimalTypeDetail {
-    fn encode_cdr2_le(&self, _dst: &mut [u8]) -> Result<usize, CdrError> {
-        // MinimalTypeDetail is empty
-        Ok(0)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         0
     }
@@ -102,11 +91,6 @@ impl Cdr2Decode for MinimalTypeDetail {
 
 impl Cdr2Encode for CompleteMemberDetail {
     // @audit-ok: Sequential encoding (cyclo 12, cogni 0) - linear option encoding without branching logic
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
 
     fn max_cdr2_size(&self) -> usize {
         512
@@ -167,12 +151,6 @@ impl Cdr2Decode for CompleteMemberDetail {
 }
 
 impl Cdr2Encode for MinimalMemberDetail {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u32(self.name_hash, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         8 // 4 bytes + alignment
     }

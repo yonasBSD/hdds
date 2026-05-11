@@ -172,12 +172,6 @@ impl RemoteExceptionCode {
 
 // CDR encoding for SampleIdentity
 impl Cdr2Encode for SampleIdentity {
-    fn encode_cdr2_le(&self, buf: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(buf, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         Self::CDR_SIZE
     }
@@ -229,12 +223,6 @@ impl Cdr2Decode for SampleIdentity {
 
 // CDR encoding for RequestHeader
 impl Cdr2Encode for RequestHeader {
-    fn encode_cdr2_le(&self, buf: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(buf, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         Self::CDR_SIZE
     }
@@ -272,12 +260,6 @@ impl Cdr2Decode for RequestHeader {
 
 // CDR encoding for ReplyHeader
 impl Cdr2Encode for ReplyHeader {
-    fn encode_cdr2_le(&self, buf: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(buf, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         Self::CDR_SIZE
     }

@@ -27,12 +27,6 @@ use crate::xtypes::type_object::*;
 
 // AnnotationParameterFlag
 impl Cdr2Encode for AnnotationParameterFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -50,40 +44,13 @@ impl Cdr2Decode for AnnotationParameterFlag {
     }
 }
 
-// AnnotationParameterValue (discriminated union enum)
+// AnnotationParameterValue (discriminated union enum).
+// Spec source: OMG DDS-XTypes v1.3 §7.3.4.8.10 — the IDL union
+// `AnnotationParameterValue switch (octet)` uses TK_* values as case labels.
+// HDDS implements 4 of the 17 spec variants; the rest surface as
+// `CdrError::Other` on decode (see negative test below).
+// `docs/_privates/specs/DDS-XTypes-1.3.txt:12609-12655`.
 impl Cdr2Encode for AnnotationParameterValue {
-    // @audit-ok: Simple pattern matching (cyclo 13, cogni 1) - union variant encoder with discriminant
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        // Per OMG DDS-XTypes v1.3 §7.3.4.8.10: the IDL union
-        // `AnnotationParameterValue switch (octet)` uses TK_* values
-        // as case labels. HDDS implements 4 of the 17 spec variants;
-        // the rest surface as `CdrError::Other` on decode (see
-        // negative test below). Spec source:
-        // `docs/_privates/specs/DDS-XTypes-1.3.txt:12609-12655`.
-        let mut offset = 0;
-
-        match self {
-            AnnotationParameterValue::Boolean(b) => {
-                encode_u8(TypeKind::TK_BOOLEAN.to_u8(), dst, &mut offset)?;
-                encode_bool(*b, dst, &mut offset)?;
-            }
-            AnnotationParameterValue::Int32(i) => {
-                encode_u8(TypeKind::TK_INT32.to_u8(), dst, &mut offset)?;
-                encode_i32(*i, dst, &mut offset)?;
-            }
-            AnnotationParameterValue::String(s) => {
-                encode_u8(TypeKind::TK_STRING8.to_u8(), dst, &mut offset)?;
-                encode_string(s, dst, &mut offset)?;
-            }
-            AnnotationParameterValue::Enumerated(e) => {
-                encode_u8(TypeKind::TK_ENUM.to_u8(), dst, &mut offset)?;
-                encode_i32(*e, dst, &mut offset)?;
-            }
-        }
-
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Conservative: discriminator + max variant size
         match self {
@@ -160,10 +127,6 @@ impl Cdr2Decode for AnnotationParameterValue {
 
 // Annotation Headers
 impl Cdr2Encode for CompleteAnnotationHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        self.detail.encode_cdr2_le(dst)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.detail.max_cdr2_size()
     }
@@ -181,10 +144,6 @@ impl Cdr2Decode for CompleteAnnotationHeader {
 }
 
 impl Cdr2Encode for MinimalAnnotationHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        self.detail.encode_cdr2_le(dst)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.detail.max_cdr2_size()
     }
@@ -203,12 +162,6 @@ impl Cdr2Decode for MinimalAnnotationHeader {
 
 // CommonAnnotationParameter
 impl Cdr2Encode for CommonAnnotationParameter {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.member_flags.max_cdr2_size() + self.member_type_id.max_cdr2_size()
     }
@@ -242,12 +195,6 @@ impl Cdr2Decode for CommonAnnotationParameter {
 
 // CompleteAnnotationParameter
 impl Cdr2Encode for CompleteAnnotationParameter {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         let default_value_size = match &self.default_value {
             None => 4, // bool flag
@@ -294,12 +241,6 @@ impl Cdr2Decode for CompleteAnnotationParameter {
 
 // MinimalAnnotationParameter
 impl Cdr2Encode for MinimalAnnotationParameter {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         let default_value_size = match &self.default_value {
             None => 4, // bool flag
@@ -346,12 +287,6 @@ impl Cdr2Decode for MinimalAnnotationParameter {
 
 // Complete/Minimal AnnotationType
 impl Cdr2Encode for CompleteAnnotationType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size()
             + 4
@@ -402,12 +337,6 @@ impl Cdr2Decode for CompleteAnnotationType {
 }
 
 impl Cdr2Encode for MinimalAnnotationType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.header.max_cdr2_size()
             + 4

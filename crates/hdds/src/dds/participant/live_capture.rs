@@ -32,14 +32,6 @@ impl Cdr2Decode for RawBytes {
 }
 
 impl Cdr2Encode for RawBytes {
-    fn encode_cdr2_le(&self, buf: &mut [u8]) -> std::result::Result<usize, CdrError> {
-        if buf.len() < self.0.len() {
-            return Err(CdrError::BufferTooSmall);
-        }
-        buf[..self.0.len()].copy_from_slice(&self.0);
-        Ok(self.0.len())
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.0.len()
     }

@@ -19,12 +19,6 @@ use crate::xtypes::type_object::*;
 // ============================================================================
 
 impl Cdr2Encode for StructTypeFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -43,12 +37,6 @@ impl Cdr2Decode for StructTypeFlag {
 }
 
 impl Cdr2Encode for MemberFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4
     }
@@ -67,12 +55,6 @@ impl Cdr2Decode for MemberFlag {
 }
 
 impl Cdr2Encode for UnionTypeFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -91,12 +73,6 @@ impl Cdr2Decode for UnionTypeFlag {
 }
 
 impl Cdr2Encode for BitflagFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -115,12 +91,6 @@ impl Cdr2Decode for BitflagFlag {
 }
 
 impl Cdr2Encode for BitsetTypeFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -139,12 +109,6 @@ impl Cdr2Decode for BitsetTypeFlag {
 }
 
 impl Cdr2Encode for BitfieldFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -163,12 +127,6 @@ impl Cdr2Decode for BitfieldFlag {
 }
 
 impl Cdr2Encode for AliasTypeFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }
@@ -187,12 +145,6 @@ impl Cdr2Decode for AliasTypeFlag {
 }
 
 impl Cdr2Encode for TypeRelationFlag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        encode_u16(self.0, dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         4 // 2 bytes + alignment
     }

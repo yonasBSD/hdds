@@ -23,11 +23,6 @@ use crate::xtypes::type_object::*;
 
 impl Cdr2Encode for CompleteTypeObject {
     // @audit-ok: Closures with pattern matching (cyclo 24, cogni 4) - discriminant encoder + variant dispatcher
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
 
     // @audit-ok: Simple pattern matching (cyclo 11, cogni 1) - dispatch to variant max_cdr2_size
     fn max_cdr2_size(&self) -> usize {
@@ -152,11 +147,6 @@ impl Cdr2Decode for CompleteTypeObject {
 
 impl Cdr2Encode for MinimalTypeObject {
     // @audit-ok: Closures with pattern matching (cyclo 24, cogni 4) - discriminant encoder + variant dispatcher
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
 
     // @audit-ok: Simple pattern matching (cyclo 11, cogni 1) - dispatch to variant max_cdr2_size
     fn max_cdr2_size(&self) -> usize {

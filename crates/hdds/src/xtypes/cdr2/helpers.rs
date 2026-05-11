@@ -333,9 +333,6 @@ mod tests {
     fn test_max_size_type_with_members() {
         struct MockHeader;
         impl Cdr2Encode for MockHeader {
-            fn encode_cdr2_le(&self, _dst: &mut [u8]) -> Result<usize, CdrError> {
-                Ok(16)
-            }
             fn max_cdr2_size(&self) -> usize {
                 16
             }
@@ -351,9 +348,6 @@ mod tests {
 
         struct MockMember;
         impl Cdr2Encode for MockMember {
-            fn encode_cdr2_le(&self, _dst: &mut [u8]) -> Result<usize, CdrError> {
-                Ok(8)
-            }
             fn max_cdr2_size(&self) -> usize {
                 8
             }
@@ -379,9 +373,6 @@ mod tests {
     fn test_max_size_type_with_members_empty() {
         struct MockHeader;
         impl Cdr2Encode for MockHeader {
-            fn encode_cdr2_le(&self, _dst: &mut [u8]) -> Result<usize, CdrError> {
-                Ok(16)
-            }
             fn max_cdr2_size(&self) -> usize {
                 16
             }

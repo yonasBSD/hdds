@@ -17,12 +17,6 @@ use crate::xtypes::type_object::{
 // ============================================================================
 
 impl Cdr2Encode for CommonBitfield {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // position (2) + flags (2) + bit_count (1) + holder_type (32) + alignment
         64
@@ -70,12 +64,6 @@ pub(super) fn decode_common_bitfield_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteBitfield {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
@@ -109,12 +97,6 @@ pub(super) fn decode_complete_bitfield_internal(
 }
 
 impl Cdr2Encode for MinimalBitfield {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }

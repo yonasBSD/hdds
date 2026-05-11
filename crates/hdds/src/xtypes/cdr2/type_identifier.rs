@@ -22,24 +22,18 @@ use crate::xtypes::{TypeIdentifier, TypeKind};
 // ============================================================================
 
 impl Cdr2Encode for TypeIdentifier {
-    /// Wire encoding per OMG DDS-XTypes v1.3 §7.3.4.4.
-    ///
-    /// Each variant produces the discriminator octet defined in the IDL
-    /// `union TypeIdentifier switch (octet)` declaration, followed by the
-    /// variant payload. Primitive types use the `TypeKind` octet directly
-    /// as the discriminator and carry no payload.
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Discriminator (1) + worst case `StronglyConnected` payload
         // (14-byte hash + two i32 fields = 22 bytes) + slack.
         32
     }
 
+    /// Wire encoding per OMG DDS-XTypes v1.3 §7.3.4.4.
+    ///
+    /// Each variant produces the discriminator octet defined in the IDL
+    /// `union TypeIdentifier switch (octet)` declaration, followed by the
+    /// variant payload. Primitive types use the `TypeKind` octet directly
+    /// as the discriminator and carry no payload.
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         match self {
             TypeIdentifier::Primitive(kind) => {

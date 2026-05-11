@@ -21,12 +21,6 @@ use crate::xtypes::type_object::*;
 // ============================================================================
 
 impl Cdr2Encode for CompleteUnionHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         32 + self.detail.max_cdr2_size()
     }
@@ -61,12 +55,6 @@ pub(super) fn decode_complete_union_header_internal(
 }
 
 impl Cdr2Encode for MinimalUnionHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         32 + self.detail.max_cdr2_size()
     }
@@ -107,12 +95,6 @@ pub(super) fn decode_minimal_union_header_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteUnionType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
     }
@@ -155,12 +137,6 @@ impl Cdr2Decode for CompleteUnionType {
 }
 
 impl Cdr2Encode for MinimalUnionType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         super::helpers::max_size_type_with_members(&self.header, &self.member_seq)
     }

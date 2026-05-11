@@ -23,12 +23,6 @@ use crate::xtypes::type_object::*;
 // ============================================================================
 
 impl Cdr2Encode for CommonStructMember {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // member_id (4) + member_flags (2) + TypeIdentifier (32) + padding
         64
@@ -73,12 +67,6 @@ pub(super) fn decode_common_struct_member_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteStructMember {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
@@ -111,12 +99,6 @@ pub(super) fn decode_complete_struct_member_internal(
 }
 
 impl Cdr2Encode for MinimalStructMember {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
@@ -153,11 +135,6 @@ pub(super) fn decode_minimal_struct_member_internal(
 
 impl Cdr2Encode for CommonUnionMember {
     // @audit-ok: Sequential encoding (cyclo 12, cogni 2) - multiple field encoders without complex branching
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
 
     fn max_cdr2_size(&self) -> usize {
         // member_id (4) + member_flags (2) + TypeIdentifier (32) + label_seq length (4) + labels (4 * N) + padding
@@ -218,12 +195,6 @@ pub(super) fn decode_common_union_member_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteUnionMember {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
@@ -256,12 +227,6 @@ pub(super) fn decode_complete_union_member_internal(
 }
 
 impl Cdr2Encode for MinimalUnionMember {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }

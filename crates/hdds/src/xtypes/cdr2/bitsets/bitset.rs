@@ -23,12 +23,6 @@ use super::bitfield::{decode_complete_bitfield_internal, decode_minimal_bitfield
 // ============================================================================
 
 impl Cdr2Encode for CompleteBitsetHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         1 + 32 + self.detail.max_cdr2_size() // flag + optional TypeIdentifier + detail
     }
@@ -73,12 +67,6 @@ pub(super) fn decode_complete_bitset_header_internal(
 }
 
 impl Cdr2Encode for MinimalBitsetHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         1 + 32 + self.detail.max_cdr2_size() // flag + optional TypeIdentifier + detail
     }
@@ -128,12 +116,6 @@ pub(super) fn decode_minimal_bitset_header_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteBitsetType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate
         4 + self.header.max_cdr2_size()
@@ -187,12 +169,6 @@ impl Cdr2Decode for CompleteBitsetType {
 }
 
 impl Cdr2Encode for MinimalBitsetType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         // Conservative estimate
         4 + self.header.max_cdr2_size()

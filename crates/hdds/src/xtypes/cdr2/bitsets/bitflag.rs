@@ -16,12 +16,6 @@ use crate::xtypes::type_object::{
 // ============================================================================
 
 impl Cdr2Encode for CommonBitflag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         8 // position (2) + flags (2) + alignment (4)
     }
@@ -57,12 +51,6 @@ pub(super) fn decode_common_bitflag_internal(
 // ============================================================================
 
 impl Cdr2Encode for CompleteBitflag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
@@ -96,12 +84,6 @@ pub(super) fn decode_complete_bitflag_internal(
 }
 
 impl Cdr2Encode for MinimalBitflag {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }

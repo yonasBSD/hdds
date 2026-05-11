@@ -20,10 +20,6 @@ use crate::xtypes::type_object::*;
 
 // Alias Headers
 impl Cdr2Encode for CompleteAliasHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        self.detail.encode_cdr2_le(dst)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.detail.max_cdr2_size()
     }
@@ -41,10 +37,6 @@ impl Cdr2Decode for CompleteAliasHeader {
 }
 
 impl Cdr2Encode for MinimalAliasHeader {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        self.detail.encode_cdr2_le(dst)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.detail.max_cdr2_size()
     }
@@ -63,12 +55,6 @@ impl Cdr2Decode for MinimalAliasHeader {
 
 // Alias Bodies
 impl Cdr2Encode for CommonAliasBody {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.related_flags.max_cdr2_size() + self.related_type.max_cdr2_size()
     }
@@ -101,12 +87,6 @@ impl Cdr2Decode for CommonAliasBody {
 }
 
 impl Cdr2Encode for CompleteAliasBody {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
@@ -133,10 +113,6 @@ impl Cdr2Decode for CompleteAliasBody {
 }
 
 impl Cdr2Encode for MinimalAliasBody {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        self.common.encode_cdr2_le(dst)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.common.max_cdr2_size()
     }
@@ -155,12 +131,6 @@ impl Cdr2Decode for MinimalAliasBody {
 
 // Complete/Minimal AliasType
 impl Cdr2Encode for CompleteAliasType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.alias_flags.max_cdr2_size() + self.header.max_cdr2_size() + self.body.max_cdr2_size()
     }
@@ -198,12 +168,6 @@ impl Cdr2Decode for CompleteAliasType {
 }
 
 impl Cdr2Encode for MinimalAliasType {
-    fn encode_cdr2_le(&self, dst: &mut [u8]) -> Result<usize, CdrError> {
-        let mut offset = 0;
-        self.encode_cdr2_le_at(dst, &mut offset)?;
-        Ok(offset)
-    }
-
     fn max_cdr2_size(&self) -> usize {
         self.alias_flags.max_cdr2_size() + self.header.max_cdr2_size() + self.body.max_cdr2_size()
     }
