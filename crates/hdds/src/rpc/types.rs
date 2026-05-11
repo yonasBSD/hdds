@@ -197,27 +197,40 @@ impl SampleIdentity {
 
 impl Cdr2Decode for SampleIdentity {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        if src.len() < Self::CDR_SIZE {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        if *offset + Self::CDR_SIZE > src.len() {
             return Err(CdrError::UnexpectedEof);
         }
 
+        let base = *offset;
         let mut prefix = [0u8; 12];
-        prefix.copy_from_slice(&src[0..12]);
+        prefix.copy_from_slice(&src[base..base + 12]);
 
         let mut entity_id = [0u8; 4];
-        entity_id.copy_from_slice(&src[12..16]);
+        entity_id.copy_from_slice(&src[base + 12..base + 16]);
 
         let sequence_number = i64::from_le_bytes([
-            src[16], src[17], src[18], src[19], src[20], src[21], src[22], src[23],
+            src[base + 16],
+            src[base + 17],
+            src[base + 18],
+            src[base + 19],
+            src[base + 20],
+            src[base + 21],
+            src[base + 22],
+            src[base + 23],
         ]);
 
-        Ok((
-            Self {
-                writer_guid: GUID { prefix, entity_id },
-                sequence_number,
-            },
-            Self::CDR_SIZE,
-        ))
+        *offset += Self::CDR_SIZE;
+
+        Ok(Self {
+            writer_guid: GUID { prefix, entity_id },
+            sequence_number,
+        })
     }
 }
 
@@ -241,20 +254,23 @@ impl RequestHeader {
 
 impl Cdr2Decode for RequestHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        if src.len() < Self::CDR_SIZE {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        if *offset + Self::CDR_SIZE > src.len() {
             return Err(CdrError::UnexpectedEof);
         }
 
-        let (request_id, offset1) = SampleIdentity::decode_cdr2_le(src)?;
-        let (instance_id, offset2) = SampleIdentity::decode_cdr2_le(&src[offset1..])?;
+        let request_id = SampleIdentity::decode_cdr2_le_at(src, offset)?;
+        let instance_id = SampleIdentity::decode_cdr2_le_at(src, offset)?;
 
-        Ok((
-            Self {
-                request_id,
-                instance_id,
-            },
-            offset1 + offset2,
-        ))
+        Ok(Self {
+            request_id,
+            instance_id,
+        })
     }
 }
 
@@ -283,28 +299,32 @@ impl ReplyHeader {
 
 impl Cdr2Decode for ReplyHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        if src.len() < Self::CDR_SIZE {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        if *offset + Self::CDR_SIZE > src.len() {
             return Err(CdrError::UnexpectedEof);
         }
 
-        let (related_request_id, offset1) = SampleIdentity::decode_cdr2_le(src)?;
+        let related_request_id = SampleIdentity::decode_cdr2_le_at(src, offset)?;
 
         let code_bytes = [
-            src[offset1],
-            src[offset1 + 1],
-            src[offset1 + 2],
-            src[offset1 + 3],
+            src[*offset],
+            src[*offset + 1],
+            src[*offset + 2],
+            src[*offset + 3],
         ];
         let code = i32::from_le_bytes(code_bytes);
         let remote_exception_code = RemoteExceptionCode::from_i32(code);
+        *offset += 4;
 
-        Ok((
-            Self {
-                related_request_id,
-                remote_exception_code,
-            },
-            Self::CDR_SIZE,
-        ))
+        Ok(Self {
+            related_request_id,
+            remote_exception_code,
+        })
     }
 }
 

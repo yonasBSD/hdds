@@ -48,28 +48,29 @@ impl Cdr2Encode for CompleteTypeDetail {
 impl Cdr2Decode for CompleteTypeDetail {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let type_name = decode_string(src, &mut offset)?;
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let type_name = decode_string(src, offset)?;
 
-        let ann_builtin = decode_option(src, &mut offset, |src, offset| {
+        let ann_builtin = decode_option(src, offset, |src, offset| {
             let verbatim = decode_option(src, offset, decode_string)?;
             Ok(AppliedBuiltinTypeAnnotations { verbatim })
         })?;
 
-        let ann_custom = decode_option(src, &mut offset, |src, offset| {
+        let ann_custom = decode_option(src, offset, |src, offset| {
             let _len = decode_u32(src, offset)?;
             // For now, return empty vec (will add AppliedAnnotation decoding later)
             Ok(vec![])
         })?;
 
-        Ok((
-            CompleteTypeDetail {
-                type_name,
-                ann_builtin,
-                ann_custom,
-            },
-            offset,
-        ))
+        Ok(CompleteTypeDetail {
+            type_name,
+            ann_builtin,
+            ann_custom,
+        })
     }
 }
 
@@ -86,6 +87,11 @@ impl Cdr2Encode for MinimalTypeDetail {
 impl Cdr2Decode for MinimalTypeDetail {
     fn decode_cdr2_le(_src: &[u8]) -> Result<(Self, usize), CdrError> {
         Ok((MinimalTypeDetail {}, 0))
+    }
+
+    fn decode_cdr2_le_at(_src: &[u8], _offset: &mut usize) -> Result<Self, CdrError> {
+        // MinimalTypeDetail is empty — no bytes consumed, offset unchanged.
+        Ok(MinimalTypeDetail {})
     }
 }
 
@@ -120,10 +126,14 @@ impl Cdr2Encode for CompleteMemberDetail {
 impl Cdr2Decode for CompleteMemberDetail {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let name = decode_string(src, &mut offset)?;
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let name = decode_string(src, offset)?;
 
-        let ann_builtin = decode_option(src, &mut offset, |src, offset| {
+        let ann_builtin = decode_option(src, offset, |src, offset| {
             let unit = decode_option(src, offset, decode_string)?;
             let hash_id = decode_option(src, offset, decode_string)?;
             Ok(AppliedBuiltinMemberAnnotations {
@@ -134,19 +144,16 @@ impl Cdr2Decode for CompleteMemberDetail {
             })
         })?;
 
-        let ann_custom = decode_option(src, &mut offset, |src, offset| {
+        let ann_custom = decode_option(src, offset, |src, offset| {
             let _len = decode_u32(src, offset)?;
             Ok(vec![])
         })?;
 
-        Ok((
-            CompleteMemberDetail {
-                name,
-                ann_builtin,
-                ann_custom,
-            },
-            offset,
-        ))
+        Ok(CompleteMemberDetail {
+            name,
+            ann_builtin,
+            ann_custom,
+        })
     }
 }
 
@@ -163,7 +170,12 @@ impl Cdr2Encode for MinimalMemberDetail {
 impl Cdr2Decode for MinimalMemberDetail {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let name_hash = decode_u32(src, &mut offset)?;
-        Ok((MinimalMemberDetail { name_hash }, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let name_hash = decode_u32(src, offset)?;
+        Ok(MinimalMemberDetail { name_hash })
     }
 }

@@ -39,8 +39,12 @@ impl Cdr2Encode for CompleteStructHeader {
 impl Cdr2Decode for CompleteStructHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_struct_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_struct_header_internal(src, offset)
     }
 }
 
@@ -75,8 +79,12 @@ impl Cdr2Encode for MinimalStructHeader {
 impl Cdr2Decode for MinimalStructHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_struct_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_struct_header_internal(src, offset)
     }
 }
 
@@ -117,27 +125,28 @@ impl Cdr2Encode for CompleteStructType {
 impl Cdr2Decode for CompleteStructType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let struct_flags = StructTypeFlag(decode_u16(src, &mut offset)?);
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let struct_flags = StructTypeFlag(decode_u16(src, offset)?);
 
         // Decode header using internal helper
-        let header = decode_complete_struct_header_internal(src, &mut offset)?;
+        let header = decode_complete_struct_header_internal(src, offset)?;
 
         // Decode member_seq using helper for proper alignment
         let member_seq = super::helpers::decode_member_sequence(
             src,
-            &mut offset,
+            offset,
             decode_complete_struct_member_internal,
         )?;
 
-        Ok((
-            CompleteStructType {
-                struct_flags,
-                header,
-                member_seq,
-            },
-            offset,
-        ))
+        Ok(CompleteStructType {
+            struct_flags,
+            header,
+            member_seq,
+        })
     }
 }
 
@@ -159,26 +168,27 @@ impl Cdr2Encode for MinimalStructType {
 impl Cdr2Decode for MinimalStructType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let struct_flags = StructTypeFlag(decode_u16(src, &mut offset)?);
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let struct_flags = StructTypeFlag(decode_u16(src, offset)?);
 
         // Decode header using internal helper
-        let header = decode_minimal_struct_header_internal(src, &mut offset)?;
+        let header = decode_minimal_struct_header_internal(src, offset)?;
 
         // Decode member_seq using helper for proper alignment
         let member_seq = super::helpers::decode_member_sequence(
             src,
-            &mut offset,
+            offset,
             decode_minimal_struct_member_internal,
         )?;
 
-        Ok((
-            MinimalStructType {
-                struct_flags,
-                header,
-                member_seq,
-            },
-            offset,
-        ))
+        Ok(MinimalStructType {
+            struct_flags,
+            header,
+            member_seq,
+        })
     }
 }

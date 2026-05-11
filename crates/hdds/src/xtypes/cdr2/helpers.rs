@@ -117,9 +117,7 @@ pub fn decode_detail_with_reencoding<T>(src: &[u8], offset: &mut usize) -> Resul
 where
     T: Cdr2Decode,
 {
-    let (detail, used) = T::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
-    Ok(detail)
+    T::decode_cdr2_le_at(src, offset)
 }
 
 /// Decodes a sequence of members with 4-byte alignment per element.

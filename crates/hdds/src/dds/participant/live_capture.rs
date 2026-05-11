@@ -25,9 +25,16 @@ pub struct RawBytes(pub Vec<u8>);
 
 impl Cdr2Decode for RawBytes {
     fn decode_cdr2_le(src: &[u8]) -> std::result::Result<(Self, usize), CdrError> {
-        // No deserialization - just copy raw bytes
-        let len = src.len();
-        Ok((RawBytes(src.to_vec()), len))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> std::result::Result<Self, CdrError> {
+        // No deserialization - just copy remaining bytes from offset
+        let data = src[*offset..].to_vec();
+        *offset = src.len();
+        Ok(RawBytes(data))
     }
 }
 

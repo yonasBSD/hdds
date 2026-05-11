@@ -72,6 +72,20 @@ impl Cdr2Encode for CompleteTypeObject {
 impl Cdr2Decode for CompleteTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    /// TRANSITIONAL (F29 gate, ADR-1.6.2-PHASE-0 §8.3): this `_at` body
+    /// strictly mirrors the legacy sub-buffer dispatcher byte-for-byte.
+    /// The DHEADER missing on @extensibility(APPENDABLE) TypeObject
+    /// containers (per XTypes v1.3 §7.4.3.3) is INTENTIONALLY preserved
+    /// here — the F29 fix is deferred to sub-chantier 1.6.10 and any
+    /// DHEADER read added here would silently leak F29 isolation. The
+    /// migration to `_at` is a signature change only (offset propagation),
+    /// not a semantic fix; verify via byte-equality gate post-migration.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Spec discriminator labels — see Cdr2Encode for the §7.3.4.5
         // citation. Local const required because `match` patterns must
         // be const items, not `const fn` calls.
@@ -86,60 +100,39 @@ impl Cdr2Decode for CompleteTypeObject {
         const TK_ALIAS: u8 = TypeKind::TK_ALIAS.to_u8();
         const TK_ANNOTATION: u8 = TypeKind::TK_ANNOTATION.to_u8();
 
-        let mut offset = 0;
-        let discriminator = decode_u8(src, &mut offset)?;
+        let discriminator = decode_u8(src, offset)?;
 
         match discriminator {
-            TK_STRUCTURE => {
-                let (s, used) = CompleteStructType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Struct(s), offset))
-            }
-            TK_UNION => {
-                let (u, used) = CompleteUnionType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Union(u), offset))
-            }
-            TK_ENUM => {
-                let (e, used) = CompleteEnumeratedType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Enumerated(e), offset))
-            }
-            TK_BITMASK => {
-                let (b, used) = CompleteBitmaskType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Bitmask(b), offset))
-            }
-            TK_BITSET => {
-                let (b, used) = CompleteBitsetType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Bitset(b), offset))
-            }
-            TK_SEQUENCE => {
-                let (s, used) = CompleteSequenceType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Sequence(s), offset))
-            }
-            TK_ARRAY => {
-                let (a, used) = CompleteArrayType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Array(a), offset))
-            }
-            TK_MAP => {
-                let (m, used) = CompleteMapType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Map(m), offset))
-            }
-            TK_ALIAS => {
-                let (a, used) = CompleteAliasType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Alias(a), offset))
-            }
-            TK_ANNOTATION => {
-                let (a, used) = CompleteAnnotationType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((CompleteTypeObject::Annotation(a), offset))
-            }
+            TK_STRUCTURE => Ok(CompleteTypeObject::Struct(
+                CompleteStructType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_UNION => Ok(CompleteTypeObject::Union(
+                CompleteUnionType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_ENUM => Ok(CompleteTypeObject::Enumerated(
+                CompleteEnumeratedType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_BITMASK => Ok(CompleteTypeObject::Bitmask(
+                CompleteBitmaskType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_BITSET => Ok(CompleteTypeObject::Bitset(
+                CompleteBitsetType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_SEQUENCE => Ok(CompleteTypeObject::Sequence(
+                CompleteSequenceType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_ARRAY => Ok(CompleteTypeObject::Array(
+                CompleteArrayType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_MAP => Ok(CompleteTypeObject::Map(CompleteMapType::decode_cdr2_le_at(
+                src, offset,
+            )?)),
+            TK_ALIAS => Ok(CompleteTypeObject::Alias(
+                CompleteAliasType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_ANNOTATION => Ok(CompleteTypeObject::Annotation(
+                CompleteAnnotationType::decode_cdr2_le_at(src, offset)?,
+            )),
             _ => Err(CdrError::InvalidEncoding),
         }
     }
@@ -197,6 +190,16 @@ impl Cdr2Encode for MinimalTypeObject {
 impl Cdr2Decode for MinimalTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    /// TRANSITIONAL (F29 gate, ADR-1.6.2-PHASE-0 §8.3): same caveat as
+    /// `CompleteTypeObject::decode_cdr2_le_at` above — the DHEADER
+    /// missing on @extensibility(APPENDABLE) TypeObject containers is
+    /// preserved verbatim. F29 fix deferred to sub-chantier 1.6.10.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         const TK_STRUCTURE: u8 = TypeKind::TK_STRUCTURE.to_u8();
         const TK_UNION: u8 = TypeKind::TK_UNION.to_u8();
         const TK_ENUM: u8 = TypeKind::TK_ENUM.to_u8();
@@ -208,60 +211,39 @@ impl Cdr2Decode for MinimalTypeObject {
         const TK_ALIAS: u8 = TypeKind::TK_ALIAS.to_u8();
         const TK_ANNOTATION: u8 = TypeKind::TK_ANNOTATION.to_u8();
 
-        let mut offset = 0;
-        let discriminator = decode_u8(src, &mut offset)?;
+        let discriminator = decode_u8(src, offset)?;
 
         match discriminator {
-            TK_STRUCTURE => {
-                let (s, used) = MinimalStructType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Struct(s), offset))
-            }
-            TK_UNION => {
-                let (u, used) = MinimalUnionType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Union(u), offset))
-            }
-            TK_ENUM => {
-                let (e, used) = MinimalEnumeratedType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Enumerated(e), offset))
-            }
-            TK_BITMASK => {
-                let (b, used) = MinimalBitmaskType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Bitmask(b), offset))
-            }
-            TK_BITSET => {
-                let (b, used) = MinimalBitsetType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Bitset(b), offset))
-            }
-            TK_SEQUENCE => {
-                let (s, used) = MinimalSequenceType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Sequence(s), offset))
-            }
-            TK_ARRAY => {
-                let (a, used) = MinimalArrayType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Array(a), offset))
-            }
-            TK_MAP => {
-                let (m, used) = MinimalMapType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Map(m), offset))
-            }
-            TK_ALIAS => {
-                let (a, used) = MinimalAliasType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Alias(a), offset))
-            }
-            TK_ANNOTATION => {
-                let (a, used) = MinimalAnnotationType::decode_cdr2_le(&src[offset..])?;
-                offset += used;
-                Ok((MinimalTypeObject::Annotation(a), offset))
-            }
+            TK_STRUCTURE => Ok(MinimalTypeObject::Struct(
+                MinimalStructType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_UNION => Ok(MinimalTypeObject::Union(
+                MinimalUnionType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_ENUM => Ok(MinimalTypeObject::Enumerated(
+                MinimalEnumeratedType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_BITMASK => Ok(MinimalTypeObject::Bitmask(
+                MinimalBitmaskType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_BITSET => Ok(MinimalTypeObject::Bitset(
+                MinimalBitsetType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_SEQUENCE => Ok(MinimalTypeObject::Sequence(
+                MinimalSequenceType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_ARRAY => Ok(MinimalTypeObject::Array(
+                MinimalArrayType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_MAP => Ok(MinimalTypeObject::Map(MinimalMapType::decode_cdr2_le_at(
+                src, offset,
+            )?)),
+            TK_ALIAS => Ok(MinimalTypeObject::Alias(
+                MinimalAliasType::decode_cdr2_le_at(src, offset)?,
+            )),
+            TK_ANNOTATION => Ok(MinimalTypeObject::Annotation(
+                MinimalAnnotationType::decode_cdr2_le_at(src, offset)?,
+            )),
             _ => Err(CdrError::InvalidEncoding),
         }
     }

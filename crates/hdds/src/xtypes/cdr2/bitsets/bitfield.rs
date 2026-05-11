@@ -34,8 +34,12 @@ impl Cdr2Encode for CommonBitfield {
 impl Cdr2Decode for CommonBitfield {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_common_bitfield_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_common_bitfield_internal(src, offset)
     }
 }
 
@@ -78,8 +82,12 @@ impl Cdr2Encode for CompleteBitfield {
 impl Cdr2Decode for CompleteBitfield {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_bitfield_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_bitfield_internal(src, offset)
     }
 }
 
@@ -89,9 +97,7 @@ pub(super) fn decode_complete_bitfield_internal(
     offset: &mut usize,
 ) -> Result<CompleteBitfield, CdrError> {
     let common = decode_common_bitfield_internal(src, offset)?;
-
-    let (detail, used) = CompleteMemberDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(CompleteBitfield { common, detail })
 }
@@ -111,8 +117,12 @@ impl Cdr2Encode for MinimalBitfield {
 impl Cdr2Decode for MinimalBitfield {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_bitfield_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_bitfield_internal(src, offset)
     }
 }
 
@@ -122,9 +132,7 @@ pub(super) fn decode_minimal_bitfield_internal(
     offset: &mut usize,
 ) -> Result<MinimalBitfield, CdrError> {
     let common = decode_common_bitfield_internal(src, offset)?;
-
-    let (detail, used) = MinimalMemberDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(MinimalBitfield { common, detail })
 }

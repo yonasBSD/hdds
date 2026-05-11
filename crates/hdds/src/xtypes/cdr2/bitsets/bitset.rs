@@ -42,8 +42,12 @@ impl Cdr2Encode for CompleteBitsetHeader {
 impl Cdr2Decode for CompleteBitsetHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_bitset_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_bitset_header_internal(src, offset)
     }
 }
 
@@ -60,8 +64,7 @@ pub(super) fn decode_complete_bitset_header_internal(
         None
     };
 
-    let (detail, used) = CompleteTypeDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(CompleteBitsetHeader { base_type, detail })
 }
@@ -86,8 +89,12 @@ impl Cdr2Encode for MinimalBitsetHeader {
 impl Cdr2Decode for MinimalBitsetHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_bitset_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_bitset_header_internal(src, offset)
     }
 }
 
@@ -105,8 +112,7 @@ pub(super) fn decode_minimal_bitset_header_internal(
     };
 
     // MinimalTypeDetail is empty, but decode it for consistency
-    let (detail, used) = MinimalTypeDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(MinimalBitsetHeader { base_type, detail })
 }
@@ -140,31 +146,32 @@ impl Cdr2Encode for CompleteBitsetType {
 impl Cdr2Decode for CompleteBitsetType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let bitset_flags = BitsetTypeFlag(decode_u16(src, &mut offset)?);
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
 
         // Decode header using internal helper
-        let header = decode_complete_bitset_header_internal(src, &mut offset)?;
+        let header = decode_complete_bitset_header_internal(src, offset)?;
 
         // Decode field_seq using internal helper for proper offset tracking
-        let field_len = decode_u32(src, &mut offset)?;
+        let field_len = decode_u32(src, offset)?;
         let capacity = checked_usize(field_len, "bitfield sequence length")?;
         let mut field_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            offset = align_offset(offset, 4);
-            let field = decode_complete_bitfield_internal(src, &mut offset)?;
+            *offset = align_offset(*offset, 4);
+            let field = decode_complete_bitfield_internal(src, offset)?;
             field_seq.push(field);
         }
 
-        Ok((
-            CompleteBitsetType {
-                bitset_flags,
-                header,
-                field_seq,
-            },
-            offset,
-        ))
+        Ok(CompleteBitsetType {
+            bitset_flags,
+            header,
+            field_seq,
+        })
     }
 }
 
@@ -193,30 +200,31 @@ impl Cdr2Encode for MinimalBitsetType {
 impl Cdr2Decode for MinimalBitsetType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let bitset_flags = BitsetTypeFlag(decode_u16(src, &mut offset)?);
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
 
         // Decode header using internal helper
-        let header = decode_minimal_bitset_header_internal(src, &mut offset)?;
+        let header = decode_minimal_bitset_header_internal(src, offset)?;
 
         // Decode field_seq using internal helper for proper offset tracking
-        let field_len = decode_u32(src, &mut offset)?;
+        let field_len = decode_u32(src, offset)?;
         let capacity = checked_usize(field_len, "minimal bitfield sequence length")?;
         let mut field_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            offset = align_offset(offset, 4);
-            let field = decode_minimal_bitfield_internal(src, &mut offset)?;
+            *offset = align_offset(*offset, 4);
+            let field = decode_minimal_bitfield_internal(src, offset)?;
             field_seq.push(field);
         }
 
-        Ok((
-            MinimalBitsetType {
-                bitset_flags,
-                header,
-                field_seq,
-            },
-            offset,
-        ))
+        Ok(MinimalBitsetType {
+            bitset_flags,
+            header,
+            field_seq,
+        })
     }
 }

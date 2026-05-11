@@ -35,8 +35,13 @@ impl Cdr2Encode for CollectionElementFlag {
 impl Cdr2Decode for CollectionElementFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((Self(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let flags = decode_u16(src, offset)?;
+        Ok(Self(flags))
     }
 }
 
@@ -59,8 +64,12 @@ impl Cdr2Encode for CompleteCollectionHeader {
 impl Cdr2Decode for CompleteCollectionHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_collection_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_collection_header_internal(src, offset)
     }
 }
 
@@ -73,8 +82,7 @@ pub(super) fn decode_complete_collection_header_internal(
     let bound = decode_u32(src, offset)?;
 
     // Decode detail
-    let (detail, used) = CompleteTypeDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(CompleteCollectionHeader { bound, detail })
 }
@@ -92,8 +100,13 @@ impl Cdr2Encode for MinimalCollectionHeader {
 impl Cdr2Decode for MinimalCollectionHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let bound = decode_u32(src, &mut offset)?;
-        Ok((Self { bound }, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bound = decode_u32(src, offset)?;
+        Ok(Self { bound })
     }
 }
 
@@ -116,8 +129,12 @@ impl Cdr2Encode for CompleteCollectionElement {
 impl Cdr2Decode for CompleteCollectionElement {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_collection_element_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_collection_element_internal(src, offset)
     }
 }
 
@@ -151,8 +168,12 @@ impl Cdr2Encode for MinimalCollectionElement {
 impl Cdr2Decode for MinimalCollectionElement {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_collection_element_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_collection_element_internal(src, offset)
     }
 }
 
@@ -190,14 +211,18 @@ impl Cdr2Encode for CompleteSequenceType {
 impl Cdr2Decode for CompleteSequenceType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header
-        let header = decode_complete_collection_header_internal(src, &mut offset)?;
+        let header = decode_complete_collection_header_internal(src, offset)?;
 
         // Decode element
-        let element = decode_complete_collection_element_internal(src, &mut offset)?;
+        let element = decode_complete_collection_element_internal(src, offset)?;
 
-        Ok((CompleteSequenceType { header, element }, offset))
+        Ok(CompleteSequenceType { header, element })
     }
 }
 
@@ -216,15 +241,18 @@ impl Cdr2Encode for MinimalSequenceType {
 impl Cdr2Decode for MinimalSequenceType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header
-        let (header, used) = MinimalCollectionHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let header = MinimalCollectionHeader::decode_cdr2_le_at(src, offset)?;
 
         // Decode element
-        let element = decode_minimal_collection_element_internal(src, &mut offset)?;
+        let element = decode_minimal_collection_element_internal(src, offset)?;
 
-        Ok((MinimalSequenceType { header, element }, offset))
+        Ok(MinimalSequenceType { header, element })
     }
 }
 
@@ -250,32 +278,31 @@ impl Cdr2Encode for CompleteArrayType {
 impl Cdr2Decode for CompleteArrayType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header
-        let (header, used) = CompleteCollectionHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let header = CompleteCollectionHeader::decode_cdr2_le_at(src, offset)?;
 
         // Decode element
-        let (element, used) = CompleteCollectionElement::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let element = CompleteCollectionElement::decode_cdr2_le_at(src, offset)?;
 
         // Decode bound_seq
-        let bounds_count = decode_u32(src, &mut offset)?;
+        let bounds_count = decode_u32(src, offset)?;
         let capacity = checked_usize(bounds_count, "collection bound sequence length")?;
         let mut bound_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            let bound = decode_u32(src, &mut offset)?;
+            let bound = decode_u32(src, offset)?;
             bound_seq.push(bound);
         }
 
-        Ok((
-            CompleteArrayType {
-                header,
-                element,
-                bound_seq,
-            },
-            offset,
-        ))
+        Ok(CompleteArrayType {
+            header,
+            element,
+            bound_seq,
+        })
     }
 }
 
@@ -297,31 +324,31 @@ impl Cdr2Encode for MinimalArrayType {
 impl Cdr2Decode for MinimalArrayType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header
-        let (header, used) = MinimalCollectionHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let header = MinimalCollectionHeader::decode_cdr2_le_at(src, offset)?;
 
         // Decode element
-        let element = decode_minimal_collection_element_internal(src, &mut offset)?;
+        let element = decode_minimal_collection_element_internal(src, offset)?;
 
         // Decode bound_seq
-        let bounds_count = decode_u32(src, &mut offset)?;
+        let bounds_count = decode_u32(src, offset)?;
         let capacity = checked_usize(bounds_count, "collection bound sequence length")?;
         let mut bound_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
-            let bound = decode_u32(src, &mut offset)?;
+            let bound = decode_u32(src, offset)?;
             bound_seq.push(bound);
         }
 
-        Ok((
-            MinimalArrayType {
-                header,
-                element,
-                bound_seq,
-            },
-            offset,
-        ))
+        Ok(MinimalArrayType {
+            header,
+            element,
+            bound_seq,
+        })
     }
 }
 
@@ -345,27 +372,25 @@ impl Cdr2Encode for CompleteMapType {
 impl Cdr2Decode for CompleteMapType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header
-        let (header, used) = CompleteCollectionHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let header = CompleteCollectionHeader::decode_cdr2_le_at(src, offset)?;
 
         // Decode key
-        let (key, used) = CompleteCollectionElement::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let key = CompleteCollectionElement::decode_cdr2_le_at(src, offset)?;
 
         // Decode element
-        let (element, used) = CompleteCollectionElement::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let element = CompleteCollectionElement::decode_cdr2_le_at(src, offset)?;
 
-        Ok((
-            CompleteMapType {
-                header,
-                key,
-                element,
-            },
-            offset,
-        ))
+        Ok(CompleteMapType {
+            header,
+            key,
+            element,
+        })
     }
 }
 
@@ -385,24 +410,24 @@ impl Cdr2Encode for MinimalMapType {
 impl Cdr2Decode for MinimalMapType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header
-        let (header, used) = MinimalCollectionHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
+        let header = MinimalCollectionHeader::decode_cdr2_le_at(src, offset)?;
 
         // Decode key
-        let key = decode_minimal_collection_element_internal(src, &mut offset)?;
+        let key = decode_minimal_collection_element_internal(src, offset)?;
 
         // Decode element
-        let element = decode_minimal_collection_element_internal(src, &mut offset)?;
+        let element = decode_minimal_collection_element_internal(src, offset)?;
 
-        Ok((
-            MinimalMapType {
-                header,
-                key,
-                element,
-            },
-            offset,
-        ))
+        Ok(MinimalMapType {
+            header,
+            key,
+            element,
+        })
     }
 }

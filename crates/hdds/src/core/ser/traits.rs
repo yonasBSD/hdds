@@ -386,26 +386,35 @@ impl Cdr2Encode for String {
 /// CDR2 decoding for String
 impl Cdr2Decode for String {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        if src.len() < 4 {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        // Pad to align 4 (u32 length prefix).
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > src.len() {
             return Err(CdrError::UnexpectedEof);
         }
+        *offset += pad;
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&src[*offset..*offset + 4]);
+        let cdr_len = u32::from_le_bytes(len_bytes) as usize;
+        *offset += 4;
 
-        // Read CDR length (includes null terminator)
-        #[allow(clippy::unwrap_used)] // src[0..4] is exactly 4 bytes, checked above
-        let cdr_len = u32::from_le_bytes(src[0..4].try_into().unwrap()) as usize;
-        let total_size = 4usize.saturating_add(cdr_len);
-
-        if src.len() < total_size {
+        if *offset + cdr_len > src.len() {
             return Err(CdrError::UnexpectedEof);
         }
 
         // Read string bytes (strip null terminator)
         let str_len = cdr_len.saturating_sub(1);
-        let s = std::str::from_utf8(&src[4..4 + str_len])
+        let s = std::str::from_utf8(&src[*offset..*offset + str_len])
             .map_err(|_| CdrError::InvalidEncoding)?
             .to_string();
+        *offset += cdr_len;
 
-        Ok((s, total_size))
+        Ok(s)
     }
 }
 
@@ -464,10 +473,7 @@ macro_rules! impl_cdr2_primitive {
             /// decoder must tolerate any byte pattern in the alignment
             /// gap rather than reject conformant frames from vendors
             /// that write arbitrary bytes there).
-            fn decode_cdr2_le_at(
-                src: &[u8],
-                offset: &mut usize,
-            ) -> Result<Self, CdrError> {
+            fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
                 let align: usize = if $size > 4 { 4 } else { $size };
                 let pad = (align - (*offset % align)) % align;
                 if *offset + pad + $size > src.len() {
@@ -720,12 +726,20 @@ impl Cdr2Encode for bool {
 
 impl Cdr2Decode for bool {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        if src.is_empty() {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        if *offset >= src.len() {
             return Err(CdrError::UnexpectedEof);
         }
-        match src[0] {
-            0 => Ok((false, 1)),
-            1 => Ok((true, 1)),
+        let byte = src[*offset];
+        *offset += 1;
+        match byte {
+            0 => Ok(false),
+            1 => Ok(true),
             v => Err(CdrError::Other(format!("invalid boolean value: {v}"))),
         }
     }
@@ -756,12 +770,20 @@ impl Cdr2Encode for char {
 
 impl Cdr2Decode for char {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        if src.is_empty() {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        if *offset >= src.len() {
             return Err(CdrError::UnexpectedEof);
         }
         // char8: any byte value maps to a char (ASCII subset per spec,
         // but we accept the full u8 range for interop tolerance)
-        Ok((src[0] as char, 1))
+        let value = src[*offset] as char;
+        *offset += 1;
+        Ok(value)
     }
 }
 
@@ -975,12 +997,15 @@ mod tests {
 
     impl Cdr2Decode for TestPoint {
         fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-            if src.len() < 8 {
-                return Err(CdrError::UnexpectedEof);
-            }
-            let x = i32::from_le_bytes(src[0..4].try_into().map_err(|_| CdrError::UnexpectedEof)?);
-            let y = i32::from_le_bytes(src[4..8].try_into().map_err(|_| CdrError::UnexpectedEof)?);
-            Ok((TestPoint { x, y }, 8))
+            let mut offset = 0;
+            let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+            Ok((value, offset))
+        }
+
+        fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+            let x = i32::decode_cdr2_le_at(src, offset)?;
+            let y = i32::decode_cdr2_le_at(src, offset)?;
+            Ok(TestPoint { x, y })
         }
     }
 

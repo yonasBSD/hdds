@@ -31,8 +31,14 @@ impl Cdr2Encode for CompleteAliasHeader {
 
 impl Cdr2Decode for CompleteAliasHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let (detail, used) = CompleteTypeDetail::decode_cdr2_le(src)?;
-        Ok((CompleteAliasHeader { detail }, used))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteAliasHeader { detail })
     }
 }
 
@@ -48,8 +54,14 @@ impl Cdr2Encode for MinimalAliasHeader {
 
 impl Cdr2Decode for MinimalAliasHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let (detail, used) = MinimalTypeDetail::decode_cdr2_le(src)?;
-        Ok((MinimalAliasHeader { detail }, used))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalAliasHeader { detail })
     }
 }
 
@@ -69,20 +81,17 @@ impl Cdr2Encode for CommonAliasBody {
 impl Cdr2Decode for CommonAliasBody {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (related_flags, used) = TypeRelationFlag::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (related_type, used) = TypeIdentifier::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        Ok((
-            CommonAliasBody {
-                related_flags,
-                related_type,
-            },
-            offset,
-        ))
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let related_flags = TypeRelationFlag::decode_cdr2_le_at(src, offset)?;
+        let related_type = TypeIdentifier::decode_cdr2_le_at(src, offset)?;
+        Ok(CommonAliasBody {
+            related_flags,
+            related_type,
+        })
     }
 }
 
@@ -101,14 +110,14 @@ impl Cdr2Encode for CompleteAliasBody {
 impl Cdr2Decode for CompleteAliasBody {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (common, used) = CommonAliasBody::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (detail, used) = CompleteTypeDetail::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        Ok((CompleteAliasBody { common, detail }, offset))
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let common = CommonAliasBody::decode_cdr2_le_at(src, offset)?;
+        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteAliasBody { common, detail })
     }
 }
 
@@ -124,8 +133,14 @@ impl Cdr2Encode for MinimalAliasBody {
 
 impl Cdr2Decode for MinimalAliasBody {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let (common, used) = CommonAliasBody::decode_cdr2_le(src)?;
-        Ok((MinimalAliasBody { common }, used))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let common = CommonAliasBody::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalAliasBody { common })
     }
 }
 
@@ -146,24 +161,19 @@ impl Cdr2Encode for CompleteAliasType {
 impl Cdr2Decode for CompleteAliasType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (alias_flags, used) = AliasTypeFlag::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (header, used) = CompleteAliasHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (body, used) = CompleteAliasBody::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        Ok((
-            CompleteAliasType {
-                alias_flags,
-                header,
-                body,
-            },
-            offset,
-        ))
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let alias_flags = AliasTypeFlag::decode_cdr2_le_at(src, offset)?;
+        let header = CompleteAliasHeader::decode_cdr2_le_at(src, offset)?;
+        let body = CompleteAliasBody::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteAliasType {
+            alias_flags,
+            header,
+            body,
+        })
     }
 }
 
@@ -183,23 +193,18 @@ impl Cdr2Encode for MinimalAliasType {
 impl Cdr2Decode for MinimalAliasType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (alias_flags, used) = AliasTypeFlag::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (header, used) = MinimalAliasHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (body, used) = MinimalAliasBody::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        Ok((
-            MinimalAliasType {
-                alias_flags,
-                header,
-                body,
-            },
-            offset,
-        ))
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let alias_flags = AliasTypeFlag::decode_cdr2_le_at(src, offset)?;
+        let header = MinimalAliasHeader::decode_cdr2_le_at(src, offset)?;
+        let body = MinimalAliasBody::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalAliasType {
+            alias_flags,
+            header,
+            body,
+        })
     }
 }

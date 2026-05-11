@@ -38,8 +38,12 @@ impl Cdr2Encode for CommonEnumeratedLiteral {
 impl Cdr2Decode for CommonEnumeratedLiteral {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_common_enumerated_literal_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_common_enumerated_literal_internal(src, offset)
     }
 }
 
@@ -73,8 +77,12 @@ impl Cdr2Encode for CompleteEnumeratedLiteral {
 impl Cdr2Decode for CompleteEnumeratedLiteral {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_enumerated_literal_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_enumerated_literal_internal(src, offset)
     }
 }
 
@@ -84,9 +92,7 @@ pub(super) fn decode_complete_enumerated_literal_internal(
     offset: &mut usize,
 ) -> Result<CompleteEnumeratedLiteral, CdrError> {
     let common = decode_common_enumerated_literal_internal(src, offset)?;
-
-    let (detail, used) = CompleteMemberDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(CompleteEnumeratedLiteral { common, detail })
 }
@@ -106,8 +112,12 @@ impl Cdr2Encode for MinimalEnumeratedLiteral {
 impl Cdr2Decode for MinimalEnumeratedLiteral {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_enumerated_literal_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_enumerated_literal_internal(src, offset)
     }
 }
 
@@ -117,9 +127,7 @@ pub(super) fn decode_minimal_enumerated_literal_internal(
     offset: &mut usize,
 ) -> Result<MinimalEnumeratedLiteral, CdrError> {
     let common = decode_common_enumerated_literal_internal(src, offset)?;
-
-    let (detail, used) = MinimalMemberDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(MinimalEnumeratedLiteral { common, detail })
 }
@@ -143,8 +151,12 @@ impl Cdr2Encode for CompleteEnumeratedHeader {
 impl Cdr2Decode for CompleteEnumeratedHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_enumerated_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_enumerated_header_internal(src, offset)
     }
 }
 
@@ -154,9 +166,7 @@ pub(super) fn decode_complete_enumerated_header_internal(
     offset: &mut usize,
 ) -> Result<CompleteEnumeratedHeader, CdrError> {
     let bit_bound = decode_i16(src, offset)?;
-
-    let (detail, used) = CompleteTypeDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(CompleteEnumeratedHeader { bit_bound, detail })
 }
@@ -176,8 +186,12 @@ impl Cdr2Encode for MinimalEnumeratedHeader {
 impl Cdr2Decode for MinimalEnumeratedHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_enumerated_header_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_enumerated_header_internal(src, offset)
     }
 }
 
@@ -189,8 +203,7 @@ pub(super) fn decode_minimal_enumerated_header_internal(
     let bit_bound = decode_i16(src, offset)?;
 
     // MinimalTypeDetail is empty, but decode it for consistency
-    let (detail, used) = MinimalTypeDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(MinimalEnumeratedHeader { bit_bound, detail })
 }
@@ -222,28 +235,29 @@ impl Cdr2Encode for CompleteEnumeratedType {
 impl Cdr2Decode for CompleteEnumeratedType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header using internal helper
-        let header = decode_complete_enumerated_header_internal(src, &mut offset)?;
+        let header = decode_complete_enumerated_header_internal(src, offset)?;
 
         // Decode literal_seq using internal helper for proper offset tracking
-        let literal_len = decode_u32(src, &mut offset)?;
+        let literal_len = decode_u32(src, offset)?;
         let capacity = checked_usize(literal_len, "enumeration literal sequence length")?;
         let mut literal_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            offset = align_offset(offset, 4);
-            let literal = decode_complete_enumerated_literal_internal(src, &mut offset)?;
+            *offset = align_offset(*offset, 4);
+            let literal = decode_complete_enumerated_literal_internal(src, offset)?;
             literal_seq.push(literal);
         }
 
-        Ok((
-            CompleteEnumeratedType {
-                header,
-                literal_seq,
-            },
-            offset,
-        ))
+        Ok(CompleteEnumeratedType {
+            header,
+            literal_seq,
+        })
     }
 }
 
@@ -270,27 +284,28 @@ impl Cdr2Encode for MinimalEnumeratedType {
 impl Cdr2Decode for MinimalEnumeratedType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header using internal helper
-        let header = decode_minimal_enumerated_header_internal(src, &mut offset)?;
+        let header = decode_minimal_enumerated_header_internal(src, offset)?;
 
         // Decode literal_seq using internal helper for proper offset tracking
-        let literal_len = decode_u32(src, &mut offset)?;
+        let literal_len = decode_u32(src, offset)?;
         let capacity = checked_usize(literal_len, "minimal enumeration literal sequence length")?;
         let mut literal_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            offset = align_offset(offset, 4);
-            let literal = decode_minimal_enumerated_literal_internal(src, &mut offset)?;
+            *offset = align_offset(*offset, 4);
+            let literal = decode_minimal_enumerated_literal_internal(src, offset)?;
             literal_seq.push(literal);
         }
 
-        Ok((
-            MinimalEnumeratedType {
-                header,
-                literal_seq,
-            },
-            offset,
-        ))
+        Ok(MinimalEnumeratedType {
+            header,
+            literal_seq,
+        })
     }
 }

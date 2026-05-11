@@ -30,8 +30,12 @@ impl Cdr2Encode for CommonBitflag {
 impl Cdr2Decode for CommonBitflag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_common_bitflag_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_common_bitflag_internal(src, offset)
     }
 }
 
@@ -65,8 +69,12 @@ impl Cdr2Encode for CompleteBitflag {
 impl Cdr2Decode for CompleteBitflag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_complete_bitflag_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_complete_bitflag_internal(src, offset)
     }
 }
 
@@ -76,9 +84,7 @@ pub(super) fn decode_complete_bitflag_internal(
     offset: &mut usize,
 ) -> Result<CompleteBitflag, CdrError> {
     let common = decode_common_bitflag_internal(src, offset)?;
-
-    let (detail, used) = CompleteMemberDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(CompleteBitflag { common, detail })
 }
@@ -98,8 +104,12 @@ impl Cdr2Encode for MinimalBitflag {
 impl Cdr2Decode for MinimalBitflag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let result = decode_minimal_bitflag_internal(src, &mut offset)?;
-        Ok((result, offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        decode_minimal_bitflag_internal(src, offset)
     }
 }
 
@@ -109,9 +119,7 @@ pub(super) fn decode_minimal_bitflag_internal(
     offset: &mut usize,
 ) -> Result<MinimalBitflag, CdrError> {
     let common = decode_common_bitflag_internal(src, offset)?;
-
-    let (detail, used) = MinimalMemberDetail::decode_cdr2_le(&src[*offset..])?;
-    *offset += used;
+    let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
 
     Ok(MinimalBitflag { common, detail })
 }

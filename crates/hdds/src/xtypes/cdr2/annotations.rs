@@ -39,8 +39,13 @@ impl Cdr2Encode for AnnotationParameterFlag {
 impl Cdr2Decode for AnnotationParameterFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((AnnotationParameterFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let flags = decode_u16(src, offset)?;
+        Ok(AnnotationParameterFlag(flags))
     }
 }
 
@@ -87,6 +92,12 @@ impl Cdr2Encode for AnnotationParameterValue {
 impl Cdr2Decode for AnnotationParameterValue {
     // @audit-ok: Simple pattern matching (cyclo 11, cogni 1) - discriminator dispatch to union variants
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Spec discriminator labels — see Cdr2Encode for the §7.3.4.8.10
         // citation. Local consts required because match patterns must
         // be const items, not const fn calls.
@@ -95,26 +106,17 @@ impl Cdr2Decode for AnnotationParameterValue {
         const TK_STRING8: u8 = TypeKind::TK_STRING8.to_u8();
         const TK_ENUM: u8 = TypeKind::TK_ENUM.to_u8();
 
-        let mut offset = 0;
-        let discriminator = decode_u8(src, &mut offset)?;
+        let discriminator = decode_u8(src, offset)?;
 
         match discriminator {
-            TK_BOOLEAN => {
-                let b = decode_bool(src, &mut offset)?;
-                Ok((AnnotationParameterValue::Boolean(b), offset))
-            }
-            TK_INT32 => {
-                let i = decode_i32(src, &mut offset)?;
-                Ok((AnnotationParameterValue::Int32(i), offset))
-            }
-            TK_STRING8 => {
-                let s = decode_string(src, &mut offset)?;
-                Ok((AnnotationParameterValue::String(s), offset))
-            }
-            TK_ENUM => {
-                let e = decode_i32(src, &mut offset)?;
-                Ok((AnnotationParameterValue::Enumerated(e), offset))
-            }
+            TK_BOOLEAN => Ok(AnnotationParameterValue::Boolean(decode_bool(src, offset)?)),
+            TK_INT32 => Ok(AnnotationParameterValue::Int32(decode_i32(src, offset)?)),
+            TK_STRING8 => Ok(AnnotationParameterValue::String(decode_string(
+                src, offset,
+            )?)),
+            TK_ENUM => Ok(AnnotationParameterValue::Enumerated(decode_i32(
+                src, offset,
+            )?)),
             other => Err(CdrError::Other(format!(
                 "AnnotationParameterValue discriminator 0x{:02X} not implemented in HDDS \
                  (spec §7.3.4.8.10 lists 17 case labels; HDDS supports TK_BOOLEAN, \
@@ -138,8 +140,14 @@ impl Cdr2Encode for CompleteAnnotationHeader {
 
 impl Cdr2Decode for CompleteAnnotationHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let (detail, used) = CompleteTypeDetail::decode_cdr2_le(src)?;
-        Ok((CompleteAnnotationHeader { detail }, used))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteAnnotationHeader { detail })
     }
 }
 
@@ -155,8 +163,14 @@ impl Cdr2Encode for MinimalAnnotationHeader {
 
 impl Cdr2Decode for MinimalAnnotationHeader {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let (detail, used) = MinimalTypeDetail::decode_cdr2_le(src)?;
-        Ok((MinimalAnnotationHeader { detail }, used))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalAnnotationHeader { detail })
     }
 }
 
@@ -176,20 +190,17 @@ impl Cdr2Encode for CommonAnnotationParameter {
 impl Cdr2Decode for CommonAnnotationParameter {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (member_flags, used) = AnnotationParameterFlag::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let (member_type_id, used) = TypeIdentifier::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        Ok((
-            CommonAnnotationParameter {
-                member_flags,
-                member_type_id,
-            },
-            offset,
-        ))
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let member_flags = AnnotationParameterFlag::decode_cdr2_le_at(src, offset)?;
+        let member_type_id = TypeIdentifier::decode_cdr2_le_at(src, offset)?;
+        Ok(CommonAnnotationParameter {
+            member_flags,
+            member_type_id,
+        })
     }
 }
 
@@ -216,26 +227,21 @@ impl Cdr2Encode for CompleteAnnotationParameter {
 impl Cdr2Decode for CompleteAnnotationParameter {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (common, used) = CommonAnnotationParameter::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let name = decode_string(src, &mut offset)?;
-
-        let default_value = decode_option(src, &mut offset, |src, offset| {
-            let (v, used) = AnnotationParameterValue::decode_cdr2_le(&src[*offset..])?;
-            *offset += used;
-            Ok(v)
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let common = CommonAnnotationParameter::decode_cdr2_le_at(src, offset)?;
+        let name = decode_string(src, offset)?;
+        let default_value = decode_option(src, offset, |src, offset| {
+            AnnotationParameterValue::decode_cdr2_le_at(src, offset)
         })?;
-
-        Ok((
-            CompleteAnnotationParameter {
-                common,
-                name,
-                default_value,
-            },
-            offset,
-        ))
+        Ok(CompleteAnnotationParameter {
+            common,
+            name,
+            default_value,
+        })
     }
 }
 
@@ -262,26 +268,21 @@ impl Cdr2Encode for MinimalAnnotationParameter {
 impl Cdr2Decode for MinimalAnnotationParameter {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (common, used) = CommonAnnotationParameter::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
-        let name_hash = decode_u32(src, &mut offset)?;
-
-        let default_value = decode_option(src, &mut offset, |src, offset| {
-            let (v, used) = AnnotationParameterValue::decode_cdr2_le(&src[*offset..])?;
-            *offset += used;
-            Ok(v)
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let common = CommonAnnotationParameter::decode_cdr2_le_at(src, offset)?;
+        let name_hash = decode_u32(src, offset)?;
+        let default_value = decode_option(src, offset, |src, offset| {
+            AnnotationParameterValue::decode_cdr2_le_at(src, offset)
         })?;
-
-        Ok((
-            MinimalAnnotationParameter {
-                common,
-                name_hash,
-                default_value,
-            },
-            offset,
-        ))
+        Ok(MinimalAnnotationParameter {
+            common,
+            name_hash,
+            default_value,
+        })
     }
 }
 
@@ -312,27 +313,27 @@ impl Cdr2Encode for CompleteAnnotationType {
 impl Cdr2Decode for CompleteAnnotationType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (header, used) = CompleteAnnotationHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let header = CompleteAnnotationHeader::decode_cdr2_le_at(src, offset)?;
         // Decode member_seq (Vec<CompleteAnnotationParameter>)
-        let param_len = decode_u32(src, &mut offset)?;
+        let param_len = decode_u32(src, offset)?;
         let capacity = checked_usize(param_len, "annotation parameter sequence length")?;
         let mut member_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            offset = align_offset(offset, 4);
+            *offset = align_offset(*offset, 4);
             // v232: Bounds check after alignment to prevent panic on malformed data
-            if offset > src.len() {
+            if *offset > src.len() {
                 return Err(CdrError::UnexpectedEof);
             }
-            let (param, used) = CompleteAnnotationParameter::decode_cdr2_le(&src[offset..])?;
-            offset += used;
+            let param = CompleteAnnotationParameter::decode_cdr2_le_at(src, offset)?;
             member_seq.push(param);
         }
-
-        Ok((CompleteAnnotationType { header, member_seq }, offset))
+        Ok(CompleteAnnotationType { header, member_seq })
     }
 }
 
@@ -362,23 +363,28 @@ impl Cdr2Encode for MinimalAnnotationType {
 impl Cdr2Decode for MinimalAnnotationType {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        let (header, used) = MinimalAnnotationHeader::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let header = MinimalAnnotationHeader::decode_cdr2_le_at(src, offset)?;
         // Decode member_seq (Vec<MinimalAnnotationParameter>)
-        let param_len = decode_u32(src, &mut offset)?;
+        let param_len = decode_u32(src, offset)?;
         let capacity = checked_usize(param_len, "minimal annotation parameter sequence length")?;
         let mut member_seq = Vec::with_capacity(capacity);
         for _ in 0..capacity {
             // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            offset = align_offset(offset, 4);
-            let (param, used) = MinimalAnnotationParameter::decode_cdr2_le(&src[offset..])?;
-            offset += used;
+            *offset = align_offset(*offset, 4);
+            // v232 parity with CompleteAnnotationType: bounds check after
+            // alignment to prevent panic on malformed data.
+            if *offset > src.len() {
+                return Err(CdrError::UnexpectedEof);
+            }
+            let param = MinimalAnnotationParameter::decode_cdr2_le_at(src, offset)?;
             member_seq.push(param);
         }
-
-        Ok((MinimalAnnotationType { header, member_seq }, offset))
+        Ok(MinimalAnnotationType { header, member_seq })
     }
 }
 

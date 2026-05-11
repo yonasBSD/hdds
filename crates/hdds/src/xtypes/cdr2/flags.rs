@@ -31,8 +31,13 @@ impl Cdr2Encode for StructTypeFlag {
 impl Cdr2Decode for StructTypeFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((StructTypeFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(StructTypeFlag(bits))
     }
 }
 
@@ -49,8 +54,13 @@ impl Cdr2Encode for MemberFlag {
 impl Cdr2Decode for MemberFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((MemberFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(MemberFlag(bits))
     }
 }
 
@@ -67,8 +77,13 @@ impl Cdr2Encode for UnionTypeFlag {
 impl Cdr2Decode for UnionTypeFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((UnionTypeFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(UnionTypeFlag(bits))
     }
 }
 
@@ -85,8 +100,13 @@ impl Cdr2Encode for BitflagFlag {
 impl Cdr2Decode for BitflagFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((BitflagFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(BitflagFlag(bits))
     }
 }
 
@@ -103,8 +123,13 @@ impl Cdr2Encode for BitsetTypeFlag {
 impl Cdr2Decode for BitsetTypeFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((BitsetTypeFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(BitsetTypeFlag(bits))
     }
 }
 
@@ -121,8 +146,13 @@ impl Cdr2Encode for BitfieldFlag {
 impl Cdr2Decode for BitfieldFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((BitfieldFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(BitfieldFlag(bits))
     }
 }
 
@@ -139,8 +169,13 @@ impl Cdr2Encode for AliasTypeFlag {
 impl Cdr2Decode for AliasTypeFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((AliasTypeFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(AliasTypeFlag(bits))
     }
 }
 
@@ -157,7 +192,12 @@ impl Cdr2Encode for TypeRelationFlag {
 impl Cdr2Decode for TypeRelationFlag {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         let mut offset = 0;
-        let flags = decode_u16(src, &mut offset)?;
-        Ok((TypeRelationFlag(flags), offset))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let bits = decode_u16(src, offset)?;
+        Ok(TypeRelationFlag(bits))
     }
 }
