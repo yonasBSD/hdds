@@ -316,6 +316,29 @@ pub trait Cdr2Decode: Sized {
     fn decode_xcdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
         Self::decode_cdr2_le(src)
     }
+
+    /// XTypes v1.3 §7.4.3.4 — XCDR1 offset-aware sub-decoder. Default
+    /// delegates to `decode_cdr2_le_at` (XCDR2 alignment rules, cap-4);
+    /// generated types that implement strict XCDR1 alignment (natural
+    /// align without cap) override this with an inherent method via
+    /// Rust method resolution. The same byte-format caveat as
+    /// `decode_xcdr1_le` applies: byte-identical to XCDR2 only when
+    /// elements are ≤4-byte aligned. Codegen output (hddsgen ≥1.2.0)
+    /// calls `inner.decode_xcdr1_le_at(...)` on every nested field;
+    /// this default makes container/primitive blanket impls work
+    /// without per-type overrides. Symmetric with
+    /// `Cdr2Encode::encode_xcdr1_le_at`.
+    fn decode_xcdr1_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        Self::decode_cdr2_le_at(src, offset)
+    }
+
+    /// XTypes v1.3 §7.4.3.4 — XCDR2 offset-aware sub-decoder. Default
+    /// delegates to `decode_cdr2_le_at`; generated types override with
+    /// an inherent method (hddsgen ≥1.2.0). Symmetric with
+    /// `Cdr2Encode::encode_xcdr2_le_at`.
+    fn decode_xcdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        Self::decode_cdr2_le_at(src, offset)
+    }
 }
 
 // DDS trait is defined in crate::dds::DDS (with type_descriptor, encode_cdr2, decode_cdr2)
@@ -430,6 +453,32 @@ macro_rules! impl_cdr2_primitive {
                 let mut bytes = [0u8; $size];
                 bytes.copy_from_slice(&src[..$size]);
                 Ok((<$ty>::from_le_bytes(bytes), $size))
+            }
+
+            /// Spec-compliant XCDR2 primitive decoding per
+            /// DDS-XTypes v1.3 §7.4.3.4.1 Tab.15. Alignment caps at 4
+            /// for 8-byte primitives (i64/u64/f64); smaller types
+            /// align on their own size. Padding bytes are SKIPPED
+            /// without validating their value per §7.4.3.2 Table 37
+            /// ("value of padded bytes left unspecified" on encode →
+            /// decoder must tolerate any byte pattern in the alignment
+            /// gap rather than reject conformant frames from vendors
+            /// that write arbitrary bytes there).
+            fn decode_cdr2_le_at(
+                src: &[u8],
+                offset: &mut usize,
+            ) -> Result<Self, CdrError> {
+                let align: usize = if $size > 4 { 4 } else { $size };
+                let pad = (align - (*offset % align)) % align;
+                if *offset + pad + $size > src.len() {
+                    return Err(CdrError::UnexpectedEof);
+                }
+                // Skip pad bytes WITHOUT validation per XCDR2 §7.4.3.2 Table 37.
+                *offset += pad;
+                let mut buf = [0u8; $size];
+                buf.copy_from_slice(&src[*offset..*offset + $size]);
+                *offset += $size;
+                Ok(<$ty>::from_le_bytes(buf))
             }
         }
     };
