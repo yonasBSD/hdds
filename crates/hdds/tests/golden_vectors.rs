@@ -28,6 +28,26 @@
 //   handles tail-padding growth but NOT middle-insertion shifts (use
 //   diff/LCS or manual hex inspection for those scenarios).
 //
+// Post-Chantier 1.6.2 status (verified 2026-05-12, sub-commit 1.6.2b):
+//   The 43 .bin goldens remain byte-identical after the symmetric
+//   `decode_cdr2_le_at` migration (1.6.2a-impls-lib through
+//   1.6.2d-add-decode-at). Stability is by-construction:
+//     - The 4 TEST-ONLY mocks (SortedMap, Point3D, LabelledValue,
+//       Segment) keep their hand-written legacy `encode_cdr2_le`
+//       bodies AND now expose `decode_cdr2_le_at` as a trivial
+//       wrapper around `decode_cdr2_le(&src[*offset..])` -- no
+//       spec-correct cap-4 alignment is introduced on the decode
+//       side, preserving symmetric roundtrip with the legacy
+//       sub-buffer encoders.
+//     - The 5 blanket impls (Vec/HashMap/BTreeMap/Option/[T;N]) gain
+//       a spec-correct `decode_cdr2_le_at` (XCDR2 cap-4 + pad-skip)
+//       but their legacy `decode_cdr2_le` body is preserved, so the
+//       golden_test path (which invokes `decode_cdr2_le`) hits the
+//       same code as before 1.6.2.
+//   tools/diff-golden-bytes.py self-test (same dir on both sides)
+//   reports 42 OK byte-identical (43rd test is `golden_verify_all_exist`,
+//   a meta-test with no associated .bin -- documented in 1.6.1b).
+//
 //   Coverage gap (tracked in ADR-CHANTIER-1.6 §10.16): the current
 //   fixtures do not exercise the misaligned-outer-offset → inner-primitive
 //   case. `golden_map_string_struct_nested` happens to land its `Point3D`
