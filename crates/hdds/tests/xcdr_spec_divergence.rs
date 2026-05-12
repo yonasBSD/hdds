@@ -86,6 +86,12 @@ impl Cdr2Decode for Probe {
 
         Ok((Self { a, b }, offset))
     }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let (value, consumed) = Self::decode_cdr2_le(&src[*offset..])?;
+        *offset += consumed;
+        Ok(value)
+    }
 }
 
 // --- end verbatim hddsgen v1.0.10 output ---

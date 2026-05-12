@@ -65,42 +65,16 @@ impl Cdr2Encode for Point3D {
 
 impl Cdr2Decode for Point3D {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset: usize = 0;
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
 
-        offset = align_offset(offset, 8);
-        if src.len() < offset + 8 {
-            return Err(CdrError::UnexpectedEof);
-        }
-        let x = {
-            let mut tmp = [0u8; 8];
-            tmp.copy_from_slice(&src[offset..offset + 8]);
-            f64::from_le_bytes(tmp)
-        };
-        offset += 8;
-
-        offset = align_offset(offset, 8);
-        if src.len() < offset + 8 {
-            return Err(CdrError::UnexpectedEof);
-        }
-        let y = {
-            let mut tmp = [0u8; 8];
-            tmp.copy_from_slice(&src[offset..offset + 8]);
-            f64::from_le_bytes(tmp)
-        };
-        offset += 8;
-
-        offset = align_offset(offset, 8);
-        if src.len() < offset + 8 {
-            return Err(CdrError::UnexpectedEof);
-        }
-        let z = {
-            let mut tmp = [0u8; 8];
-            tmp.copy_from_slice(&src[offset..offset + 8]);
-            f64::from_le_bytes(tmp)
-        };
-        offset += 8;
-
-        Ok((Self { x, y, z }, offset))
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let x = f64::decode_cdr2_le_at(src, offset)?;
+        let y = f64::decode_cdr2_le_at(src, offset)?;
+        let z = f64::decode_cdr2_le_at(src, offset)?;
+        Ok(Self { x, y, z })
     }
 }
 
@@ -227,8 +201,7 @@ impl Cdr2Decode for Poly3D {
                         }
                         *offset += pad;
 
-                        let (point, _used) = Point3D::decode_cdr2_le(&src[*offset..])?;
-                        *offset += POINT3D_ENCODED_SIZE;
+                        let point = Point3D::decode_cdr2_le_at(src, offset)?;
                         vec.push(point);
                     }
                     points = Some(vec);
@@ -257,6 +230,12 @@ impl Cdr2Decode for Poly3D {
             },
             consumed,
         ))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let (value, consumed) = Self::decode_cdr2_le(&src[*offset..])?;
+        *offset += consumed;
+        Ok(value)
     }
 }
 

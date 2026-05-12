@@ -433,6 +433,12 @@ where
         }
         Ok((Self { entries }, offset))
     }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let (value, consumed) = Self::decode_cdr2_le(&src[*offset..])?;
+        *offset += consumed;
+        Ok(value)
+    }
 }
 
 #[test]
@@ -516,6 +522,12 @@ impl Cdr2Decode for Point3D {
         let z = f64::from_le_bytes(src[16..24].try_into().unwrap());
         Ok((Self { x, y, z }, 24))
     }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let (value, consumed) = Self::decode_cdr2_le(&src[*offset..])?;
+        *offset += consumed;
+        Ok(value)
+    }
 }
 
 #[test]
@@ -567,6 +579,12 @@ impl Cdr2Decode for LabelledValue {
         let (label, n) = String::decode_cdr2_le(&src[8..])?;
         Ok((Self { value, label }, 8 + n))
     }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let (value, consumed) = Self::decode_cdr2_le(&src[*offset..])?;
+        *offset += consumed;
+        Ok(value)
+    }
 }
 
 #[test]
@@ -616,6 +634,12 @@ impl Cdr2Decode for Segment {
         let (name, n) = String::decode_cdr2_le(&src[offset..])?;
         offset += n;
         Ok((Self { start, end, name }, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let (value, consumed) = Self::decode_cdr2_le(&src[*offset..])?;
+        *offset += consumed;
+        Ok(value)
     }
 }
 

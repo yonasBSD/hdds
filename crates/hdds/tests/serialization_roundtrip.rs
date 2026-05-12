@@ -706,13 +706,16 @@ fn test_roundtrip_cdr2_struct_manual_impl() {
 
     impl Cdr2Decode for Point3D {
         fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), hdds::CdrError> {
-            if src.len() < 9 {
-                return Err(hdds::CdrError::UnexpectedEof);
-            }
-            let x = i32::from_le_bytes([src[0], src[1], src[2], src[3]]);
-            let y = i32::from_le_bytes([src[4], src[5], src[6], src[7]]);
-            let z = src[8];
-            Ok((Point3D { x, y, z }, 9))
+            let mut offset = 0;
+            let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+            Ok((value, offset))
+        }
+
+        fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, hdds::CdrError> {
+            let x = i32::decode_cdr2_le_at(src, offset)?;
+            let y = i32::decode_cdr2_le_at(src, offset)?;
+            let z = u8::decode_cdr2_le_at(src, offset)?;
+            Ok(Point3D { x, y, z })
         }
     }
 
@@ -766,11 +769,14 @@ fn test_roundtrip_cdr2_struct_with_string() {
     impl Cdr2Decode for LabelledValue {
         fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), hdds::CdrError> {
             let mut offset = 0;
-            let (value, used) = f64::decode_cdr2_le(&src[offset..])?;
-            offset += used;
-            let (label, used) = String::decode_cdr2_le(&src[offset..])?;
-            offset += used;
-            Ok((LabelledValue { value, label }, offset))
+            let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+            Ok((value, offset))
+        }
+
+        fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, hdds::CdrError> {
+            let value = f64::decode_cdr2_le_at(src, offset)?;
+            let label = String::decode_cdr2_le_at(src, offset)?;
+            Ok(LabelledValue { value, label })
         }
     }
 
@@ -827,20 +833,19 @@ fn test_roundtrip_cdr2_struct_with_sequence() {
     impl Cdr2Decode for Polygon {
         fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), hdds::CdrError> {
             let mut offset = 0;
-            let (vertex_count, used) = u32::decode_cdr2_le(&src[offset..])?;
-            offset += used;
-            let (x_coords, used) = Vec::<f32>::decode_cdr2_le(&src[offset..])?;
-            offset += used;
-            let (y_coords, used) = Vec::<f32>::decode_cdr2_le(&src[offset..])?;
-            offset += used;
-            Ok((
-                Polygon {
-                    vertex_count,
-                    x_coords,
-                    y_coords,
-                },
-                offset,
-            ))
+            let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+            Ok((value, offset))
+        }
+
+        fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, hdds::CdrError> {
+            let vertex_count = u32::decode_cdr2_le_at(src, offset)?;
+            let x_coords = Vec::<f32>::decode_cdr2_le_at(src, offset)?;
+            let y_coords = Vec::<f32>::decode_cdr2_le_at(src, offset)?;
+            Ok(Polygon {
+                vertex_count,
+                x_coords,
+                y_coords,
+            })
         }
     }
 

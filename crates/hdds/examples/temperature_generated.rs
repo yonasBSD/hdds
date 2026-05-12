@@ -72,37 +72,15 @@ pub mod TemperatureData {
 
     impl Cdr2Decode for Temperature {
         fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-            let mut offset: usize = 0;
+            let mut offset = 0;
+            let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+            Ok((value, offset))
+        }
 
-            // Align to 4-byte boundary for field 'value'
-            let padding = (4 - (offset % 4)) % 4;
-            offset += padding;
-
-            if src.len() < offset + 4 {
-                return Err(CdrError::UnexpectedEof);
-            }
-            let value = f32::from_le_bytes(
-                src[offset..offset + 4]
-                    .try_into()
-                    .expect("slice length checked"),
-            );
-            offset += 4;
-
-            // Align to 4-byte boundary for field 'timestamp'
-            let padding = (4 - (offset % 4)) % 4;
-            offset += padding;
-
-            if src.len() < offset + 4 {
-                return Err(CdrError::UnexpectedEof);
-            }
-            let timestamp = i32::from_le_bytes(
-                src[offset..offset + 4]
-                    .try_into()
-                    .expect("slice length checked"),
-            );
-            offset += 4;
-
-            Ok((Self { value, timestamp }, offset))
+        fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+            let value = f32::decode_cdr2_le_at(src, offset)?;
+            let timestamp = i32::decode_cdr2_le_at(src, offset)?;
+            Ok(Self { value, timestamp })
         }
     }
 

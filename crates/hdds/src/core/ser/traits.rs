@@ -586,6 +586,35 @@ impl<T: Cdr2Decode> Cdr2Decode for Vec<T> {
 
         Ok((vec, offset))
     }
+
+    /// Spec-aligned decoder symmetric with `encode_cdr2_le_at`:
+    /// - Pads to 4 before the u32 length prefix (XCDR2 §7.4.3.4.1 Tab.15).
+    /// - Pad bytes are SKIPPED without validating their value
+    ///   (§7.4.3.2 Table 37: "value of padded bytes left unspecified").
+    /// - Delegates each element to `T::decode_cdr2_le_at` so the global
+    ///   cursor propagates through nested types.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > src.len() {
+            return Err(CdrError::UnexpectedEof);
+        }
+        *offset += pad;
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&src[*offset..*offset + 4]);
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        *offset += 4;
+
+        // Guard against bogus lengths: each element is at least 1 byte.
+        if len > src.len().saturating_sub(*offset) {
+            return Err(CdrError::UnexpectedEof);
+        }
+
+        let mut vec = Vec::with_capacity(len);
+        for _ in 0..len {
+            vec.push(T::decode_cdr2_le_at(src, offset)?);
+        }
+        Ok(vec)
+    }
 }
 
 // ============================================================================
@@ -672,6 +701,34 @@ where
         }
 
         Ok((map, offset))
+    }
+
+    /// Spec-aligned decoder symmetric with `encode_cdr2_le_at`. See the
+    /// `Vec<T>::decode_cdr2_le_at` docstring for the alignment + pad-skip
+    /// contract.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > src.len() {
+            return Err(CdrError::UnexpectedEof);
+        }
+        *offset += pad;
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&src[*offset..*offset + 4]);
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        *offset += 4;
+
+        // Guard against bogus lengths: each KV pair is at least 2 bytes.
+        if len > src.len().saturating_sub(*offset) / 2 {
+            return Err(CdrError::UnexpectedEof);
+        }
+
+        let mut map = std::collections::HashMap::with_capacity(len);
+        for _ in 0..len {
+            let key = K::decode_cdr2_le_at(src, offset)?;
+            let value = V::decode_cdr2_le_at(src, offset)?;
+            map.insert(key, value);
+        }
+        Ok(map)
     }
 }
 
@@ -826,6 +883,17 @@ impl<T: Cdr2Decode + Default + Copy, const N: usize> Cdr2Decode for [T; N] {
         }
         Ok((arr, offset))
     }
+
+    /// Spec-aligned decoder symmetric with `encode_cdr2_le_at`: no length
+    /// prefix (fixed-size array), each element via `T::decode_cdr2_le_at`
+    /// so the global cursor propagates uniformly.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let mut arr = [T::default(); N];
+        for slot in &mut arr {
+            *slot = T::decode_cdr2_le_at(src, offset)?;
+        }
+        Ok(arr)
+    }
 }
 
 // ============================================================================
@@ -895,6 +963,23 @@ impl<T: Cdr2Decode> Cdr2Decode for Option<T> {
                 let (val, n) = T::decode_cdr2_le(&src[1..])?;
                 Ok((Some(val), 1 + n))
             }
+            v => Err(CdrError::Other(format!("invalid optional flag: {v}"))),
+        }
+    }
+
+    /// Spec-aligned decoder symmetric with `encode_cdr2_le_at`: 1-byte
+    /// presence flag (no alignment requirement), then the value via
+    /// `T::decode_cdr2_le_at` which applies its own alignment relative
+    /// to the post-flag offset.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        if *offset >= src.len() {
+            return Err(CdrError::UnexpectedEof);
+        }
+        let flag = src[*offset];
+        *offset += 1;
+        match flag {
+            0 => Ok(None),
+            1 => Ok(Some(T::decode_cdr2_le_at(src, offset)?)),
             v => Err(CdrError::Other(format!("invalid optional flag: {v}"))),
         }
     }
@@ -969,6 +1054,33 @@ where
             map.insert(key, value);
         }
         Ok((map, offset))
+    }
+
+    /// Spec-aligned decoder symmetric with `encode_cdr2_le_at`. See the
+    /// `Vec<T>::decode_cdr2_le_at` docstring for the alignment + pad-skip
+    /// contract.
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
+        let pad = (4 - (*offset % 4)) % 4;
+        if *offset + pad + 4 > src.len() {
+            return Err(CdrError::UnexpectedEof);
+        }
+        *offset += pad;
+        let mut len_bytes = [0u8; 4];
+        len_bytes.copy_from_slice(&src[*offset..*offset + 4]);
+        let len = u32::from_le_bytes(len_bytes) as usize;
+        *offset += 4;
+
+        if len > src.len().saturating_sub(*offset) / 2 {
+            return Err(CdrError::UnexpectedEof);
+        }
+
+        let mut map = std::collections::BTreeMap::new();
+        for _ in 0..len {
+            let key = K::decode_cdr2_le_at(src, offset)?;
+            let value = V::decode_cdr2_le_at(src, offset)?;
+            map.insert(key, value);
+        }
+        Ok(map)
     }
 }
 

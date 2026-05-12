@@ -79,20 +79,20 @@ impl hdds::Cdr2Encode for Temperature {
 
 impl hdds::Cdr2Decode for Temperature {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), hdds::CdrError> {
-        if src.len() < 16 {
-            return Err(hdds::CdrError::UnexpectedEof);
-        }
-        let sensor_id = u32::from_le_bytes(src[0..4].try_into().unwrap());
-        let value = f32::from_le_bytes(src[4..8].try_into().unwrap());
-        let timestamp = i64::from_le_bytes(src[8..16].try_into().unwrap());
-        Ok((
-            Self {
-                sensor_id,
-                value,
-                timestamp,
-            },
-            16,
-        ))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, hdds::CdrError> {
+        let sensor_id = u32::decode_cdr2_le_at(src, offset)?;
+        let value = f32::decode_cdr2_le_at(src, offset)?;
+        let timestamp = i64::decode_cdr2_le_at(src, offset)?;
+        Ok(Self {
+            sensor_id,
+            value,
+            timestamp,
+        })
     }
 }
 

@@ -87,12 +87,15 @@ impl Cdr2Encode for BenchTemperature {
 
 impl Cdr2Decode for BenchTemperature {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), hdds::CdrError> {
-        if src.len() < 8 {
-            return Err(hdds::CdrError::UnexpectedEof);
-        }
-        let value = f32::from_le_bytes([src[0], src[1], src[2], src[3]]);
-        let timestamp = i32::from_le_bytes([src[4], src[5], src[6], src[7]]);
-        Ok((BenchTemperature { value, timestamp }, 8))
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, hdds::CdrError> {
+        let value = f32::decode_cdr2_le_at(src, offset)?;
+        let timestamp = i32::decode_cdr2_le_at(src, offset)?;
+        Ok(BenchTemperature { value, timestamp })
     }
 }
 
@@ -139,26 +142,23 @@ impl Cdr2Encode for BenchSensorData {
 impl Cdr2Decode for BenchSensorData {
     fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), hdds::CdrError> {
         let mut offset = 0;
-        let (sensor_id, used) = u32::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-        let (temperature, used) = f64::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-        let (humidity, used) = f64::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-        let (label, used) = String::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-        let (readings, used) = Vec::<f32>::decode_cdr2_le(&src[offset..])?;
-        offset += used;
-        Ok((
-            BenchSensorData {
-                sensor_id,
-                temperature,
-                humidity,
-                label,
-                readings,
-            },
-            offset,
-        ))
+        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
+        Ok((value, offset))
+    }
+
+    fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, hdds::CdrError> {
+        let sensor_id = u32::decode_cdr2_le_at(src, offset)?;
+        let temperature = f64::decode_cdr2_le_at(src, offset)?;
+        let humidity = f64::decode_cdr2_le_at(src, offset)?;
+        let label = String::decode_cdr2_le_at(src, offset)?;
+        let readings = Vec::<f32>::decode_cdr2_le_at(src, offset)?;
+        Ok(BenchSensorData {
+            sensor_id,
+            temperature,
+            humidity,
+            label,
+            readings,
+        })
     }
 }
 
