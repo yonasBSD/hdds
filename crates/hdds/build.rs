@@ -294,23 +294,18 @@ impl Cdr2Encode for Temperature {{
 
 impl Cdr2Decode for Temperature {{
     fn decode_cdr2_le(buf: &[u8]) -> Result<(Self, usize), hdds::core::ser::CdrError> {{
-        use hdds::core::ser::{{Cursor, CdrError}};
+        let mut offset = 0;
+        let value = Self::decode_cdr2_le_at(buf, &mut offset)?;
+        Ok((value, offset))
+    }}
 
-        let mut cursor = Cursor::new(buf);
-
-        let value_bytes = cursor.read_bytes(4)
-            .map_err(|_| CdrError::UnexpectedEof)?;
-        let mut value_arr = [0u8; 4];
-        value_arr.copy_from_slice(value_bytes);
-        let value = f32::from_le_bytes(value_arr);
-
-        let timestamp_bytes = cursor.read_bytes(4)
-            .map_err(|_| CdrError::UnexpectedEof)?;
-        let mut timestamp_arr = [0u8; 4];
-        timestamp_arr.copy_from_slice(timestamp_bytes);
-        let timestamp = i32::from_le_bytes(timestamp_arr);  // v64: Match RTI IDL 'long'
-
-        Ok((Self {{ value, timestamp }}, cursor.offset()))
+    fn decode_cdr2_le_at(
+        src: &[u8],
+        offset: &mut usize,
+    ) -> Result<Self, hdds::core::ser::CdrError> {{
+        let value = Cdr2Decode::decode_cdr2_le_at(src, offset)?;
+        let timestamp = Cdr2Decode::decode_cdr2_le_at(src, offset)?;
+        Ok(Self {{ value, timestamp }})
     }}
 }}
 ", type_id);
