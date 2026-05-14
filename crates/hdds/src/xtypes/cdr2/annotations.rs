@@ -9,6 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.10 (Annotation Types)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
 use super::primitives::{
     align_offset, decode_bool, decode_i32, decode_option, decode_string, decode_u16, decode_u32,
@@ -115,38 +116,48 @@ impl Cdr2Decode for AnnotationParameterValue {
     }
 }
 
-// Annotation Headers
+// Annotation Headers — `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 impl Cdr2Encode for CompleteAnnotationHeader {
     fn max_cdr2_size(&self) -> usize {
-        self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.detail.encode_cdr2_le_at(dst, offset)
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.detail.encode_cdr2_le_at(dst, offset)
+        })
     }
 }
 
 impl Cdr2Decode for CompleteAnnotationHeader {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
-        Ok(CompleteAnnotationHeader { detail })
+        decode_dheader_at(src, offset, |src, offset| {
+            let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+            Ok(CompleteAnnotationHeader { detail })
+        })
     }
 }
 
 impl Cdr2Encode for MinimalAnnotationHeader {
     fn max_cdr2_size(&self) -> usize {
-        self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.detail.encode_cdr2_le_at(dst, offset)
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.detail.encode_cdr2_le_at(dst, offset)
+        })
     }
 }
 
 impl Cdr2Decode for MinimalAnnotationHeader {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
-        Ok(MinimalAnnotationHeader { detail })
+        decode_dheader_at(src, offset, |src, offset| {
+            let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
+            Ok(MinimalAnnotationHeader { detail })
+        })
     }
 }
 
@@ -174,72 +185,82 @@ impl Cdr2Decode for CommonAnnotationParameter {
     }
 }
 
-// CompleteAnnotationParameter
+// CompleteAnnotationParameter — `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 impl Cdr2Encode for CompleteAnnotationParameter {
     fn max_cdr2_size(&self) -> usize {
         let default_value_size = match &self.default_value {
             None => 4, // bool flag
             Some(v) => 4 + v.max_cdr2_size(),
         };
-        self.common.max_cdr2_size() + 4 + self.name.len() + 1 + default_value_size
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + 4 + self.name.len() + 1 + default_value_size
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        encode_string(&self.name, dst, offset)?;
-        encode_option(&self.default_value, dst, offset, |value, dst, offset| {
-            value.encode_cdr2_le_at(dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            encode_string(&self.name, dst, offset)?;
+            encode_option(&self.default_value, dst, offset, |value, dst, offset| {
+                value.encode_cdr2_le_at(dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for CompleteAnnotationParameter {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let common = CommonAnnotationParameter::decode_cdr2_le_at(src, offset)?;
-        let name = decode_string(src, offset)?;
-        let default_value = decode_option(src, offset, |src, offset| {
-            AnnotationParameterValue::decode_cdr2_le_at(src, offset)
-        })?;
-        Ok(CompleteAnnotationParameter {
-            common,
-            name,
-            default_value,
+        decode_dheader_at(src, offset, |src, offset| {
+            let common = CommonAnnotationParameter::decode_cdr2_le_at(src, offset)?;
+            let name = decode_string(src, offset)?;
+            let default_value = decode_option(src, offset, |src, offset| {
+                AnnotationParameterValue::decode_cdr2_le_at(src, offset)
+            })?;
+            Ok(CompleteAnnotationParameter {
+                common,
+                name,
+                default_value,
+            })
         })
     }
 }
 
-// MinimalAnnotationParameter
+// MinimalAnnotationParameter — `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 impl Cdr2Encode for MinimalAnnotationParameter {
     fn max_cdr2_size(&self) -> usize {
         let default_value_size = match &self.default_value {
             None => 4, // bool flag
             Some(v) => 4 + v.max_cdr2_size(),
         };
-        self.common.max_cdr2_size() + 4 + default_value_size
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + 4 + default_value_size
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        encode_u32(self.name_hash, dst, offset)?;
-        encode_option(&self.default_value, dst, offset, |value, dst, offset| {
-            value.encode_cdr2_le_at(dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            encode_u32(self.name_hash, dst, offset)?;
+            encode_option(&self.default_value, dst, offset, |value, dst, offset| {
+                value.encode_cdr2_le_at(dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for MinimalAnnotationParameter {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let common = CommonAnnotationParameter::decode_cdr2_le_at(src, offset)?;
-        let name_hash = decode_u32(src, offset)?;
-        let default_value = decode_option(src, offset, |src, offset| {
-            AnnotationParameterValue::decode_cdr2_le_at(src, offset)
-        })?;
-        Ok(MinimalAnnotationParameter {
-            common,
-            name_hash,
-            default_value,
+        decode_dheader_at(src, offset, |src, offset| {
+            let common = CommonAnnotationParameter::decode_cdr2_le_at(src, offset)?;
+            let name_hash = decode_u32(src, offset)?;
+            let default_value = decode_option(src, offset, |src, offset| {
+                AnnotationParameterValue::decode_cdr2_le_at(src, offset)
+            })?;
+            Ok(MinimalAnnotationParameter {
+                common,
+                name_hash,
+                default_value,
+            })
         })
     }
 }
