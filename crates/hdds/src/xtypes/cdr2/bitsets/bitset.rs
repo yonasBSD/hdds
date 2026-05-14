@@ -5,6 +5,7 @@
 //!
 //!
 
+use super::super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::super::helpers::checked_usize;
 use super::super::primitives::{
     align_offset, decode_u16, decode_u32, decode_u8, encode_u16, encode_u8, encode_vec,
@@ -111,8 +112,10 @@ pub(super) fn decode_minimal_bitset_header_internal(
 
 impl Cdr2Encode for CompleteBitsetType {
     fn max_cdr2_size(&self) -> usize {
-        // Conservative estimate
-        4 + self.header.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3
+            + 4
+            + self.header.max_cdr2_size()
             + 4
             + self
                 .field_seq
@@ -121,46 +124,49 @@ impl Cdr2Encode for CompleteBitsetType {
                 .sum::<usize>()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30):
+    /// DHEADER + payload-as-FINAL.
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_u16(self.bitset_flags.0, dst, offset)?;
-        self.header.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.field_seq, dst, offset, |field, dst, offset| {
-            field.encode_cdr2_le_at(dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_u16(self.bitset_flags.0, dst, offset)?;
+            self.header.encode_cdr2_le_at(dst, offset)?;
+            encode_vec(&self.field_seq, dst, offset, |field, dst, offset| {
+                field.encode_cdr2_le_at(dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for CompleteBitsetType {
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
-
-        // Decode header using internal helper
-        let header = decode_complete_bitset_header_internal(src, offset)?;
-
-        // Decode field_seq using internal helper for proper offset tracking
-        let field_len = decode_u32(src, offset)?;
-        let capacity = checked_usize(field_len, "bitfield sequence length")?;
-        let mut field_seq = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            *offset = align_offset(*offset, 4);
-            let field = decode_complete_bitfield_internal(src, offset)?;
-            field_seq.push(field);
-        }
-
-        Ok(CompleteBitsetType {
-            bitset_flags,
-            header,
-            field_seq,
+        decode_dheader_at(src, offset, |src, offset| {
+            let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
+            let header = decode_complete_bitset_header_internal(src, offset)?;
+            let field_len = decode_u32(src, offset)?;
+            let capacity = checked_usize(field_len, "bitfield sequence length")?;
+            let mut field_seq = Vec::with_capacity(capacity);
+            for _ in 0..capacity {
+                *offset = align_offset(*offset, 4);
+                let field = decode_complete_bitfield_internal(src, offset)?;
+                field_seq.push(field);
+            }
+            Ok(CompleteBitsetType {
+                bitset_flags,
+                header,
+                field_seq,
+            })
         })
     }
 }
 
 impl Cdr2Encode for MinimalBitsetType {
     fn max_cdr2_size(&self) -> usize {
-        // Conservative estimate
-        4 + self.header.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3
+            + 4
+            + self.header.max_cdr2_size()
             + 4
             + self
                 .field_seq
@@ -169,38 +175,39 @@ impl Cdr2Encode for MinimalBitsetType {
                 .sum::<usize>()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30):
+    /// DHEADER + payload-as-FINAL.
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_u16(self.bitset_flags.0, dst, offset)?;
-        self.header.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.field_seq, dst, offset, |field, dst, offset| {
-            field.encode_cdr2_le_at(dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_u16(self.bitset_flags.0, dst, offset)?;
+            self.header.encode_cdr2_le_at(dst, offset)?;
+            encode_vec(&self.field_seq, dst, offset, |field, dst, offset| {
+                field.encode_cdr2_le_at(dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for MinimalBitsetType {
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
-
-        // Decode header using internal helper
-        let header = decode_minimal_bitset_header_internal(src, offset)?;
-
-        // Decode field_seq using internal helper for proper offset tracking
-        let field_len = decode_u32(src, offset)?;
-        let capacity = checked_usize(field_len, "minimal bitfield sequence length")?;
-        let mut field_seq = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            *offset = align_offset(*offset, 4);
-            let field = decode_minimal_bitfield_internal(src, offset)?;
-            field_seq.push(field);
-        }
-
-        Ok(MinimalBitsetType {
-            bitset_flags,
-            header,
-            field_seq,
+        decode_dheader_at(src, offset, |src, offset| {
+            let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
+            let header = decode_minimal_bitset_header_internal(src, offset)?;
+            let field_len = decode_u32(src, offset)?;
+            let capacity = checked_usize(field_len, "minimal bitfield sequence length")?;
+            let mut field_seq = Vec::with_capacity(capacity);
+            for _ in 0..capacity {
+                *offset = align_offset(*offset, 4);
+                let field = decode_minimal_bitfield_internal(src, offset)?;
+                field_seq.push(field);
+            }
+            Ok(MinimalBitsetType {
+                bitset_flags,
+                header,
+                field_seq,
+            })
         })
     }
 }

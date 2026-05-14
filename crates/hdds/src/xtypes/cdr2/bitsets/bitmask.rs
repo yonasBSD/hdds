@@ -4,6 +4,7 @@
 //! Bitmask encoding for Complete/Minimal types.
 //!
 
+use super::super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::super::helpers::checked_usize;
 use super::super::primitives::{align_offset, decode_i16, decode_u32, encode_i16, encode_vec};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
@@ -84,8 +85,9 @@ pub(super) fn decode_minimal_bitmask_header_internal(
 
 impl Cdr2Encode for CompleteBitmaskType {
     fn max_cdr2_size(&self) -> usize {
-        // Conservative estimate
-        self.header.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3
+            + self.header.max_cdr2_size()
             + 4
             + self
                 .flag_seq
@@ -94,39 +96,42 @@ impl Cdr2Encode for CompleteBitmaskType {
                 .sum::<usize>()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30):
+    /// DHEADER + payload-as-FINAL.
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.header.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
-            flag.encode_cdr2_le_at(dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.header.encode_cdr2_le_at(dst, offset)?;
+            encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
+                flag.encode_cdr2_le_at(dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for CompleteBitmaskType {
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        // Decode header using internal helper
-        let header = decode_complete_bitmask_header_internal(src, offset)?;
-
-        // Decode flag_seq using internal helper for proper offset tracking
-        let flag_len = decode_u32(src, offset)?;
-        let capacity = checked_usize(flag_len, "bitflag sequence length")?;
-        let mut flag_seq = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            *offset = align_offset(*offset, 4);
-            let flag = decode_complete_bitflag_internal(src, offset)?;
-            flag_seq.push(flag);
-        }
-
-        Ok(CompleteBitmaskType { header, flag_seq })
+        decode_dheader_at(src, offset, |src, offset| {
+            let header = decode_complete_bitmask_header_internal(src, offset)?;
+            let flag_len = decode_u32(src, offset)?;
+            let capacity = checked_usize(flag_len, "bitflag sequence length")?;
+            let mut flag_seq = Vec::with_capacity(capacity);
+            for _ in 0..capacity {
+                *offset = align_offset(*offset, 4);
+                let flag = decode_complete_bitflag_internal(src, offset)?;
+                flag_seq.push(flag);
+            }
+            Ok(CompleteBitmaskType { header, flag_seq })
+        })
     }
 }
 
 impl Cdr2Encode for MinimalBitmaskType {
     fn max_cdr2_size(&self) -> usize {
-        // Conservative estimate
-        self.header.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3
+            + self.header.max_cdr2_size()
             + 4
             + self
                 .flag_seq
@@ -135,31 +140,33 @@ impl Cdr2Encode for MinimalBitmaskType {
                 .sum::<usize>()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30):
+    /// DHEADER + payload-as-FINAL.
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.header.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
-            flag.encode_cdr2_le_at(dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.header.encode_cdr2_le_at(dst, offset)?;
+            encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
+                flag.encode_cdr2_le_at(dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for MinimalBitmaskType {
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        // Decode header using internal helper
-        let header = decode_minimal_bitmask_header_internal(src, offset)?;
-
-        // Decode flag_seq using internal helper for proper offset tracking
-        let flag_len = decode_u32(src, offset)?;
-        let capacity = checked_usize(flag_len, "minimal bitflag sequence length")?;
-        let mut flag_seq = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            // Align each element to 4 bytes (CDR2 struct alignment in sequences)
-            *offset = align_offset(*offset, 4);
-            let flag = decode_minimal_bitflag_internal(src, offset)?;
-            flag_seq.push(flag);
-        }
-
-        Ok(MinimalBitmaskType { header, flag_seq })
+        decode_dheader_at(src, offset, |src, offset| {
+            let header = decode_minimal_bitmask_header_internal(src, offset)?;
+            let flag_len = decode_u32(src, offset)?;
+            let capacity = checked_usize(flag_len, "minimal bitflag sequence length")?;
+            let mut flag_seq = Vec::with_capacity(capacity);
+            for _ in 0..capacity {
+                *offset = align_offset(*offset, 4);
+                let flag = decode_minimal_bitflag_internal(src, offset)?;
+                flag_seq.push(flag);
+            }
+            Ok(MinimalBitmaskType { header, flag_seq })
+        })
     }
 }

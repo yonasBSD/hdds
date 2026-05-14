@@ -9,6 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.5 (Collection Types)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
 use super::primitives::{decode_u16, decode_u32, encode_u16, encode_u32, encode_vec};
 use super::type_identifier::decode_type_identifier_internal;
@@ -220,40 +221,48 @@ impl Cdr2Decode for MinimalSequenceType {
 
 impl Cdr2Encode for CompleteArrayType {
     fn max_cdr2_size(&self) -> usize {
-        self.header.max_cdr2_size() + self.element.max_cdr2_size() + 4 + (self.bound_seq.len() * 4)
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3
+            + self.header.max_cdr2_size()
+            + self.element.max_cdr2_size()
+            + 4
+            + (self.bound_seq.len() * 4)
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30):
+    /// DHEADER + payload-as-FINAL.
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.header.encode_cdr2_le_at(dst, offset)?;
-        self.element.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.bound_seq, dst, offset, |item, dst, offset| {
-            encode_u32(*item, dst, offset)
-        })?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.header.encode_cdr2_le_at(dst, offset)?;
+            self.element.encode_cdr2_le_at(dst, offset)?;
+            encode_vec(&self.bound_seq, dst, offset, |item, dst, offset| {
+                encode_u32(*item, dst, offset)
+            })?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for CompleteArrayType {
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30):
+    /// DHEADER + payload-as-FINAL; decoder advances past payload_end for
+    /// forward compatibility with peers that emit additional fields.
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        // Decode header
-        let header = CompleteCollectionHeader::decode_cdr2_le_at(src, offset)?;
-
-        // Decode element
-        let element = CompleteCollectionElement::decode_cdr2_le_at(src, offset)?;
-
-        // Decode bound_seq
-        let bounds_count = decode_u32(src, offset)?;
-        let capacity = checked_usize(bounds_count, "collection bound sequence length")?;
-        let mut bound_seq = Vec::with_capacity(capacity);
-        for _ in 0..capacity {
-            let bound = decode_u32(src, offset)?;
-            bound_seq.push(bound);
-        }
-
-        Ok(CompleteArrayType {
-            header,
-            element,
-            bound_seq,
+        decode_dheader_at(src, offset, |src, offset| {
+            let header = CompleteCollectionHeader::decode_cdr2_le_at(src, offset)?;
+            let element = CompleteCollectionElement::decode_cdr2_le_at(src, offset)?;
+            let bounds_count = decode_u32(src, offset)?;
+            let capacity = checked_usize(bounds_count, "collection bound sequence length")?;
+            let mut bound_seq = Vec::with_capacity(capacity);
+            for _ in 0..capacity {
+                let bound = decode_u32(src, offset)?;
+                bound_seq.push(bound);
+            }
+            Ok(CompleteArrayType {
+                header,
+                element,
+                bound_seq,
+            })
         })
     }
 }

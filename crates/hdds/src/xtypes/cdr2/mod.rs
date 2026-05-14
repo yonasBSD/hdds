@@ -74,6 +74,7 @@
 //! **Phase 2-7:** [*] In progress
 
 // Foundation
+mod dheader;
 mod helpers;
 mod primitives;
 
