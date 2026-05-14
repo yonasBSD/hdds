@@ -44,15 +44,21 @@ impl Cdr2Decode for CollectionElementFlag {
 // CompleteCollectionHeader / MinimalCollectionHeader CDR2
 // ============================================================================
 
+// CompleteCollectionHeader / MinimalCollectionHeader —
+// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30)
+// (spec lines 13061, 13068).
 impl Cdr2Encode for CompleteCollectionHeader {
     fn max_cdr2_size(&self) -> usize {
-        4 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 4 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_u32(self.bound, dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_u32(self.bound, dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -62,34 +68,38 @@ impl Cdr2Decode for CompleteCollectionHeader {
     }
 }
 
-/// Internal helper for CompleteCollectionHeader decoding with offset tracking
+/// Internal helper for CompleteCollectionHeader decoding with offset tracking.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_collection_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteCollectionHeader, CdrError> {
-    // Decode bound
-    let bound = decode_u32(src, offset)?;
-
-    // Decode detail
-    let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(CompleteCollectionHeader { bound, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let bound = decode_u32(src, offset)?;
+        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteCollectionHeader { bound, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalCollectionHeader {
     fn max_cdr2_size(&self) -> usize {
-        4
+        // DHEADER (4 bytes + up to 3 pad) + payload (4 bytes)
+        4 + 3 + 4
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_u32(self.bound, dst, offset)
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_u32(self.bound, dst, offset)
+        })
     }
 }
 
 impl Cdr2Decode for MinimalCollectionHeader {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let bound = decode_u32(src, offset)?;
-        Ok(Self { bound })
+        decode_dheader_at(src, offset, |src, offset| {
+            let bound = decode_u32(src, offset)?;
+            Ok(Self { bound })
+        })
     }
 }
 
@@ -97,15 +107,21 @@ impl Cdr2Decode for MinimalCollectionHeader {
 // CompleteCollectionElement / MinimalCollectionElement CDR2
 // ============================================================================
 
+// CompleteCollectionElement / MinimalCollectionElement —
+// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30)
+// (spec lines 13042, 13049).
 impl Cdr2Encode for CompleteCollectionElement {
     fn max_cdr2_size(&self) -> usize {
-        4 + self.type_id.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 4 + self.type_id.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_u16(self.flags.0, dst, offset)?;
-        self.type_id.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_u16(self.flags.0, dst, offset)?;
+            self.type_id.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -115,30 +131,32 @@ impl Cdr2Decode for CompleteCollectionElement {
     }
 }
 
-/// Internal helper for CompleteCollectionElement decoding with offset tracking
+/// Internal helper for CompleteCollectionElement decoding with offset tracking.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_collection_element_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteCollectionElement, CdrError> {
-    // Decode flags
-    let flags_value = decode_u16(src, offset)?;
-    let flags = CollectionElementFlag(flags_value);
-
-    // Decode type_id
-    let type_id = decode_type_identifier_internal(src, offset)?;
-
-    Ok(CompleteCollectionElement { flags, type_id })
+    decode_dheader_at(src, offset, |src, offset| {
+        let flags_value = decode_u16(src, offset)?;
+        let flags = CollectionElementFlag(flags_value);
+        let type_id = decode_type_identifier_internal(src, offset)?;
+        Ok(CompleteCollectionElement { flags, type_id })
+    })
 }
 
 impl Cdr2Encode for MinimalCollectionElement {
     fn max_cdr2_size(&self) -> usize {
-        4 + self.type_id.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 4 + self.type_id.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_u16(self.flags.0, dst, offset)?;
-        self.type_id.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_u16(self.flags.0, dst, offset)?;
+            self.type_id.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -148,19 +166,18 @@ impl Cdr2Decode for MinimalCollectionElement {
     }
 }
 
-/// Internal helper for MinimalCollectionElement decoding with offset tracking
+/// Internal helper for MinimalCollectionElement decoding with offset tracking.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_collection_element_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalCollectionElement, CdrError> {
-    // Decode flags
-    let flags_value = decode_u16(src, offset)?;
-    let flags = CollectionElementFlag(flags_value);
-
-    // Decode type_id
-    let type_id = decode_type_identifier_internal(src, offset)?;
-
-    Ok(MinimalCollectionElement { flags, type_id })
+    decode_dheader_at(src, offset, |src, offset| {
+        let flags_value = decode_u16(src, offset)?;
+        let flags = CollectionElementFlag(flags_value);
+        let type_id = decode_type_identifier_internal(src, offset)?;
+        Ok(MinimalCollectionElement { flags, type_id })
+    })
 }
 
 // ============================================================================

@@ -9,6 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.3 (Enumerated Types)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
 use super::primitives::{
     align_offset, decode_i16, decode_i32, decode_u16, decode_u32, encode_i16, encode_i32,
@@ -23,15 +24,19 @@ use crate::xtypes::type_object::*;
 // CommonEnumeratedLiteral CDR2 Encoding/Decoding
 // ============================================================================
 
+// CommonEnumeratedLiteral — `@extensibility(APPENDABLE)` per XTypes v1.3 spec line 13159.
 impl Cdr2Encode for CommonEnumeratedLiteral {
     fn max_cdr2_size(&self) -> usize {
-        4 + 2 // i32 + u16
+        // DHEADER (4 bytes + up to 3 pad) + payload (i32 + u16)
+        4 + 3 + 4 + 2
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_i32(self.value, dst, offset)?;
-        encode_u16(self.flags.0, dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_i32(self.value, dst, offset)?;
+            encode_u16(self.flags.0, dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -41,30 +46,36 @@ impl Cdr2Decode for CommonEnumeratedLiteral {
     }
 }
 
-/// Internal helper that tracks offset for CommonEnumeratedLiteral decoding
+/// Internal helper that tracks offset for CommonEnumeratedLiteral decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_common_enumerated_literal_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CommonEnumeratedLiteral, CdrError> {
-    let value = decode_i32(src, offset)?;
-    let flags = EnumeratedLiteralFlag(decode_u16(src, offset)?);
-
-    Ok(CommonEnumeratedLiteral { value, flags })
+    decode_dheader_at(src, offset, |src, offset| {
+        let value = decode_i32(src, offset)?;
+        let flags = EnumeratedLiteralFlag(decode_u16(src, offset)?);
+        Ok(CommonEnumeratedLiteral { value, flags })
+    })
 }
 
 // ============================================================================
 // CompleteEnumeratedLiteral / MinimalEnumeratedLiteral CDR2 Encoding/Decoding
 // ============================================================================
 
+// Complete/MinimalEnumeratedLiteral — `@extensibility(APPENDABLE)` per spec lines 13167, 13177.
 impl Cdr2Encode for CompleteEnumeratedLiteral {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -74,26 +85,31 @@ impl Cdr2Decode for CompleteEnumeratedLiteral {
     }
 }
 
-/// Internal helper that tracks offset for CompleteEnumeratedLiteral decoding
+/// Internal helper that tracks offset for CompleteEnumeratedLiteral decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_enumerated_literal_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteEnumeratedLiteral, CdrError> {
-    let common = decode_common_enumerated_literal_internal(src, offset)?;
-    let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(CompleteEnumeratedLiteral { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_enumerated_literal_internal(src, offset)?;
+        let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteEnumeratedLiteral { common, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalEnumeratedLiteral {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -103,30 +119,36 @@ impl Cdr2Decode for MinimalEnumeratedLiteral {
     }
 }
 
-/// Internal helper that tracks offset for MinimalEnumeratedLiteral decoding
+/// Internal helper that tracks offset for MinimalEnumeratedLiteral decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_enumerated_literal_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalEnumeratedLiteral, CdrError> {
-    let common = decode_common_enumerated_literal_internal(src, offset)?;
-    let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(MinimalEnumeratedLiteral { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_enumerated_literal_internal(src, offset)?;
+        let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalEnumeratedLiteral { common, detail })
+    })
 }
 
 // ============================================================================
 // EnumeratedHeader CDR2 Encoding/Decoding
 // ============================================================================
 
+// Complete/MinimalEnumeratedHeader — `@extensibility(APPENDABLE)` per spec lines 13196, 13203.
 impl Cdr2Encode for CompleteEnumeratedHeader {
     fn max_cdr2_size(&self) -> usize {
-        2 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 2 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_i16(self.bit_bound, dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_i16(self.bit_bound, dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -136,26 +158,31 @@ impl Cdr2Decode for CompleteEnumeratedHeader {
     }
 }
 
-/// Internal helper that tracks offset for CompleteEnumeratedHeader decoding
+/// Internal helper that tracks offset for CompleteEnumeratedHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_enumerated_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteEnumeratedHeader, CdrError> {
-    let bit_bound = decode_i16(src, offset)?;
-    let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(CompleteEnumeratedHeader { bit_bound, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let bit_bound = decode_i16(src, offset)?;
+        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteEnumeratedHeader { bit_bound, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalEnumeratedHeader {
     fn max_cdr2_size(&self) -> usize {
-        2 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 2 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_i16(self.bit_bound, dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_i16(self.bit_bound, dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -165,17 +192,18 @@ impl Cdr2Decode for MinimalEnumeratedHeader {
     }
 }
 
-/// Internal helper that tracks offset for MinimalEnumeratedHeader decoding
+/// Internal helper that tracks offset for MinimalEnumeratedHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_enumerated_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalEnumeratedHeader, CdrError> {
-    let bit_bound = decode_i16(src, offset)?;
-
-    // MinimalTypeDetail is empty, but decode it for consistency
-    let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(MinimalEnumeratedHeader { bit_bound, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let bit_bound = decode_i16(src, offset)?;
+        // MinimalTypeDetail is empty, but decode it for consistency
+        let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalEnumeratedHeader { bit_bound, detail })
+    })
 }
 
 // ============================================================================

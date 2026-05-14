@@ -8,6 +8,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.6 (Alias Types)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 use crate::xtypes::TypeIdentifier;
 
@@ -18,42 +19,52 @@ use crate::xtypes::type_object::*;
 // CompleteAliasType / MinimalAliasType CDR2 (0x09)
 // ============================================================================
 
-// Alias Headers
+// Alias Headers — `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 impl Cdr2Encode for CompleteAliasHeader {
     fn max_cdr2_size(&self) -> usize {
-        self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.detail.encode_cdr2_le_at(dst, offset)
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.detail.encode_cdr2_le_at(dst, offset)
+        })
     }
 }
 
 impl Cdr2Decode for CompleteAliasHeader {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
-        Ok(CompleteAliasHeader { detail })
+        decode_dheader_at(src, offset, |src, offset| {
+            let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+            Ok(CompleteAliasHeader { detail })
+        })
     }
 }
 
 impl Cdr2Encode for MinimalAliasHeader {
     fn max_cdr2_size(&self) -> usize {
-        self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.detail.encode_cdr2_le_at(dst, offset)
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.detail.encode_cdr2_le_at(dst, offset)
+        })
     }
 }
 
 impl Cdr2Decode for MinimalAliasHeader {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
-        Ok(MinimalAliasHeader { detail })
+        decode_dheader_at(src, offset, |src, offset| {
+            let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
+            Ok(MinimalAliasHeader { detail })
+        })
     }
 }
 
-// Alias Bodies
+// CommonAliasBody — @FINAL per spec line 12972
 impl Cdr2Encode for CommonAliasBody {
     fn max_cdr2_size(&self) -> usize {
         self.related_flags.max_cdr2_size() + self.related_type.max_cdr2_size()
@@ -77,40 +88,51 @@ impl Cdr2Decode for CommonAliasBody {
     }
 }
 
+// CompleteAliasBody / MinimalAliasBody — `@extensibility(APPENDABLE)` per spec lines 12979, 12987.
 impl Cdr2Encode for CompleteAliasBody {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
 impl Cdr2Decode for CompleteAliasBody {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let common = CommonAliasBody::decode_cdr2_le_at(src, offset)?;
-        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
-        Ok(CompleteAliasBody { common, detail })
+        decode_dheader_at(src, offset, |src, offset| {
+            let common = CommonAliasBody::decode_cdr2_le_at(src, offset)?;
+            let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+            Ok(CompleteAliasBody { common, detail })
+        })
     }
 }
 
 impl Cdr2Encode for MinimalAliasBody {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)
+        })
     }
 }
 
 impl Cdr2Decode for MinimalAliasBody {
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
-        let common = CommonAliasBody::decode_cdr2_le_at(src, offset)?;
-        Ok(MinimalAliasBody { common })
+        decode_dheader_at(src, offset, |src, offset| {
+            let common = CommonAliasBody::decode_cdr2_le_at(src, offset)?;
+            Ok(MinimalAliasBody { common })
+        })
     }
 }
 
