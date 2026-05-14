@@ -64,12 +64,6 @@ impl Cdr2Encode for Point3D {
 }
 
 impl Cdr2Decode for Point3D {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let x = f64::decode_cdr2_le_at(src, offset)?;
         let y = f64::decode_cdr2_le_at(src, offset)?;

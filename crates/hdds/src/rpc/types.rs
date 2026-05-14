@@ -196,12 +196,6 @@ impl SampleIdentity {
 }
 
 impl Cdr2Decode for SampleIdentity {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         if *offset + Self::CDR_SIZE > src.len() {
             return Err(CdrError::UnexpectedEof);
@@ -253,12 +247,6 @@ impl RequestHeader {
 }
 
 impl Cdr2Decode for RequestHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         if *offset + Self::CDR_SIZE > src.len() {
             return Err(CdrError::UnexpectedEof);
@@ -298,12 +286,6 @@ impl ReplyHeader {
 }
 
 impl Cdr2Decode for ReplyHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         if *offset + Self::CDR_SIZE > src.len() {
             return Err(CdrError::UnexpectedEof);

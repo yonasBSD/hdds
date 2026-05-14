@@ -40,12 +40,6 @@ impl Cdr2Encode for CompleteBitsetHeader {
 }
 
 impl Cdr2Decode for CompleteBitsetHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_bitset_header_internal(src, offset)
     }
@@ -87,12 +81,6 @@ impl Cdr2Encode for MinimalBitsetHeader {
 }
 
 impl Cdr2Decode for MinimalBitsetHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_bitset_header_internal(src, offset)
     }
@@ -144,12 +132,6 @@ impl Cdr2Encode for CompleteBitsetType {
 }
 
 impl Cdr2Decode for CompleteBitsetType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
 
@@ -198,12 +180,6 @@ impl Cdr2Encode for MinimalBitsetType {
 }
 
 impl Cdr2Decode for MinimalBitsetType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let bitset_flags = BitsetTypeFlag(decode_u16(src, offset)?);
 

@@ -75,12 +75,6 @@ pub mod TemperatureData {
     }
 
     impl Cdr2Decode for Temperature {
-        fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-            let mut offset = 0;
-            let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-            Ok((value, offset))
-        }
-
         fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
             let value = f32::decode_cdr2_le_at(src, offset)?;
             let timestamp = i32::decode_cdr2_le_at(src, offset)?;

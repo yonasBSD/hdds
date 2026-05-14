@@ -31,12 +31,6 @@ impl Cdr2Encode for CompleteBitmaskHeader {
 }
 
 impl Cdr2Decode for CompleteBitmaskHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_bitmask_header_internal(src, offset)
     }
@@ -66,12 +60,6 @@ impl Cdr2Encode for MinimalBitmaskHeader {
 }
 
 impl Cdr2Decode for MinimalBitmaskHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_bitmask_header_internal(src, offset)
     }
@@ -116,12 +104,6 @@ impl Cdr2Encode for CompleteBitmaskType {
 }
 
 impl Cdr2Decode for CompleteBitmaskType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header using internal helper
         let header = decode_complete_bitmask_header_internal(src, offset)?;
@@ -163,12 +145,6 @@ impl Cdr2Encode for MinimalBitmaskType {
 }
 
 impl Cdr2Decode for MinimalBitmaskType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header using internal helper
         let header = decode_minimal_bitmask_header_internal(src, offset)?;

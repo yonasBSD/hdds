@@ -33,12 +33,6 @@ impl Cdr2Encode for CompleteUnionHeader {
 }
 
 impl Cdr2Decode for CompleteUnionHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_union_header_internal(src, offset)
     }
@@ -71,12 +65,6 @@ impl Cdr2Encode for MinimalUnionHeader {
 }
 
 impl Cdr2Decode for MinimalUnionHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_union_header_internal(src, offset)
     }
@@ -118,12 +106,6 @@ impl Cdr2Encode for CompleteUnionType {
 }
 
 impl Cdr2Decode for CompleteUnionType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let union_flags = UnionTypeFlag(decode_u16(src, offset)?);
 
@@ -161,12 +143,6 @@ impl Cdr2Encode for MinimalUnionType {
 }
 
 impl Cdr2Decode for MinimalUnionType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let union_flags = UnionTypeFlag(decode_u16(src, offset)?);
 

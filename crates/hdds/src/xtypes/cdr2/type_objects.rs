@@ -71,12 +71,6 @@ impl Cdr2Encode for CompleteTypeObject {
 
 impl Cdr2Decode for CompleteTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     /// TRANSITIONAL (F29 gate, ADR-1.6.2-PHASE-0 §8.3): this `_at` body
     /// strictly mirrors the legacy sub-buffer dispatcher byte-for-byte.
     /// The DHEADER missing on @extensibility(APPENDABLE) TypeObject
@@ -189,12 +183,6 @@ impl Cdr2Encode for MinimalTypeObject {
 
 impl Cdr2Decode for MinimalTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     /// TRANSITIONAL (F29 gate, ADR-1.6.2-PHASE-0 §8.3): same caveat as
     /// `CompleteTypeObject::decode_cdr2_le_at` above — the DHEADER
     /// missing on @extensibility(APPENDABLE) TypeObject containers is

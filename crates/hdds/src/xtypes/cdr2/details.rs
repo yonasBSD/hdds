@@ -46,12 +46,6 @@ impl Cdr2Encode for CompleteTypeDetail {
 }
 
 impl Cdr2Decode for CompleteTypeDetail {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let type_name = decode_string(src, offset)?;
 
@@ -124,12 +118,6 @@ impl Cdr2Encode for CompleteMemberDetail {
 }
 
 impl Cdr2Decode for CompleteMemberDetail {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let name = decode_string(src, offset)?;
 
@@ -168,12 +156,6 @@ impl Cdr2Encode for MinimalMemberDetail {
 }
 
 impl Cdr2Decode for MinimalMemberDetail {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let name_hash = decode_u32(src, offset)?;
         Ok(MinimalMemberDetail { name_hash })

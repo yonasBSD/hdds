@@ -36,12 +36,6 @@ impl Cdr2Encode for CommonEnumeratedLiteral {
 }
 
 impl Cdr2Decode for CommonEnumeratedLiteral {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_common_enumerated_literal_internal(src, offset)
     }
@@ -75,12 +69,6 @@ impl Cdr2Encode for CompleteEnumeratedLiteral {
 }
 
 impl Cdr2Decode for CompleteEnumeratedLiteral {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_enumerated_literal_internal(src, offset)
     }
@@ -110,12 +98,6 @@ impl Cdr2Encode for MinimalEnumeratedLiteral {
 }
 
 impl Cdr2Decode for MinimalEnumeratedLiteral {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_enumerated_literal_internal(src, offset)
     }
@@ -149,12 +131,6 @@ impl Cdr2Encode for CompleteEnumeratedHeader {
 }
 
 impl Cdr2Decode for CompleteEnumeratedHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_enumerated_header_internal(src, offset)
     }
@@ -184,12 +160,6 @@ impl Cdr2Encode for MinimalEnumeratedHeader {
 }
 
 impl Cdr2Decode for MinimalEnumeratedHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_enumerated_header_internal(src, offset)
     }
@@ -233,12 +203,6 @@ impl Cdr2Encode for CompleteEnumeratedType {
 }
 
 impl Cdr2Decode for CompleteEnumeratedType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header using internal helper
         let header = decode_complete_enumerated_header_internal(src, offset)?;
@@ -282,12 +246,6 @@ impl Cdr2Encode for MinimalEnumeratedType {
 }
 
 impl Cdr2Decode for MinimalEnumeratedType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Decode header using internal helper
         let header = decode_minimal_enumerated_header_internal(src, offset)?;

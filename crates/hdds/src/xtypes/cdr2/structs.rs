@@ -37,12 +37,6 @@ impl Cdr2Encode for CompleteStructHeader {
 }
 
 impl Cdr2Decode for CompleteStructHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_struct_header_internal(src, offset)
     }
@@ -77,12 +71,6 @@ impl Cdr2Encode for MinimalStructHeader {
 }
 
 impl Cdr2Decode for MinimalStructHeader {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_struct_header_internal(src, offset)
     }
@@ -123,12 +111,6 @@ impl Cdr2Encode for CompleteStructType {
 }
 
 impl Cdr2Decode for CompleteStructType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let struct_flags = StructTypeFlag(decode_u16(src, offset)?);
 
@@ -166,12 +148,6 @@ impl Cdr2Encode for MinimalStructType {
 }
 
 impl Cdr2Decode for MinimalStructType {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         let struct_flags = StructTypeFlag(decode_u16(src, offset)?);
 

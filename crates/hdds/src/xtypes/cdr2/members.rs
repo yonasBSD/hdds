@@ -37,12 +37,6 @@ impl Cdr2Encode for CommonStructMember {
 }
 
 impl Cdr2Decode for CommonStructMember {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_common_struct_member_internal(src, offset)
     }
@@ -83,12 +77,6 @@ impl Cdr2Encode for CompleteStructMember {
 }
 
 impl Cdr2Decode for CompleteStructMember {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_struct_member_internal(src, offset)
     }
@@ -119,12 +107,6 @@ impl Cdr2Encode for MinimalStructMember {
 }
 
 impl Cdr2Decode for MinimalStructMember {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_struct_member_internal(src, offset)
     }
@@ -169,12 +151,6 @@ impl Cdr2Encode for CommonUnionMember {
 }
 
 impl Cdr2Decode for CommonUnionMember {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_common_union_member_internal(src, offset)
     }
@@ -223,12 +199,6 @@ impl Cdr2Encode for CompleteUnionMember {
 }
 
 impl Cdr2Decode for CompleteUnionMember {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_complete_union_member_internal(src, offset)
     }
@@ -259,12 +229,6 @@ impl Cdr2Encode for MinimalUnionMember {
 }
 
 impl Cdr2Decode for MinimalUnionMember {
-    fn decode_cdr2_le(src: &[u8]) -> Result<(Self, usize), CdrError> {
-        let mut offset = 0;
-        let value = Self::decode_cdr2_le_at(src, &mut offset)?;
-        Ok((value, offset))
-    }
-
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         decode_minimal_union_member_internal(src, offset)
     }
