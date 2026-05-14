@@ -7,24 +7,41 @@
 //! octet values, `TypeObject` discriminator labels, or
 //! `MinimalMemberDetail::from_name` hashing surfaces as a failure here.
 //! Per OMG DDS-XTypes v1.3 §7.3.4.8 the hash is
-//! `MD5(CDR2_LE(MinimalTypeObject))[..14]`.
+//! `MD5(CDR2_LE(MinimalTypeObject))[..14]` where CDR2 = XCDR encoding
+//! version 2 with Little Endian (spec §7.3.4.6.5 step e).
 //!
-//! Cross-vendor status: NOT YET ACHIEVED. The bytes locked below
-//! reflect HDDS-self encoding only — they are NOT byte-comparable with
-//! what Fast DDS / Connext / OpenDDS / Cyclone DDS produce for the
-//! same logical IDL type. Root cause: F29 (DHEADER missing for
-//! @extensibility(APPENDABLE) TypeObject containers) per OMG DDS-XTypes
-//! v1.3 §7.4.3.3. Tracked in ADR-CHANTIER-1.6-AUDIT-RESPONSE §8 (F29)
-//! and §10.14 (méthodologie cross-vendor). Empirical evidence at
-//! `/tmp/f28-capture/fastdds-pubsub.pcap` shows Fast DDS 3.x emits
-//! Minimal hash `bb 41 b9 75 4f 8f c5 3c 3e e5 48 84 42 96` (55 bytes
-//! TypeObject) for the same Temperature.idl that HDDS computes to a
-//! drifting 36-byte payload — Δ approximately matches the missing
-//! DHEADER plus structural framing.
+//! ## Hash byte-stability history
 //!
-//! Resolution gated by sous-chantier 1.6.10 (F29 fix). Until then this
-//! test remains `#[ignore]` with marker F29 — the hash check is
-//! HDDS-self consistent only, intentionally divergent from spec.
+//! - **Pre-1.6.10** (HDDS-self, F29-buggy, locked legacy):
+//!   `c8 5a 48 98 4e 82 ff 6e 13 8f 0f f9 c8 32`
+//! - **Post-1.6.10** (HDDS-self, F29-compliant per spec rule (30),
+//!   locked below): `a9 55 6a 65 86 9c be d2 92 f8 8d 26 86 bc`
+//! - **Fast DDS 3.x empirical** (pcap reference 1.6.1d F28
+//!   investigation): `bb 41 b9 75 4f 8f c5 3c 3e e5 48 84 42 96`
+//!
+//! ## Cross-vendor status: NOT YET ACHIEVED (post-1.6.10)
+//!
+//! The post-1.6.10 hash bytes are *closer to spec-correct* than the
+//! pre-1.6.10 baseline (F29 closed, all @APPENDABLE TypeObject
+//! sub-records now emit DHEADER per XTypes v1.3 §7.4.3.4 rule (30)).
+//! However they still diverge from Fast DDS empirical because of
+//! pre-existing HDDS<->spec data-model divergences tracked in
+//! ADR-CHANTIER-1.6-AUDIT-RESPONSE.md §10.24:
+//!   1. `AnnotationTypeFlag` absent from `CompleteAnnotationType` /
+//!      `MinimalAnnotationType` Rust structs (caught by 1.6.10
+//!      strategic-pass review, MEDIUM finding M1)
+//!   2. `CompleteDiscriminatorMember` / `MinimalDiscriminatorMember`
+//!      not modeled (DHEADER absent for union discriminator wrapper)
+//!   3. `CompleteArrayHeader` / `MinimalArrayHeader` not modeled
+//!      (CompleteArrayType uses CompleteCollectionHeader directly)
+//!   4. `TypeObjectHashId` inner discriminator octet missing from
+//!      StronglyConnectedComponentId payload
+//!
+//! Until each divergence is closed, this test stays `#[ignore]`
+//! because the locked HDDS-self hash is byte-stable but cross-vendor
+//! incompatible. The lock value below tracks the current HDDS-self
+//! output and provides regression detection for any *unintentional*
+//! drift while the deferred fixes are landing.
 
 #![cfg(feature = "xtypes")]
 
@@ -66,33 +83,37 @@ fn temperature_minimal() -> MinimalTypeObject {
 }
 
 #[test]
-#[ignore = "F29: DHEADER missing for @extensibility(APPENDABLE) TypeObjects \
-            (XTypes v1.3 §7.4.3.3); HDDS-self hash is intentionally \
-            divergent from FastDDS/Connext/OpenDDS/Cyclone wire bytes \
-            until 1.6.10 fixes the framing. F28 (hash drift between \
-            HDDS pre/post-1.6.1a) is a downstream symptom; both pre \
-            and post variants are wrong cross-vendor. Tracked in \
-            ADR-CHANTIER-1.6 §8 (F28+F29) + §10.14 (méthodologie)."]
+#[ignore = "Cross-vendor hash divergence remains post-1.6.10 (F29 closed, \
+            DHEADER now spec-compliant per XTypes v1.3 §7.4.3.4 rule (30)). \
+            Residual gaps are HDDS<->spec data-model divergences tracked \
+            in ADR-CHANTIER-1.6-AUDIT-RESPONSE §10.24: missing \
+            AnnotationTypeFlag field, absent DiscriminatorMember pair, \
+            absent ArrayHeader pair, missing TypeObjectHashId inner \
+            discriminator. HDDS-self hash bytes are locked below for \
+            regression detection until cross-vendor parity is achieved \
+            in a future chantier (data-model refactor required)."]
 fn golden_minimal_temperature_equivalence_hash() {
     let type_obj = temperature_minimal();
     let hash = type_obj
         .compute_equivalence_hash()
         .expect("CDR2 encoding of MinimalTypeObject must succeed");
 
-    // NOTE: these bytes reflect HDDS-self encoding only. They are NOT
-    // cross-vendor verified. Fast DDS 3.x empirical capture (1.6.1d
-    // F28 investigation) shows it emits a different Minimal hash for
-    // the same logical Temperature.idl because HDDS is missing the
-    // DHEADER framing required by XTypes v1.3 §7.4.3.3 for
-    // @extensibility(APPENDABLE) containers (F29, deferred to
-    // sous-chantier 1.6.10). Do not update these bytes until F29 is
-    // fixed and the locked value is empirically re-derived against
-    // a fresh Fast DDS pcap capture.
+    // Locked HDDS-self bytes, post-1.6.10 (F29 closed, sub-chantier
+    // landed 2026-05-14 in commits `bccd76a..e29945b`). These bytes are
+    // byte-stable across the HDDS workspace but DIVERGE from Fast DDS
+    // empirical (`bb 41 b9 75 4f 8f c5 3c 3e e5 48 84 42 96`) due to
+    // the data-model gaps listed in the module docstring above.
     //
-    // Stale locked value (HDDS pre-1.6.1a self-output, kept for
-    // historical reference during F29 fix):
+    // Pre-1.6.10 reference (historical, for context):
+    //   `c8 5a 48 98 4e 82 ff 6e 13 8f 0f f9 c8 32`
+    //
+    // Re-derivation procedure when an intentional change lands (e.g.
+    // when §10.24 data-model divergences are closed): replace the
+    // bytes below with the new `compute_equivalence_hash()` output,
+    // update the docstring history block, and ensure the change is
+    // documented in the ADR with a spec citation.
     let expected: [u8; 14] = [
-        0xc8, 0x5a, 0x48, 0x98, 0x4e, 0x82, 0xff, 0x6e, 0x13, 0x8f, 0x0f, 0xf9, 0xc8, 0x32,
+        0xa9, 0x55, 0x6a, 0x65, 0x86, 0x9c, 0xbe, 0xd2, 0x92, 0xf8, 0x8d, 0x26, 0x86, 0xbc,
     ];
     assert_eq!(
         hash.as_bytes(),

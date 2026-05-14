@@ -75,23 +75,38 @@ where
 /// Decodes an `@APPENDABLE` payload by reading the DHEADER prefix first.
 ///
 /// Pad-to-4 (DHEADER is u32, 4-aligned), read the 4-byte payload size, invoke
-/// `body` to decode the payload, then advance the cursor to `payload_end`
-/// (which may skip unknown trailing bytes — this is the forward-compatibility
-/// mechanism for adding fields to @APPENDABLE records).
+/// `body` to decode the payload with a buffer slice bounded to the DHEADER
+/// region, then advance the cursor to `payload_end` (which may skip unknown
+/// trailing bytes — this is the forward-compatibility mechanism for adding
+/// fields to @APPENDABLE records).
+///
+/// # Bounded body slice (defense against silent over-read)
+/// The body closure receives `&src[..payload_end]`, not the full parent
+/// buffer. This guarantees that a body which over-reads the declared DHEADER
+/// size surfaces as `UnexpectedEof` instead of silently consuming bytes that
+/// belong to the next record. Per Opus 3 + Opus 4 strategic-pass audit
+/// (`ADR-CHANTIER-1.6-AUDIT-RESPONSE.md` Sec.10.25): without this bound, a
+/// malicious or buggy peer can write `DHEADER=N` with a body that reads >N
+/// bytes; the unconditional `*offset = payload_end` rewind would mask the
+/// over-read, returning a value composed of bytes from the next record and
+/// causing cascading mis-parse downstream.
 ///
 /// # Arguments
 /// * `src` — source buffer (parent, full slice).
 /// * `offset` — global cursor, mutated in-place.
 /// * `body` — closure that decodes the payload starting at `*offset` and
-///   advances `*offset` by the bytes consumed.
+///   advances `*offset` by the bytes consumed. The closure receives a buffer
+///   slice bounded to `payload_end`; reads past that bound return EOF.
 ///
 /// # Returns
 /// The value constructed by `body`. The cursor is advanced past any unknown
-/// trailing bytes within the DHEADER payload (forward compatibility).
+/// trailing bytes within the DHEADER payload (forward compatibility for
+/// under-read; over-read is rejected by the bounded slice).
 ///
 /// # Errors
-/// - `CdrError::UnexpectedEof` if `src` lacks room for pad + DHEADER, or the
-///   DHEADER size exceeds the remaining buffer.
+/// - `CdrError::UnexpectedEof` if `src` lacks room for pad + DHEADER, the
+///   DHEADER size exceeds the remaining buffer, or the body over-reads past
+///   the declared DHEADER size.
 /// - Any error returned by `body` is propagated; the cursor state is undefined
 ///   on error.
 #[inline]
@@ -119,7 +134,12 @@ where
         return Err(CdrError::UnexpectedEof);
     }
 
-    let value = body(src, offset)?;
+    // Bound the body's view of `src` to `payload_end`. The body still operates
+    // on a `&[u8]` that starts at index 0 (matching the full-buffer contract
+    // of every other Cdr2 decoder) but cannot see bytes beyond the declared
+    // DHEADER region — any read past `payload_end` returns EOF.
+    let bounded = &src[..payload_end];
+    let value = body(bounded, offset)?;
 
     // Forward-compat: skip any unknown trailing bytes within the DHEADER payload.
     *offset = payload_end;
@@ -244,5 +264,43 @@ mod tests {
         let mut read_off = 0;
         let result: Result<u32, _> = decode_dheader_at(&buf, &mut read_off, |_src, _off| Ok(0u32));
         assert!(matches!(result, Err(CdrError::UnexpectedEof)));
+    }
+
+    /// Adversarial (1.6.10l audit response, Opus 3 Issue 1 + Opus 4 H1):
+    /// DHEADER declares a 4-byte payload, but the body attempts to read 8
+    /// bytes. Without the bounded-slice fix introduced in 1.6.10l, the body
+    /// would silently consume the next record's bytes and the helper would
+    /// rewind to `payload_end`, returning a corrupted value composed of
+    /// bytes from the wrong record. With the bounded slice, the over-read
+    /// surfaces as `UnexpectedEof`.
+    #[test]
+    fn dheader_decode_rejects_body_over_read() {
+        let mut buf = [0u8; 16];
+        // DHEADER = 4 (payload is 4 bytes)
+        buf[0..4].copy_from_slice(&4_u32.to_le_bytes());
+        // 4 bytes of declared payload
+        buf[4..8].copy_from_slice(&0xCAFE_u32.to_le_bytes());
+        // 8 bytes belonging to the "next record" that the body must NOT see
+        buf[8..16].copy_from_slice(&0xDEAD_BEEF_DEAD_BEEF_u64.to_le_bytes());
+
+        let mut read_off = 0;
+        let result: Result<u64, _> = decode_dheader_at(&buf, &mut read_off, |src, off| {
+            // Body attempts to read 8 bytes even though DHEADER declared 4.
+            // With bounded slice, src.len() == 8 (4 header + 4 payload), so
+            // the 8-byte read at *off=4 needs src[4..12] which is out of
+            // bounds -> UnexpectedEof.
+            if *off + 8 > src.len() {
+                return Err(CdrError::UnexpectedEof);
+            }
+            let mut tmp = [0u8; 8];
+            tmp.copy_from_slice(&src[*off..*off + 8]);
+            *off += 8;
+            Ok(u64::from_le_bytes(tmp))
+        });
+        assert!(
+            matches!(result, Err(CdrError::UnexpectedEof)),
+            "over-read past payload_end must be rejected, got {:?}",
+            result
+        );
     }
 }

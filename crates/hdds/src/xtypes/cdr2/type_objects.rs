@@ -71,14 +71,11 @@ impl Cdr2Encode for CompleteTypeObject {
 
 impl Cdr2Decode for CompleteTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
-    /// TRANSITIONAL (F29 gate, ADR-1.6.2-PHASE-0 §8.3): this `_at` body
-    /// strictly mirrors the legacy sub-buffer dispatcher byte-for-byte.
-    /// The DHEADER missing on @extensibility(APPENDABLE) TypeObject
-    /// containers (per XTypes v1.3 §7.4.3.3) is INTENTIONALLY preserved
-    /// here — the F29 fix is deferred to sub-chantier 1.6.10 and any
-    /// DHEADER read added here would silently leak F29 isolation. The
-    /// migration to `_at` is a signature change only (offset propagation),
-    /// not a semantic fix; verify via byte-equality gate post-migration.
+    /// Discriminator dispatcher for the @FINAL union `TypeObject` per XTypes
+    /// v1.3 spec §7.3.4.5. Each variant is independently APPENDABLE or FINAL
+    /// per its own IDL declaration (cf. spec inventory in ADR-1.6.10-PHASE-0
+    /// §9.2-§9.3); DHEADER framing lives on the variant impls, not here.
+    /// F29 fix landed in sous-chantier 1.6.10 (commits `bccd76a..e29945b`).
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         // Spec discriminator labels — see Cdr2Encode for the §7.3.4.5
         // citation. Local const required because `match` patterns must
@@ -183,10 +180,10 @@ impl Cdr2Encode for MinimalTypeObject {
 
 impl Cdr2Decode for MinimalTypeObject {
     // @audit-ok: Simple pattern matching (cyclo 23, cogni 1) - discriminator dispatch to variant decoders
-    /// TRANSITIONAL (F29 gate, ADR-1.6.2-PHASE-0 §8.3): same caveat as
-    /// `CompleteTypeObject::decode_cdr2_le_at` above — the DHEADER
-    /// missing on @extensibility(APPENDABLE) TypeObject containers is
-    /// preserved verbatim. F29 fix deferred to sub-chantier 1.6.10.
+    /// Discriminator dispatcher for the @FINAL union `TypeObject` per XTypes
+    /// v1.3 spec §7.3.4.5. Each variant is independently APPENDABLE or FINAL
+    /// per its own IDL declaration; DHEADER framing lives on the variant
+    /// impls. F29 fix landed in sous-chantier 1.6.10.
     fn decode_cdr2_le_at(src: &[u8], offset: &mut usize) -> Result<Self, CdrError> {
         const TK_STRUCTURE: u8 = TypeKind::TK_STRUCTURE.to_u8();
         const TK_UNION: u8 = TypeKind::TK_UNION.to_u8();
