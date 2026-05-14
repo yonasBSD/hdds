@@ -202,13 +202,17 @@ pub(super) fn decode_common_union_member_internal(
 
 impl Cdr2Encode for CompleteUnionMember {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -218,27 +222,33 @@ impl Cdr2Decode for CompleteUnionMember {
     }
 }
 
-/// Internal helper that tracks offset for CompleteUnionMember decoding
+/// Internal helper that tracks offset for CompleteUnionMember decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_union_member_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteUnionMember, CdrError> {
-    let common = decode_common_union_member_internal(src, offset)?;
-    let detail =
-        super::helpers::decode_detail_with_reencoding::<CompleteMemberDetail>(src, offset)?;
-
-    Ok(CompleteUnionMember { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_union_member_internal(src, offset)?;
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<CompleteMemberDetail>(src, offset)?;
+        Ok(CompleteUnionMember { common, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalUnionMember {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -248,13 +258,16 @@ impl Cdr2Decode for MinimalUnionMember {
     }
 }
 
-/// Internal helper that tracks offset for MinimalUnionMember decoding
+/// Internal helper that tracks offset for MinimalUnionMember decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_union_member_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalUnionMember, CdrError> {
-    let common = decode_common_union_member_internal(src, offset)?;
-    let detail = super::helpers::decode_detail_with_reencoding::<MinimalMemberDetail>(src, offset)?;
-
-    Ok(MinimalUnionMember { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_union_member_internal(src, offset)?;
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<MinimalMemberDetail>(src, offset)?;
+        Ok(MinimalUnionMember { common, detail })
+    })
 }

@@ -8,6 +8,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.2 (Union Types)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::members::{decode_complete_union_member_internal, decode_minimal_union_member_internal};
 use super::primitives::{decode_u16, encode_u16, encode_vec};
 use super::type_identifier::decode_type_identifier_internal;
@@ -22,13 +23,17 @@ use crate::xtypes::type_object::*;
 
 impl Cdr2Encode for CompleteUnionHeader {
     fn max_cdr2_size(&self) -> usize {
-        32 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 32 + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.discriminator.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.discriminator.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -38,29 +43,36 @@ impl Cdr2Decode for CompleteUnionHeader {
     }
 }
 
-/// Internal helper that tracks offset for CompleteUnionHeader decoding
+/// Internal helper that tracks offset for CompleteUnionHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_union_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteUnionHeader, CdrError> {
-    let discriminator = decode_type_identifier_internal(src, offset)?;
-    let detail = super::helpers::decode_detail_with_reencoding::<CompleteTypeDetail>(src, offset)?;
-
-    Ok(CompleteUnionHeader {
-        discriminator,
-        detail,
+    decode_dheader_at(src, offset, |src, offset| {
+        let discriminator = decode_type_identifier_internal(src, offset)?;
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<CompleteTypeDetail>(src, offset)?;
+        Ok(CompleteUnionHeader {
+            discriminator,
+            detail,
+        })
     })
 }
 
 impl Cdr2Encode for MinimalUnionHeader {
     fn max_cdr2_size(&self) -> usize {
-        32 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 32 + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.discriminator.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.discriminator.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -70,19 +82,21 @@ impl Cdr2Decode for MinimalUnionHeader {
     }
 }
 
-/// Internal helper that tracks offset for MinimalUnionHeader decoding
+/// Internal helper that tracks offset for MinimalUnionHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_union_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalUnionHeader, CdrError> {
-    let discriminator = decode_type_identifier_internal(src, offset)?;
-
-    // MinimalTypeDetail is empty (encodes as 0 bytes)
-    let detail = super::helpers::decode_detail_with_reencoding::<MinimalTypeDetail>(src, offset)?;
-
-    Ok(MinimalUnionHeader {
-        discriminator,
-        detail,
+    decode_dheader_at(src, offset, |src, offset| {
+        let discriminator = decode_type_identifier_internal(src, offset)?;
+        // MinimalTypeDetail is empty (encodes as 0 bytes)
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<MinimalTypeDetail>(src, offset)?;
+        Ok(MinimalUnionHeader {
+            discriminator,
+            detail,
+        })
     })
 }
 
