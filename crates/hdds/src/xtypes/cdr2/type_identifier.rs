@@ -9,6 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.4 (TypeIdentifier)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::primitives::{decode_i32, decode_u32, decode_u8, encode_i32, encode_u32, encode_u8};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 use crate::xtypes::discriminators::{
@@ -73,13 +74,23 @@ impl Cdr2Encode for TypeIdentifier {
             }
             TypeIdentifier::StronglyConnected(sc) => {
                 encode_u8(TI_STRONGLY_CONNECTED_COMPONENT, dst, offset)?;
-                if *offset + 14 > dst.len() {
-                    return Err(CdrError::BufferTooSmall);
-                }
-                dst[*offset..*offset + 14].copy_from_slice(sc.sc_component_id.as_bytes());
-                *offset += 14;
-                encode_i32(sc.scc_length, dst, offset)?;
-                encode_i32(sc.scc_index, dst, offset)?;
+                // `StronglyConnectedComponentId` is `@extensibility(APPENDABLE) @nested`
+                // per XTypes v1.3 spec line 12466 -> rule (30) requires DHEADER.
+                // NOTE: the inner `TypeObjectHashId` union discriminator (1 byte)
+                // is still missing here per the documented HDDS<->spec divergence
+                // (see decoder note around line 145). F29 fix on the outer
+                // DHEADER lands here; the inner discriminator divergence is
+                // tracked separately.
+                encode_dheader_at(dst, offset, |dst, offset| {
+                    if *offset + 14 > dst.len() {
+                        return Err(CdrError::BufferTooSmall);
+                    }
+                    dst[*offset..*offset + 14].copy_from_slice(sc.sc_component_id.as_bytes());
+                    *offset += 14;
+                    encode_i32(sc.scc_length, dst, offset)?;
+                    encode_i32(sc.scc_index, dst, offset)?;
+                    Ok(())
+                })?;
             }
         }
         Ok(())
@@ -144,11 +155,13 @@ pub(super) fn decode_type_identifier_internal(
         }
         // §7.3.4.4: `case TI_STRONGLY_CONNECTED_COMPONENT:
         //               StronglyConnectedComponentId sc_component_id;`
-        // Symmetric with the encoder: 14-byte hash + two `i32` fields,
-        // without the spec's outer DHEADER nor the inner
-        // `TypeObjectHashId` union discriminator. Payload-shape alignment
-        // with §7.3.4.4 is tracked separately.
-        TI_STRONGLY_CONNECTED_COMPONENT => {
+        // Symmetric with the encoder: 14-byte hash + two `i32` fields.
+        // The outer DHEADER per XTypes v1.3 rule (30) is now emitted/read
+        // (added in 1.6.10i). The inner `TypeObjectHashId` union
+        // discriminator (per spec line 12307 a 1-byte octet discriminator
+        // before the 14-byte EquivalenceHash) is still NOT emitted/read --
+        // HDDS<->spec divergence tracked separately, orthogonal to F29.
+        TI_STRONGLY_CONNECTED_COMPONENT => decode_dheader_at(src, offset, |src, offset| {
             if *offset + 14 > src.len() {
                 return Err(CdrError::UnexpectedEof);
             }
@@ -167,7 +180,7 @@ pub(super) fn decode_type_identifier_internal(
                     scc_index,
                 },
             ))
-        }
+        }),
         // §7.3.4.4: `case EK_MINIMAL: EquivalenceHash equivalence_hash;`
         EK_MINIMAL => {
             if *offset + 14 > src.len() {
@@ -272,12 +285,20 @@ mod tests {
     }
 
     /// `TypeIdentifier::StronglyConnected` -> TI_STRONGLY_CONNECTED_COMPONENT
-    /// (0xB0) per §7.3.4.4. Only the top-level discriminator is migrated;
-    /// the inner payload still diverges from spec (no DHEADER, no inner
-    /// `TypeObjectHashId` union discriminator) — flagged for a future fix.
-    /// The wire size is locked at 24 bytes: 1 octet discriminator + 14-byte
-    /// hash (offset 1..15) + 1 padding byte for CDR2 4-byte alignment of the
-    /// following `i32` (offset 15) + 4-byte `scc_length` + 4-byte `scc_index`.
+    /// (0xB0) per §7.3.4.4. Wire size locked at **32 bytes** post-1.6.10i:
+    /// - offset 0: 1 octet discriminator (0xB0)
+    /// - offset 1..4: 3 padding bytes for 4-byte alignment of DHEADER (UInt32)
+    /// - offset 4..8: 4-byte DHEADER (payload size = 24)
+    /// - offset 8..22: 14-byte hash
+    /// - offset 22..24: 2 padding bytes for 4-byte alignment of i32 `scc_length`
+    /// - offset 24..28: 4-byte `scc_length`
+    /// - offset 28..32: 4-byte `scc_index`
+    ///
+    /// DHEADER added per F29 fix (1.6.10i) since `StronglyConnectedComponentId`
+    /// is `@extensibility(APPENDABLE)` per XTypes v1.3 spec line 12466.
+    /// The inner `TypeObjectHashId` union discriminator (1 octet before the
+    /// 14-byte hash per spec line 12307) is still NOT emitted — pre-existing
+    /// HDDS<->spec divergence orthogonal to F29.
     #[test]
     fn typeid_strongly_connected_writes_ti_scc_discriminator() {
         let id = TypeIdentifier::StronglyConnected(
@@ -287,13 +308,15 @@ mod tests {
                 scc_index: 1,
             },
         );
-        let mut buf = [0u8; 32];
+        let mut buf = [0u8; 64];
         let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
         assert_eq!(buf[0], 0xB0);
         assert_eq!(
-            written, 24,
-            "SCC wire size must be exactly 24 bytes (1 discriminator + 14 hash + 1 pad + 2*4 i32)"
+            written, 32,
+            "SCC wire size must be exactly 32 bytes post-1.6.10i (1 disc + 3 pad + 4 DHEADER + 14 hash + 2 pad + 2*4 i32)"
         );
+        // DHEADER value = payload bytes (14 hash + 2 pad + 8 i32 = 24)
+        assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 24);
     }
 
     /// Sanity: every spec discriminator that the encoder emits is a valid
