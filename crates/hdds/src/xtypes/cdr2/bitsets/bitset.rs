@@ -23,20 +23,24 @@ use super::bitfield::{decode_complete_bitfield_internal, decode_minimal_bitfield
 // BitsetHeader CDR2 Encoding/Decoding
 // ============================================================================
 
+// Complete/MinimalBitsetHeader — `@extensibility(APPENDABLE)` per XTypes v1.3 spec lines 13321, 13327.
 impl Cdr2Encode for CompleteBitsetHeader {
     fn max_cdr2_size(&self) -> usize {
-        1 + 32 + self.detail.max_cdr2_size() // flag + optional TypeIdentifier + detail
+        // DHEADER (4 bytes + up to 3 pad) + payload (flag + optional TypeIdentifier + detail)
+        4 + 3 + 1 + 32 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        if let Some(ref base) = self.base_type {
-            encode_u8(1, dst, offset)?;
-            base.encode_cdr2_le_at(dst, offset)?;
-        } else {
-            encode_u8(0, dst, offset)?;
-        }
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            if let Some(ref base) = self.base_type {
+                encode_u8(1, dst, offset)?;
+                base.encode_cdr2_le_at(dst, offset)?;
+            } else {
+                encode_u8(0, dst, offset)?;
+            }
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -46,38 +50,41 @@ impl Cdr2Decode for CompleteBitsetHeader {
     }
 }
 
-/// Internal helper that tracks offset for CompleteBitsetHeader decoding
+/// Internal helper that tracks offset for CompleteBitsetHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_bitset_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteBitsetHeader, CdrError> {
-    // Decode base_type (Option<TypeIdentifier>)
-    let base_type_present = decode_u8(src, offset)?;
-    let base_type = if base_type_present == 1 {
-        Some(decode_type_identifier_internal(src, offset)?)
-    } else {
-        None
-    };
-
-    let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(CompleteBitsetHeader { base_type, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let base_type_present = decode_u8(src, offset)?;
+        let base_type = if base_type_present == 1 {
+            Some(decode_type_identifier_internal(src, offset)?)
+        } else {
+            None
+        };
+        let detail = CompleteTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteBitsetHeader { base_type, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalBitsetHeader {
     fn max_cdr2_size(&self) -> usize {
-        1 + 32 + self.detail.max_cdr2_size() // flag + optional TypeIdentifier + detail
+        // DHEADER (4 bytes + up to 3 pad) + payload (flag + optional TypeIdentifier + detail)
+        4 + 3 + 1 + 32 + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        if let Some(ref base) = self.base_type {
-            encode_u8(1, dst, offset)?;
-            base.encode_cdr2_le_at(dst, offset)?;
-        } else {
-            encode_u8(0, dst, offset)?;
-        }
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            if let Some(ref base) = self.base_type {
+                encode_u8(1, dst, offset)?;
+                base.encode_cdr2_le_at(dst, offset)?;
+            } else {
+                encode_u8(0, dst, offset)?;
+            }
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -87,23 +94,23 @@ impl Cdr2Decode for MinimalBitsetHeader {
     }
 }
 
-/// Internal helper that tracks offset for MinimalBitsetHeader decoding
+/// Internal helper that tracks offset for MinimalBitsetHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_bitset_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalBitsetHeader, CdrError> {
-    // Decode base_type (Option<TypeIdentifier>)
-    let base_type_present = decode_u8(src, offset)?;
-    let base_type = if base_type_present == 1 {
-        Some(decode_type_identifier_internal(src, offset)?)
-    } else {
-        None
-    };
-
-    // MinimalTypeDetail is empty, but decode it for consistency
-    let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(MinimalBitsetHeader { base_type, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let base_type_present = decode_u8(src, offset)?;
+        let base_type = if base_type_present == 1 {
+            Some(decode_type_identifier_internal(src, offset)?)
+        } else {
+            None
+        };
+        // MinimalTypeDetail is empty, but decode it for consistency
+        let detail = MinimalTypeDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalBitsetHeader { base_type, detail })
+    })
 }
 
 // ============================================================================

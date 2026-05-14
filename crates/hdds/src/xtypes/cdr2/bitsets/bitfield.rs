@@ -4,6 +4,7 @@
 //! Bitfield encoding for different bit widths.
 //!
 
+use super::super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::super::primitives::{decode_u16, decode_u8, encode_u16, encode_u8};
 use super::super::type_identifier::decode_type_identifier_internal;
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
@@ -61,15 +62,19 @@ pub(super) fn decode_common_bitfield_internal(
 // CompleteBitfield / MinimalBitfield CDR2 Encoding/Decoding
 // ============================================================================
 
+// Complete/MinimalBitfield — `@extensibility(APPENDABLE)` per XTypes v1.3 spec lines 13300, 13309.
 impl Cdr2Encode for CompleteBitfield {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -79,26 +84,31 @@ impl Cdr2Decode for CompleteBitfield {
     }
 }
 
-/// Internal helper that tracks offset for CompleteBitfield decoding
+/// Internal helper that tracks offset for CompleteBitfield decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_bitfield_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteBitfield, CdrError> {
-    let common = decode_common_bitfield_internal(src, offset)?;
-    let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(CompleteBitfield { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_bitfield_internal(src, offset)?;
+        let detail = CompleteMemberDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(CompleteBitfield { common, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalBitfield {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -108,13 +118,15 @@ impl Cdr2Decode for MinimalBitfield {
     }
 }
 
-/// Internal helper that tracks offset for MinimalBitfield decoding
+/// Internal helper that tracks offset for MinimalBitfield decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_bitfield_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalBitfield, CdrError> {
-    let common = decode_common_bitfield_internal(src, offset)?;
-    let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
-
-    Ok(MinimalBitfield { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_bitfield_internal(src, offset)?;
+        let detail = MinimalMemberDetail::decode_cdr2_le_at(src, offset)?;
+        Ok(MinimalBitfield { common, detail })
+    })
 }
