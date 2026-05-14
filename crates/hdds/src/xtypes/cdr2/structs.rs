@@ -8,6 +8,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.8.1 (Struct Types)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::members::{
     decode_complete_struct_member_internal, decode_minimal_struct_member_internal,
 };
@@ -24,15 +25,19 @@ use crate::xtypes::type_object::*;
 
 impl Cdr2Encode for CompleteStructHeader {
     fn max_cdr2_size(&self) -> usize {
-        32 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 32 + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
-            type_id.encode_cdr2_le_at(dst, offset)
-        })?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
+                type_id.encode_cdr2_le_at(dst, offset)
+            })?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -42,31 +47,37 @@ impl Cdr2Decode for CompleteStructHeader {
     }
 }
 
-/// Internal helper that tracks offset for CompleteStructHeader decoding
+/// Internal helper that tracks offset for CompleteStructHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_struct_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteStructHeader, CdrError> {
-    let base_type = decode_option(src, offset, |src, offset| {
-        decode_type_identifier_internal(src, offset)
-    })?;
-
-    let detail = super::helpers::decode_detail_with_reencoding::<CompleteTypeDetail>(src, offset)?;
-
-    Ok(CompleteStructHeader { base_type, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let base_type = decode_option(src, offset, |src, offset| {
+            decode_type_identifier_internal(src, offset)
+        })?;
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<CompleteTypeDetail>(src, offset)?;
+        Ok(CompleteStructHeader { base_type, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalStructHeader {
     fn max_cdr2_size(&self) -> usize {
-        32 + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + 32 + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
-            type_id.encode_cdr2_le_at(dst, offset)
-        })?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            encode_option(&self.base_type, dst, offset, |type_id, dst, offset| {
+                type_id.encode_cdr2_le_at(dst, offset)
+            })?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -76,19 +87,21 @@ impl Cdr2Decode for MinimalStructHeader {
     }
 }
 
-/// Internal helper that tracks offset for MinimalStructHeader decoding
+/// Internal helper that tracks offset for MinimalStructHeader decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_struct_header_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalStructHeader, CdrError> {
-    let base_type = decode_option(src, offset, |src, offset| {
-        decode_type_identifier_internal(src, offset)
-    })?;
-
-    // MinimalTypeDetail is empty (encodes as 0 bytes)
-    let detail = super::helpers::decode_detail_with_reencoding::<MinimalTypeDetail>(src, offset)?;
-
-    Ok(MinimalStructHeader { base_type, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let base_type = decode_option(src, offset, |src, offset| {
+            decode_type_identifier_internal(src, offset)
+        })?;
+        // MinimalTypeDetail is empty (encodes as 0 bytes)
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<MinimalTypeDetail>(src, offset)?;
+        Ok(MinimalStructHeader { base_type, detail })
+    })
 }
 
 // ============================================================================

@@ -9,6 +9,7 @@
 //! # References
 //! - XTypes v1.3 Spec: Section 7.3.4.7 (Member Definitions)
 
+use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
 use super::primitives::{decode_i32, decode_u16, decode_u32, encode_i32, encode_u16, encode_u32};
 use super::type_identifier::decode_type_identifier_internal;
@@ -66,13 +67,17 @@ pub(super) fn decode_common_struct_member_internal(
 
 impl Cdr2Encode for CompleteStructMember {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -82,27 +87,33 @@ impl Cdr2Decode for CompleteStructMember {
     }
 }
 
-/// Internal helper that tracks offset for CompleteStructMember decoding
+/// Internal helper that tracks offset for CompleteStructMember decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_complete_struct_member_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<CompleteStructMember, CdrError> {
-    let common = decode_common_struct_member_internal(src, offset)?;
-    let detail =
-        super::helpers::decode_detail_with_reencoding::<CompleteMemberDetail>(src, offset)?;
-
-    Ok(CompleteStructMember { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_struct_member_internal(src, offset)?;
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<CompleteMemberDetail>(src, offset)?;
+        Ok(CompleteStructMember { common, detail })
+    })
 }
 
 impl Cdr2Encode for MinimalStructMember {
     fn max_cdr2_size(&self) -> usize {
-        self.common.max_cdr2_size() + self.detail.max_cdr2_size()
+        // DHEADER (4 bytes + up to 3 pad) + payload
+        4 + 3 + self.common.max_cdr2_size() + self.detail.max_cdr2_size()
     }
 
+    /// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
-        self.common.encode_cdr2_le_at(dst, offset)?;
-        self.detail.encode_cdr2_le_at(dst, offset)?;
-        Ok(())
+        encode_dheader_at(dst, offset, |dst, offset| {
+            self.common.encode_cdr2_le_at(dst, offset)?;
+            self.detail.encode_cdr2_le_at(dst, offset)?;
+            Ok(())
+        })
     }
 }
 
@@ -112,15 +123,18 @@ impl Cdr2Decode for MinimalStructMember {
     }
 }
 
-/// Internal helper that tracks offset for MinimalStructMember decoding
+/// Internal helper that tracks offset for MinimalStructMember decoding.
+/// `@extensibility(APPENDABLE)` per XTypes v1.3 Sec.7.4.3.4 rule (30).
 pub(super) fn decode_minimal_struct_member_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<MinimalStructMember, CdrError> {
-    let common = decode_common_struct_member_internal(src, offset)?;
-    let detail = super::helpers::decode_detail_with_reencoding::<MinimalMemberDetail>(src, offset)?;
-
-    Ok(MinimalStructMember { common, detail })
+    decode_dheader_at(src, offset, |src, offset| {
+        let common = decode_common_struct_member_internal(src, offset)?;
+        let detail =
+            super::helpers::decode_detail_with_reencoding::<MinimalMemberDetail>(src, offset)?;
+        Ok(MinimalStructMember { common, detail })
+    })
 }
 
 // ============================================================================
