@@ -18,8 +18,11 @@
 //! octet IS the `TypeKind` value with no additional payload.
 //!
 //! `TI_PLAIN_SEQUENCE_*`, `TI_PLAIN_ARRAY_*` and `TI_PLAIN_MAP_*` are
-//! intentionally omitted from this module — the corresponding
-//! `TypeIdentifier` variants are not yet modelled on the Rust side.
+//! also declared below — the corresponding `TypeIdentifier` variants
+//! landed in chantier 1.7d so HDDS can now decode the plain-collection
+//! discriminators (0x80, 0x81, 0x90, 0x91, 0xA0, 0xA1) that Fast DDS
+//! and RTI Connext emit for `sequence`, fixed-size array, and `map`
+//! types.
 
 #![allow(dead_code)]
 
@@ -52,6 +55,30 @@ pub(crate) const TI_STRING16_SMALL: u8 = 0x72;
 /// unbounded (DDS-XTypes v1.3 §7.3.4.4 IDL).
 pub(crate) const TI_STRING16_LARGE: u8 = 0x73;
 
+/// `TI_PLAIN_SEQUENCE_SMALL` — plain `sequence<T, bound>` with
+/// `bound <= 255` (DDS-XTypes v1.3 §7.3.4.4 IDL).
+pub(crate) const TI_PLAIN_SEQUENCE_SMALL: u8 = 0x80;
+
+/// `TI_PLAIN_SEQUENCE_LARGE` — plain `sequence<T, bound>` with
+/// `bound > 255` or unbounded (DDS-XTypes v1.3 §7.3.4.4 IDL).
+pub(crate) const TI_PLAIN_SEQUENCE_LARGE: u8 = 0x81;
+
+/// `TI_PLAIN_ARRAY_SMALL` — plain `T[dim1][...][dimN]` with all bounds
+/// `<= 255` (DDS-XTypes v1.3 §7.3.4.4 IDL).
+pub(crate) const TI_PLAIN_ARRAY_SMALL: u8 = 0x90;
+
+/// `TI_PLAIN_ARRAY_LARGE` — plain `T[dim1][...][dimN]` with any bound
+/// `> 255` (DDS-XTypes v1.3 §7.3.4.4 IDL).
+pub(crate) const TI_PLAIN_ARRAY_LARGE: u8 = 0x91;
+
+/// `TI_PLAIN_MAP_SMALL` — plain `map<K, V, bound>` with `bound <= 255`
+/// (DDS-XTypes v1.3 §7.3.4.4 IDL).
+pub(crate) const TI_PLAIN_MAP_SMALL: u8 = 0xA0;
+
+/// `TI_PLAIN_MAP_LARGE` — plain `map<K, V, bound>` with `bound > 255`
+/// or unbounded (DDS-XTypes v1.3 §7.3.4.4 IDL).
+pub(crate) const TI_PLAIN_MAP_LARGE: u8 = 0xA1;
+
 /// `TI_STRONGLY_CONNECTED_COMPONENT` — TypeIdentifier discriminator for
 /// recursive type cycles (DDS-XTypes v1.3 §7.3.4.4 IDL + §7.3.4.11).
 pub(crate) const TI_STRONGLY_CONNECTED_COMPONENT: u8 = 0xB0;
@@ -73,6 +100,12 @@ mod tests {
         assert_eq!(TI_STRING8_LARGE, 0x71);
         assert_eq!(TI_STRING16_SMALL, 0x72);
         assert_eq!(TI_STRING16_LARGE, 0x73);
+        assert_eq!(TI_PLAIN_SEQUENCE_SMALL, 0x80);
+        assert_eq!(TI_PLAIN_SEQUENCE_LARGE, 0x81);
+        assert_eq!(TI_PLAIN_ARRAY_SMALL, 0x90);
+        assert_eq!(TI_PLAIN_ARRAY_LARGE, 0x91);
+        assert_eq!(TI_PLAIN_MAP_SMALL, 0xA0);
+        assert_eq!(TI_PLAIN_MAP_LARGE, 0xA1);
         assert_eq!(TI_STRONGLY_CONNECTED_COMPONENT, 0xB0);
     }
 }

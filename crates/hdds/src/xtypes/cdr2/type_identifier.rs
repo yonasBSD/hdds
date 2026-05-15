@@ -10,13 +10,123 @@
 //! - XTypes v1.3 Spec: Section 7.3.4.4 (TypeIdentifier)
 
 use super::dheader::{decode_dheader_at, encode_dheader_at};
-use super::primitives::{decode_i32, decode_u32, decode_u8, encode_i32, encode_u32, encode_u8};
+use super::primitives::{
+    decode_i32, decode_u16, decode_u32, decode_u8, encode_i32, encode_u16, encode_u32, encode_u8,
+};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 use crate::xtypes::discriminators::{
-    EK_COMPLETE, EK_MINIMAL, TI_STRING16_LARGE, TI_STRING16_SMALL, TI_STRING8_LARGE,
-    TI_STRING8_SMALL, TI_STRONGLY_CONNECTED_COMPONENT,
+    EK_COMPLETE, EK_MINIMAL, TI_PLAIN_ARRAY_LARGE, TI_PLAIN_ARRAY_SMALL, TI_PLAIN_MAP_LARGE,
+    TI_PLAIN_MAP_SMALL, TI_PLAIN_SEQUENCE_LARGE, TI_PLAIN_SEQUENCE_SMALL, TI_STRING16_LARGE,
+    TI_STRING16_SMALL, TI_STRING8_LARGE, TI_STRING8_SMALL, TI_STRONGLY_CONNECTED_COMPONENT,
 };
-use crate::xtypes::{TypeIdentifier, TypeKind};
+use crate::xtypes::type_id::{
+    PlainArrayLElemDefn, PlainArraySElemDefn, PlainCollectionHeader, PlainMapLTypeDefn,
+    PlainMapSTypeDefn, PlainSequenceLElemDefn, PlainSequenceSElemDefn,
+};
+use crate::xtypes::type_object::CollectionElementFlag;
+use crate::xtypes::{EquivalenceKind, TypeIdentifier, TypeKind};
+
+/// Encode a `PlainCollectionHeader` (XTypes v1.3 §7.3.4.4 IDL):
+///   `equiv_kind: octet` followed by `element_flags: CollectionElementFlag (u16)`.
+///
+/// `equiv_kind` is a `typedef octet EquivalenceKind;` (spec line 12181) whose
+/// valid wire values are the `EK_MINIMAL = 0xF1` / `EK_COMPLETE = 0xF2`
+/// constants. HDDS's internal `EquivalenceKind` enum uses 0x10 / 0x20 in
+/// memory for back-compat with the type system, but the wire bytes are
+/// always the spec EK_* constants — see
+/// `ADR-CHANTIER-1.6-AUDIT-RESPONSE.md` §10.24 for the divergence note.
+fn encode_plain_collection_header(
+    header: &PlainCollectionHeader,
+    dst: &mut [u8],
+    offset: &mut usize,
+) -> Result<(), CdrError> {
+    let equiv_byte = match header.equiv_kind {
+        EquivalenceKind::Minimal => EK_MINIMAL,
+        EquivalenceKind::Complete => EK_COMPLETE,
+    };
+    encode_u8(equiv_byte, dst, offset)?;
+    encode_u16(header.element_flags.0, dst, offset)?;
+    Ok(())
+}
+
+/// Decode a `PlainCollectionHeader`. Symmetric with
+/// [`encode_plain_collection_header`]: accepts only the spec `EK_MINIMAL`
+/// (0xF1) / `EK_COMPLETE` (0xF2) wire bytes for `equiv_kind`.
+fn decode_plain_collection_header(
+    src: &[u8],
+    offset: &mut usize,
+) -> Result<PlainCollectionHeader, CdrError> {
+    let equiv_byte = decode_u8(src, offset)?;
+    let equiv_kind = match equiv_byte {
+        EK_MINIMAL => EquivalenceKind::Minimal,
+        EK_COMPLETE => EquivalenceKind::Complete,
+        other => {
+            return Err(CdrError::Other(format!(
+                "PlainCollectionHeader.equiv_kind must be EK_MINIMAL (0xF1) \
+                 or EK_COMPLETE (0xF2) per XTypes v1.3 §7.3.4.4 IDL, got 0x{:02X}",
+                other
+            )));
+        }
+    };
+    let element_flags = CollectionElementFlag(decode_u16(src, offset)?);
+    Ok(PlainCollectionHeader {
+        equiv_kind,
+        element_flags,
+    })
+}
+
+/// Encode a `sequence<u8>` (`SBoundSeq`) per OMG CDR2: u32 length + raw bytes.
+fn encode_sbound_seq(seq: &[u8], dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
+    let len = u32::try_from(seq.len())
+        .map_err(|_| CdrError::Other("SBoundSeq length exceeds u32::MAX".into()))?;
+    encode_u32(len, dst, offset)?;
+    if *offset + seq.len() > dst.len() {
+        return Err(CdrError::BufferTooSmall);
+    }
+    dst[*offset..*offset + seq.len()].copy_from_slice(seq);
+    *offset += seq.len();
+    Ok(())
+}
+
+/// Decode a `sequence<u8>` (`SBoundSeq`).
+fn decode_sbound_seq(src: &[u8], offset: &mut usize) -> Result<Vec<u8>, CdrError> {
+    let len = decode_u32(src, offset)? as usize;
+    if *offset + len > src.len() {
+        return Err(CdrError::UnexpectedEof);
+    }
+    let out = src[*offset..*offset + len].to_vec();
+    *offset += len;
+    Ok(out)
+}
+
+/// Encode a `sequence<u32>` (`LBoundSeq`) per OMG CDR2: u32 length + u32 elements.
+fn encode_lbound_seq(seq: &[u32], dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
+    let len = u32::try_from(seq.len())
+        .map_err(|_| CdrError::Other("LBoundSeq length exceeds u32::MAX".into()))?;
+    encode_u32(len, dst, offset)?;
+    for v in seq {
+        encode_u32(*v, dst, offset)?;
+    }
+    Ok(())
+}
+
+/// Decode a `sequence<u32>` (`LBoundSeq`). The length is sanity-checked
+/// against the remaining input so a crafted `len = u32::MAX` cannot
+/// pre-allocate a multi-GB `Vec`.
+fn decode_lbound_seq(src: &[u8], offset: &mut usize) -> Result<Vec<u32>, CdrError> {
+    let len = decode_u32(src, offset)? as usize;
+    let remaining = src.len().saturating_sub(*offset);
+    // Each element is at least 4 bytes (aligned u32). Reject up front when
+    // the declared length cannot fit in the remaining buffer.
+    if len > remaining / 4 {
+        return Err(CdrError::UnexpectedEof);
+    }
+    let mut out = Vec::with_capacity(len);
+    for _ in 0..len {
+        out.push(decode_u32(src, offset)?);
+    }
+    Ok(out)
+}
 
 // ============================================================================
 // TypeIdentifier CDR2 Encoding/Decoding
@@ -24,9 +134,20 @@ use crate::xtypes::{TypeIdentifier, TypeKind};
 
 impl Cdr2Encode for TypeIdentifier {
     fn max_cdr2_size(&self) -> usize {
-        // Discriminator (1) + worst case `StronglyConnected` payload
-        // (14-byte hash + two i32 fields = 22 bytes) + slack.
-        32
+        // Conservative upper bound covering all variants:
+        //   - Primitive / String*: 1..8 bytes
+        //   - Minimal / Complete: 1 + 14 = 15 bytes
+        //   - StronglyConnected: 32 bytes (see test at line locked below)
+        //   - PlainSequence*: 1 + header(4) + bound(1..4) + nested TypeId
+        //   - PlainArray*: 1 + header(4) + bound_seq(4 + N*1..4) + nested TypeId
+        //   - PlainMap*: 1 + header(4) + bound(1..4) + nested + key_flags(2)
+        //                + nested key TypeId
+        //
+        // Plain-collection variants are recursive; this constant covers
+        // up to ~8 levels of nesting with primitive leaves. Callers
+        // serializing deeply nested types should size their buffer with
+        // `encode_cdr2_le_at` failure as the signal to retry larger.
+        256
     }
 
     /// Wire encoding per OMG DDS-XTypes v1.3 §7.3.4.4.
@@ -72,6 +193,46 @@ impl Cdr2Encode for TypeIdentifier {
                 dst[*offset..*offset + 14].copy_from_slice(hash.as_bytes());
                 *offset += 14;
             }
+            TypeIdentifier::PlainSequenceSmall(sd) => {
+                encode_u8(TI_PLAIN_SEQUENCE_SMALL, dst, offset)?;
+                encode_plain_collection_header(&sd.header, dst, offset)?;
+                encode_u8(sd.bound, dst, offset)?;
+                sd.element_identifier.encode_cdr2_le_at(dst, offset)?;
+            }
+            TypeIdentifier::PlainSequenceLarge(ld) => {
+                encode_u8(TI_PLAIN_SEQUENCE_LARGE, dst, offset)?;
+                encode_plain_collection_header(&ld.header, dst, offset)?;
+                encode_u32(ld.bound, dst, offset)?;
+                ld.element_identifier.encode_cdr2_le_at(dst, offset)?;
+            }
+            TypeIdentifier::PlainArraySmall(sd) => {
+                encode_u8(TI_PLAIN_ARRAY_SMALL, dst, offset)?;
+                encode_plain_collection_header(&sd.header, dst, offset)?;
+                encode_sbound_seq(&sd.array_bound_seq, dst, offset)?;
+                sd.element_identifier.encode_cdr2_le_at(dst, offset)?;
+            }
+            TypeIdentifier::PlainArrayLarge(ld) => {
+                encode_u8(TI_PLAIN_ARRAY_LARGE, dst, offset)?;
+                encode_plain_collection_header(&ld.header, dst, offset)?;
+                encode_lbound_seq(&ld.array_bound_seq, dst, offset)?;
+                ld.element_identifier.encode_cdr2_le_at(dst, offset)?;
+            }
+            TypeIdentifier::PlainMapSmall(sd) => {
+                encode_u8(TI_PLAIN_MAP_SMALL, dst, offset)?;
+                encode_plain_collection_header(&sd.header, dst, offset)?;
+                encode_u8(sd.bound, dst, offset)?;
+                sd.element_identifier.encode_cdr2_le_at(dst, offset)?;
+                encode_u16(sd.key_flags.0, dst, offset)?;
+                sd.key_identifier.encode_cdr2_le_at(dst, offset)?;
+            }
+            TypeIdentifier::PlainMapLarge(ld) => {
+                encode_u8(TI_PLAIN_MAP_LARGE, dst, offset)?;
+                encode_plain_collection_header(&ld.header, dst, offset)?;
+                encode_u32(ld.bound, dst, offset)?;
+                ld.element_identifier.encode_cdr2_le_at(dst, offset)?;
+                encode_u16(ld.key_flags.0, dst, offset)?;
+                ld.key_identifier.encode_cdr2_le_at(dst, offset)?;
+            }
             TypeIdentifier::StronglyConnected(sc) => {
                 encode_u8(TI_STRONGLY_CONNECTED_COMPONENT, dst, offset)?;
                 // `StronglyConnectedComponentId` is `@extensibility(APPENDABLE) @nested`
@@ -108,6 +269,16 @@ impl Cdr2Decode for TypeIdentifier {
     }
 }
 
+/// Maximum nesting depth accepted by [`decode_type_identifier_internal`].
+///
+/// Plain-collection TypeIdentifiers carry recursive `Box<TypeIdentifier>`
+/// payloads. A crafted peer message could otherwise nest thousands of
+/// `PlainSequence<PlainSequence<...>>` layers and blow the parser stack.
+/// 32 levels is comfortably above any legitimate IDL — Fast DDS and RTI
+/// Connext capture nested types in the single-digit range — and well
+/// inside the default Rust stack budget.
+const MAX_TYPE_IDENTIFIER_DEPTH: usize = 32;
+
 /// Wire decoding of a `TypeIdentifier` per OMG DDS-XTypes v1.3 §7.3.4.4.
 ///
 /// Symmetric with [`Cdr2Encode::encode_cdr2_le`]: the discriminator octet
@@ -119,10 +290,27 @@ impl Cdr2Decode for TypeIdentifier {
 /// Bytes outside the spec discriminator set surface as `CdrError::Other`.
 /// In particular, `EK_BOTH` (0xF3) is not currently emitted by HDDS and is
 /// rejected here rather than silently aliased to `Minimal` or `Complete`.
+///
+/// Recursive plain-collection TypeIdentifiers are bounded by
+/// [`MAX_TYPE_IDENTIFIER_DEPTH`] to prevent stack-overflow attacks.
 pub(super) fn decode_type_identifier_internal(
     src: &[u8],
     offset: &mut usize,
 ) -> Result<TypeIdentifier, CdrError> {
+    decode_type_identifier_with_depth(src, offset, 0)
+}
+
+fn decode_type_identifier_with_depth(
+    src: &[u8],
+    offset: &mut usize,
+    depth: usize,
+) -> Result<TypeIdentifier, CdrError> {
+    if depth >= MAX_TYPE_IDENTIFIER_DEPTH {
+        return Err(CdrError::Other(format!(
+            "TypeIdentifier nesting depth exceeds MAX_TYPE_IDENTIFIER_DEPTH ({})",
+            MAX_TYPE_IDENTIFIER_DEPTH
+        )));
+    }
     let discriminator = decode_u8(src, offset)?;
 
     match discriminator {
@@ -157,6 +345,88 @@ pub(super) fn decode_type_identifier_internal(
         TI_STRING16_LARGE => {
             let bound = decode_u32(src, offset)?;
             Ok(TypeIdentifier::WStringLarge { bound })
+        }
+        // §7.3.4.4: `case TI_PLAIN_SEQUENCE_SMALL: PlainSequenceSElemDefn seq_sdefn;`
+        TI_PLAIN_SEQUENCE_SMALL => {
+            let header = decode_plain_collection_header(src, offset)?;
+            let bound = decode_u8(src, offset)?;
+            let element_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            Ok(TypeIdentifier::PlainSequenceSmall(PlainSequenceSElemDefn {
+                header,
+                bound,
+                element_identifier,
+            }))
+        }
+        // §7.3.4.4: `case TI_PLAIN_SEQUENCE_LARGE: PlainSequenceLElemDefn seq_ldefn;`
+        TI_PLAIN_SEQUENCE_LARGE => {
+            let header = decode_plain_collection_header(src, offset)?;
+            let bound = decode_u32(src, offset)?;
+            let element_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            Ok(TypeIdentifier::PlainSequenceLarge(PlainSequenceLElemDefn {
+                header,
+                bound,
+                element_identifier,
+            }))
+        }
+        // §7.3.4.4: `case TI_PLAIN_ARRAY_SMALL: PlainArraySElemDefn array_sdefn;`
+        TI_PLAIN_ARRAY_SMALL => {
+            let header = decode_plain_collection_header(src, offset)?;
+            let array_bound_seq = decode_sbound_seq(src, offset)?;
+            let element_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            Ok(TypeIdentifier::PlainArraySmall(PlainArraySElemDefn {
+                header,
+                array_bound_seq,
+                element_identifier,
+            }))
+        }
+        // §7.3.4.4: `case TI_PLAIN_ARRAY_LARGE: PlainArrayLElemDefn array_ldefn;`
+        TI_PLAIN_ARRAY_LARGE => {
+            let header = decode_plain_collection_header(src, offset)?;
+            let array_bound_seq = decode_lbound_seq(src, offset)?;
+            let element_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            Ok(TypeIdentifier::PlainArrayLarge(PlainArrayLElemDefn {
+                header,
+                array_bound_seq,
+                element_identifier,
+            }))
+        }
+        // §7.3.4.4: `case TI_PLAIN_MAP_SMALL: PlainMapSTypeDefn map_sdefn;`
+        TI_PLAIN_MAP_SMALL => {
+            let header = decode_plain_collection_header(src, offset)?;
+            let bound = decode_u8(src, offset)?;
+            let element_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            let key_flags = CollectionElementFlag(decode_u16(src, offset)?);
+            let key_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            Ok(TypeIdentifier::PlainMapSmall(PlainMapSTypeDefn {
+                header,
+                bound,
+                element_identifier,
+                key_flags,
+                key_identifier,
+            }))
+        }
+        // §7.3.4.4: `case TI_PLAIN_MAP_LARGE: PlainMapLTypeDefn map_ldefn;`
+        TI_PLAIN_MAP_LARGE => {
+            let header = decode_plain_collection_header(src, offset)?;
+            let bound = decode_u32(src, offset)?;
+            let element_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            let key_flags = CollectionElementFlag(decode_u16(src, offset)?);
+            let key_identifier =
+                Box::new(decode_type_identifier_with_depth(src, offset, depth + 1)?);
+            Ok(TypeIdentifier::PlainMapLarge(PlainMapLTypeDefn {
+                header,
+                bound,
+                element_identifier,
+                key_flags,
+                key_identifier,
+            }))
         }
         // §7.3.4.4: `case TI_STRONGLY_CONNECTED_COMPONENT:
         //               StronglyConnectedComponentId sc_component_id;`
@@ -548,6 +818,235 @@ mod tests {
                 byte,
                 result
             );
+        }
+    }
+
+    /// Build a representative `PlainCollectionHeader` for the tests below.
+    fn sample_header() -> PlainCollectionHeader {
+        PlainCollectionHeader {
+            equiv_kind: EquivalenceKind::Minimal,
+            element_flags: CollectionElementFlag(0x0040),
+        }
+    }
+
+    #[test]
+    fn typeid_plain_sequence_small_writes_disc_0x80_and_round_trips() {
+        let id = TypeIdentifier::PlainSequenceSmall(PlainSequenceSElemDefn {
+            header: sample_header(),
+            bound: 32,
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_INT32)),
+        });
+        let mut buf = [0u8; 64];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0x80);
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn typeid_plain_sequence_large_writes_disc_0x81_and_round_trips() {
+        let id = TypeIdentifier::PlainSequenceLarge(PlainSequenceLElemDefn {
+            header: sample_header(),
+            bound: 0, // unbounded
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_FLOAT64)),
+        });
+        let mut buf = [0u8; 64];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0x81);
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn typeid_plain_array_small_writes_disc_0x90_and_round_trips() {
+        let id = TypeIdentifier::PlainArraySmall(PlainArraySElemDefn {
+            header: sample_header(),
+            array_bound_seq: vec![3, 4, 5],
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_INT16)),
+        });
+        let mut buf = [0u8; 64];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0x90);
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn typeid_plain_array_large_writes_disc_0x91_and_round_trips() {
+        let id = TypeIdentifier::PlainArrayLarge(PlainArrayLElemDefn {
+            header: sample_header(),
+            array_bound_seq: vec![1024, 2048],
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_UINT64)),
+        });
+        let mut buf = [0u8; 64];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0x91);
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn typeid_plain_map_small_writes_disc_0xa0_and_round_trips() {
+        let id = TypeIdentifier::PlainMapSmall(PlainMapSTypeDefn {
+            header: sample_header(),
+            bound: 16,
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_INT32)),
+            key_flags: CollectionElementFlag(0x0040),
+            key_identifier: Box::new(TypeIdentifier::StringSmall { bound: 32 }),
+        });
+        let mut buf = [0u8; 64];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0xA0);
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, id);
+    }
+
+    #[test]
+    fn typeid_plain_map_large_writes_disc_0xa1_and_round_trips() {
+        let id = TypeIdentifier::PlainMapLarge(PlainMapLTypeDefn {
+            header: sample_header(),
+            bound: 4096,
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_FLOAT32)),
+            key_flags: CollectionElementFlag(0x0040),
+            key_identifier: Box::new(TypeIdentifier::StringLarge { bound: 4096 }),
+        });
+        let mut buf = [0u8; 64];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        assert_eq!(buf[0], 0xA1);
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, id);
+    }
+
+    /// Recursive plain TypeIdentifier — `sequence<sequence<int32, 16>, 32>`.
+    /// Exercises the nested `encode_cdr2_le_at` / `decode_cdr2_le_at` path
+    /// on the `Box<TypeIdentifier>` element fields.
+    #[test]
+    fn typeid_plain_sequence_of_sequence_round_trips() {
+        let inner = TypeIdentifier::PlainSequenceSmall(PlainSequenceSElemDefn {
+            header: sample_header(),
+            bound: 16,
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_INT32)),
+        });
+        let outer = TypeIdentifier::PlainSequenceSmall(PlainSequenceSElemDefn {
+            header: sample_header(),
+            bound: 32,
+            element_identifier: Box::new(inner),
+        });
+        let mut buf = [0u8; 64];
+        let written = outer.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        let (decoded, consumed) = TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, outer);
+    }
+
+    /// The decoder must reject `PlainCollectionHeader.equiv_kind` bytes that
+    /// are not `EK_MINIMAL` (0xF1) or `EK_COMPLETE` (0xF2) per XTypes v1.3
+    /// §7.3.4.4 IDL (`typedef octet EquivalenceKind;`). The error message
+    /// carries the offending byte for debugging.
+    #[test]
+    fn typeid_plain_sequence_rejects_invalid_equiv_kind() {
+        // Encode a valid PlainSequenceSmall then corrupt the equiv_kind byte
+        // (offset 1, right after the TI discriminator).
+        let id = TypeIdentifier::PlainSequenceSmall(PlainSequenceSElemDefn {
+            header: sample_header(),
+            bound: 8,
+            element_identifier: Box::new(TypeIdentifier::Primitive(TypeKind::TK_INT32)),
+        });
+        let mut buf = [0u8; 32];
+        let written = id.encode_cdr2_le(&mut buf).expect("encode succeeds");
+        // Sanity-check that the encoder emits the spec EK_MINIMAL byte
+        // (0xF1), not the in-memory EquivalenceKind::Minimal value (0x10).
+        assert_eq!(buf[1], 0xF1, "equiv_kind must be EK_MINIMAL (0xF1)");
+        buf[1] = 0xAB; // stray equiv_kind byte
+        match TypeIdentifier::decode_cdr2_le(&buf[..written]) {
+            Err(CdrError::Other(msg)) => assert!(
+                msg.contains("0xAB"),
+                "error should mention the bad equiv_kind byte 0xAB, got: {msg}"
+            ),
+            other => panic!(
+                "expected CdrError::Other for stray equiv_kind, got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Build a payload nesting `PlainSequenceSmall` `depth` levels deep
+    /// over a primitive leaf, used to exercise the recursion-depth guard.
+    fn build_nested_plain_sequence(depth: usize) -> TypeIdentifier {
+        let mut current = TypeIdentifier::Primitive(TypeKind::TK_INT32);
+        for _ in 0..depth {
+            current = TypeIdentifier::PlainSequenceSmall(PlainSequenceSElemDefn {
+                header: sample_header(),
+                bound: 1,
+                element_identifier: Box::new(current),
+            });
+        }
+        current
+    }
+
+    /// The decoder must reject crafted payloads that nest more than
+    /// `MAX_TYPE_IDENTIFIER_DEPTH` levels of `PlainSequence` (or other
+    /// recursive Plain* variants) to prevent stack-overflow DoS via
+    /// unbounded recursion.
+    #[test]
+    fn typeid_decoder_rejects_recursion_bomb() {
+        let bomb = build_nested_plain_sequence(MAX_TYPE_IDENTIFIER_DEPTH + 1);
+        let mut buf = vec![0u8; 4096];
+        let written = bomb
+            .encode_cdr2_le(&mut buf)
+            .expect("deep nesting still encodable");
+        match TypeIdentifier::decode_cdr2_le(&buf[..written]) {
+            Err(CdrError::Other(msg)) => assert!(
+                msg.contains("depth") || msg.contains("MAX_TYPE_IDENTIFIER_DEPTH"),
+                "depth-limit error should mention 'depth', got: {msg}"
+            ),
+            other => panic!(
+                "expected CdrError::Other (depth limit) on recursion bomb, got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Nesting exactly at `MAX_TYPE_IDENTIFIER_DEPTH - 1` must still
+    /// round-trip cleanly so the guard does not impose an over-tight
+    /// limit on legitimate but deeply nested types.
+    #[test]
+    fn typeid_decoder_accepts_max_depth_minus_one() {
+        let deep = build_nested_plain_sequence(MAX_TYPE_IDENTIFIER_DEPTH - 1);
+        let mut buf = vec![0u8; 4096];
+        let written = deep.encode_cdr2_le(&mut buf).expect("encode");
+        let (decoded, consumed) =
+            TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode within limit");
+        assert_eq!(consumed, written);
+        assert_eq!(decoded, deep);
+    }
+
+    /// A crafted `TI_PLAIN_ARRAY_LARGE` payload that declares a
+    /// `LBoundSeq.length` far exceeding the available bytes must be
+    /// rejected before the decoder tries to pre-allocate a multi-GB
+    /// `Vec<u32>`.
+    #[test]
+    fn typeid_plain_array_large_rejects_bogus_lbound_seq_length() {
+        let mut buf = vec![0u8; 32];
+        let mut offset = 0;
+        encode_u8(TI_PLAIN_ARRAY_LARGE, &mut buf, &mut offset).unwrap();
+        encode_u8(EK_MINIMAL, &mut buf, &mut offset).unwrap();
+        encode_u16(0x0040, &mut buf, &mut offset).unwrap();
+        // Declare a billion-element bound seq with no elements actually present.
+        encode_u32(1_000_000_000, &mut buf, &mut offset).unwrap();
+        let written = offset;
+        match TypeIdentifier::decode_cdr2_le(&buf[..written]) {
+            Err(CdrError::UnexpectedEof) => {}
+            other => panic!(
+                "expected UnexpectedEof for bogus LBoundSeq length, got {:?}",
+                other
+            ),
         }
     }
 }

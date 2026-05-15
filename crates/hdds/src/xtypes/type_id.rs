@@ -69,6 +69,95 @@ pub struct StronglyConnectedComponentId {
     pub scc_index: i32,
 }
 
+/// Plain-collection element header per OMG DDS-XTypes v1.3 §7.3.4.4 IDL
+/// (`PlainCollectionHeader`). Carries the equivalence kind that selects
+/// between Minimal and Complete hashes for the contained TypeIdentifiers,
+/// plus the per-element collection flags.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PlainCollectionHeader {
+    /// Minimal vs Complete equivalence for the collection's element /
+    /// key TypeIdentifiers (XTypes v1.3 §7.3.4.6.5 / §7.3.4.6.6).
+    pub equiv_kind: EquivalenceKind,
+    /// Per-element collection flags (`CollectionElementFlag`, u16). See
+    /// `crate::xtypes::type_object::CollectionElementFlag` for
+    /// the bit definitions.
+    pub element_flags: crate::xtypes::type_object::CollectionElementFlag,
+}
+
+/// `PlainSequenceSElemDefn` per OMG DDS-XTypes v1.3 §7.3.4.4 IDL:
+/// `sequence<element, bound>` whose `bound` fits in an `SBound` (`u8`).
+/// Element identifier is `@external` in the IDL; on the wire this is
+/// just the inner TypeIdentifier serialized in place.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlainSequenceSElemDefn {
+    pub header: PlainCollectionHeader,
+    /// `SBound` — maximum number of elements (1..=255).
+    pub bound: u8,
+    pub element_identifier: Box<TypeIdentifier>,
+}
+
+/// `PlainSequenceLElemDefn` per OMG DDS-XTypes v1.3 §7.3.4.4 IDL:
+/// `sequence<element, bound>` whose `bound` is an `LBound` (`u32`),
+/// typically used when the bound exceeds 255 or for unbounded
+/// sequences encoded with `bound == 0`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlainSequenceLElemDefn {
+    pub header: PlainCollectionHeader,
+    /// `LBound` — maximum number of elements; `0` denotes unbounded.
+    pub bound: u32,
+    pub element_identifier: Box<TypeIdentifier>,
+}
+
+/// `PlainArraySElemDefn` per OMG DDS-XTypes v1.3 §7.3.4.4 IDL: fixed
+/// array `element[dim1][dim2]...[dimN]` whose dimensions all fit in
+/// `SBound` (`u8`). Use [`PlainArrayLElemDefn`] when any dimension
+/// exceeds 255.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlainArraySElemDefn {
+    pub header: PlainCollectionHeader,
+    /// `SBoundSeq` — dimensions of the multi-dimensional array
+    /// (1..=255 each).
+    pub array_bound_seq: Vec<u8>,
+    pub element_identifier: Box<TypeIdentifier>,
+}
+
+/// `PlainArrayLElemDefn` per OMG DDS-XTypes v1.3 §7.3.4.4 IDL: fixed
+/// array `element[dim1][dim2]...[dimN]` whose dimensions are `LBound`
+/// (`u32`).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlainArrayLElemDefn {
+    pub header: PlainCollectionHeader,
+    /// `LBoundSeq` — dimensions of the multi-dimensional array.
+    pub array_bound_seq: Vec<u32>,
+    pub element_identifier: Box<TypeIdentifier>,
+}
+
+/// `PlainMapSTypeDefn` per OMG DDS-XTypes v1.3 §7.3.4.4 IDL:
+/// `map<key, element, bound>` whose `bound` fits in an `SBound`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlainMapSTypeDefn {
+    pub header: PlainCollectionHeader,
+    /// `SBound` — maximum number of entries (1..=255).
+    pub bound: u8,
+    pub element_identifier: Box<TypeIdentifier>,
+    /// Per-key flags (`CollectionElementFlag`). Mirrors the element
+    /// flags but applies to the key TypeIdentifier.
+    pub key_flags: crate::xtypes::type_object::CollectionElementFlag,
+    pub key_identifier: Box<TypeIdentifier>,
+}
+
+/// `PlainMapLTypeDefn` per OMG DDS-XTypes v1.3 §7.3.4.4 IDL:
+/// `map<key, element, bound>` whose `bound` is an `LBound`.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PlainMapLTypeDefn {
+    pub header: PlainCollectionHeader,
+    /// `LBound` — maximum number of entries; `0` denotes unbounded.
+    pub bound: u32,
+    pub element_identifier: Box<TypeIdentifier>,
+    pub key_flags: crate::xtypes::type_object::CollectionElementFlag,
+    pub key_identifier: Box<TypeIdentifier>,
+}
+
 /// TypeIdentifier - uniquely identifies a DDS type
 ///
 /// Per DDS-XTypes v1.3 spec section 7.3.4:
@@ -156,10 +245,34 @@ pub enum TypeIdentifier {
     /// };
     /// ```
     StronglyConnected(StronglyConnectedComponentId),
+
+    /// Plain `sequence<T, bound>` with `bound <= 255`
+    /// (DDS-XTypes v1.3 §7.3.4.4 — `TI_PLAIN_SEQUENCE_SMALL = 0x80`).
+    PlainSequenceSmall(PlainSequenceSElemDefn),
+
+    /// Plain `sequence<T, bound>` with `bound > 255` or unbounded
+    /// (DDS-XTypes v1.3 §7.3.4.4 — `TI_PLAIN_SEQUENCE_LARGE = 0x81`).
+    PlainSequenceLarge(PlainSequenceLElemDefn),
+
+    /// Plain fixed array `T[d1][...][dN]` with all dimensions `<= 255`
+    /// (DDS-XTypes v1.3 §7.3.4.4 — `TI_PLAIN_ARRAY_SMALL = 0x90`).
+    PlainArraySmall(PlainArraySElemDefn),
+
+    /// Plain fixed array with any dimension `> 255`
+    /// (DDS-XTypes v1.3 §7.3.4.4 — `TI_PLAIN_ARRAY_LARGE = 0x91`).
+    PlainArrayLarge(PlainArrayLElemDefn),
+
+    /// Plain `map<K, V, bound>` with `bound <= 255`
+    /// (DDS-XTypes v1.3 §7.3.4.4 — `TI_PLAIN_MAP_SMALL = 0xA0`).
+    PlainMapSmall(PlainMapSTypeDefn),
+
+    /// Plain `map<K, V, bound>` with `bound > 255` or unbounded
+    /// (DDS-XTypes v1.3 §7.3.4.4 — `TI_PLAIN_MAP_LARGE = 0xA1`).
+    PlainMapLarge(PlainMapLTypeDefn),
 }
 
 impl PartialEq for TypeIdentifier {
-    // @audit-ok: flat enum variant dispatch (8 arms), no nesting
+    // @audit-ok: flat enum variant dispatch (14 arms), no nesting
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Primitive(a), Self::Primitive(b)) => a == b,
@@ -170,6 +283,12 @@ impl PartialEq for TypeIdentifier {
             (Self::Minimal(a), Self::Minimal(b)) => a == b,
             (Self::Complete(a), Self::Complete(b)) => a == b,
             (Self::StronglyConnected(a), Self::StronglyConnected(b)) => a == b,
+            (Self::PlainSequenceSmall(a), Self::PlainSequenceSmall(b)) => a == b,
+            (Self::PlainSequenceLarge(a), Self::PlainSequenceLarge(b)) => a == b,
+            (Self::PlainArraySmall(a), Self::PlainArraySmall(b)) => a == b,
+            (Self::PlainArrayLarge(a), Self::PlainArrayLarge(b)) => a == b,
+            (Self::PlainMapSmall(a), Self::PlainMapSmall(b)) => a == b,
+            (Self::PlainMapLarge(a), Self::PlainMapLarge(b)) => a == b,
             _ => false,
         }
     }
@@ -189,6 +308,12 @@ impl std::hash::Hash for TypeIdentifier {
             Self::Minimal(hash) => hash.hash(state),
             Self::Complete(hash) => hash.hash(state),
             Self::StronglyConnected(sc) => sc.hash(state),
+            Self::PlainSequenceSmall(sd) => sd.hash(state),
+            Self::PlainSequenceLarge(ld) => ld.hash(state),
+            Self::PlainArraySmall(sd) => sd.hash(state),
+            Self::PlainArrayLarge(ld) => ld.hash(state),
+            Self::PlainMapSmall(sd) => sd.hash(state),
+            Self::PlainMapLarge(ld) => ld.hash(state),
         }
     }
 }
@@ -256,6 +381,21 @@ impl TypeIdentifier {
         matches!(self, TypeIdentifier::StronglyConnected(_))
     }
 
+    /// Returns true if this is a plain collection TypeIdentifier
+    /// (sequence, array, or map) per DDS-XTypes v1.3 §7.3.4.6.4
+    /// "Indirect Hash TypeIdentifiers".
+    pub const fn is_plain_collection(&self) -> bool {
+        matches!(
+            self,
+            TypeIdentifier::PlainSequenceSmall(_)
+                | TypeIdentifier::PlainSequenceLarge(_)
+                | TypeIdentifier::PlainArraySmall(_)
+                | TypeIdentifier::PlainArrayLarge(_)
+                | TypeIdentifier::PlainMapSmall(_)
+                | TypeIdentifier::PlainMapLarge(_)
+        )
+    }
+
     /// Get the EquivalenceKind if this is a hash-based TypeIdentifier
     pub const fn equivalence_kind(&self) -> Option<EquivalenceKind> {
         match self {
@@ -307,6 +447,36 @@ impl fmt::Debug for TypeIdentifier {
                     sc.sc_component_id, sc.scc_index, sc.scc_length
                 )
             }
+            TypeIdentifier::PlainSequenceSmall(sd) => write!(
+                f,
+                "TypeId::PlainSeq<{}>[{:?}]",
+                sd.bound, sd.element_identifier
+            ),
+            TypeIdentifier::PlainSequenceLarge(ld) => write!(
+                f,
+                "TypeId::PlainSeq<{}>[{:?}]",
+                ld.bound, ld.element_identifier
+            ),
+            TypeIdentifier::PlainArraySmall(sd) => write!(
+                f,
+                "TypeId::PlainArray<{:?}>[{:?}]",
+                sd.array_bound_seq, sd.element_identifier
+            ),
+            TypeIdentifier::PlainArrayLarge(ld) => write!(
+                f,
+                "TypeId::PlainArray<{:?}>[{:?}]",
+                ld.array_bound_seq, ld.element_identifier
+            ),
+            TypeIdentifier::PlainMapSmall(sd) => write!(
+                f,
+                "TypeId::PlainMap<{}>[{:?} -> {:?}]",
+                sd.bound, sd.key_identifier, sd.element_identifier
+            ),
+            TypeIdentifier::PlainMapLarge(ld) => write!(
+                f,
+                "TypeId::PlainMap<{}>[{:?} -> {:?}]",
+                ld.bound, ld.key_identifier, ld.element_identifier
+            ),
         }
     }
 }
@@ -324,6 +494,36 @@ impl fmt::Display for TypeIdentifier {
             TypeIdentifier::StronglyConnected(sc) => {
                 write!(f, "TypeId(SC:{})", sc.sc_component_id)
             }
+            TypeIdentifier::PlainSequenceSmall(sd) => {
+                write!(f, "sequence<{}, {}>", sd.element_identifier, sd.bound)
+            }
+            TypeIdentifier::PlainSequenceLarge(ld) => {
+                write!(f, "sequence<{}, {}>", ld.element_identifier, ld.bound)
+            }
+            TypeIdentifier::PlainArraySmall(sd) => {
+                write!(f, "{}", sd.element_identifier)?;
+                for d in &sd.array_bound_seq {
+                    write!(f, "[{}]", d)?;
+                }
+                Ok(())
+            }
+            TypeIdentifier::PlainArrayLarge(ld) => {
+                write!(f, "{}", ld.element_identifier)?;
+                for d in &ld.array_bound_seq {
+                    write!(f, "[{}]", d)?;
+                }
+                Ok(())
+            }
+            TypeIdentifier::PlainMapSmall(sd) => write!(
+                f,
+                "map<{}, {}, {}>",
+                sd.key_identifier, sd.element_identifier, sd.bound
+            ),
+            TypeIdentifier::PlainMapLarge(ld) => write!(
+                f,
+                "map<{}, {}, {}>",
+                ld.key_identifier, ld.element_identifier, ld.bound
+            ),
         }
     }
 }

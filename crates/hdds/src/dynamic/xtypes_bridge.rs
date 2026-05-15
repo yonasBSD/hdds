@@ -438,6 +438,20 @@ fn type_identifier_to_descriptor<R: TypeRegistry>(
         TypeIdentifier::StronglyConnected { .. } => {
             Arc::new(TypeDescriptor::primitive("cyclic", PrimitiveKind::U8))
         }
+        // Plain collections — the dynamic bridge does not yet model
+        // sequences / arrays / maps as first-class TypeDescriptors;
+        // fall back to an opaque `plain_collection` placeholder. The
+        // full recursive descriptor synthesis is tracked separately
+        // outside the scope of chantier 1.7.
+        TypeIdentifier::PlainSequenceSmall(_)
+        | TypeIdentifier::PlainSequenceLarge(_)
+        | TypeIdentifier::PlainArraySmall(_)
+        | TypeIdentifier::PlainArrayLarge(_)
+        | TypeIdentifier::PlainMapSmall(_)
+        | TypeIdentifier::PlainMapLarge(_) => Arc::new(TypeDescriptor::primitive(
+            "plain_collection",
+            PrimitiveKind::U8,
+        )),
     }
 }
 
