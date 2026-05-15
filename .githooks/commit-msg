@@ -1,0 +1,55 @@
+#!/bin/bash
+# SPDX-License-Identifier: Apache-2.0 OR MIT
+# Copyright (c) 2025-2026 naskel.com
+#
+# commit-msg hook: rejects commit messages containing AI co-authorship trailers.
+#
+# Olivier signs his commits himself. Tooling such as Claude Code appends
+# a `Co-Authored-By: Claude ... <noreply@anthropic.com>` trailer by default;
+# this hook strips that ergonomic from the pipeline so the public git log
+# stays clean.
+#
+# Install:
+#   git config core.hooksPath .githooks
+#
+# Emergency bypass (use responsibly):
+#   HDDS_SKIP_HOOKS=1 git commit -m "..."
+
+set -euo pipefail
+
+if [[ "${HDDS_SKIP_HOOKS:-0}" == "1" ]]; then
+    echo "[commit-msg] HDDS_SKIP_HOOKS=1 -- skipping trailer check"
+    exit 0
+fi
+
+readonly MSG_FILE="$1"
+
+# Match any Co-Authored-By trailer that names an AI assistant or its vendor.
+# The pattern is case-insensitive on the assistant/vendor token so common
+# variants (Claude, claude, Anthropic, ChatGPT, GPT, Copilot, Codex, Cursor,
+# Aider, noreply@anthropic.com, ...) are all caught.
+readonly FORBIDDEN_RE='^[[:space:]]*Co-[Aa]uthored-[Bb]y:.*([Cc]laude|[Aa]nthropic|[Cc]hat[Gg][Pp][Tt]|[Oo]pen[Aa][Ii]|[Cc]opilot|[Cc]odex|[Cc]ursor|[Aa]ider|[Gg]emini|[Bb]ard|noreply@anthropic\.com|noreply@openai\.com)'
+
+if grep -E -q "$FORBIDDEN_RE" "$MSG_FILE"; then
+    echo ""
+    echo "================================================================"
+    echo "  [commit-msg] BLOCKED: AI co-authorship trailer detected"
+    echo "================================================================"
+    echo ""
+    echo "Offending line(s):"
+    grep -E -n "$FORBIDDEN_RE" "$MSG_FILE" | sed 's/^/  /'
+    echo ""
+    echo "Rule: HDDS commits are signed by Olivier alone. AI tooling is a"
+    echo "      workbench, not a co-author of the public git history."
+    echo ""
+    echo "Fix: remove the Co-Authored-By trailer from the message and retry."
+    echo "     If Claude Code is the source, ensure CLAUDE.md / project"
+    echo "     instructions forbid the trailer on commit messages."
+    echo ""
+    echo "Bypass (do not use without reason):"
+    echo "  HDDS_SKIP_HOOKS=1 git commit ..."
+    echo ""
+    exit 1
+fi
+
+exit 0
