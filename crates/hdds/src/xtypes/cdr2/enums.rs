@@ -13,7 +13,7 @@ use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
 use super::primitives::{
     align_offset, decode_i16, decode_i32, decode_u16, decode_u32, encode_i16, encode_i32,
-    encode_u16, encode_vec,
+    encode_u16, encode_vec_sorted,
 };
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 
@@ -223,9 +223,16 @@ impl Cdr2Encode for CompleteEnumeratedType {
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.header.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.literal_seq, dst, offset, |literal, dst, offset| {
-            literal.encode_cdr2_le_at(dst, offset)
-        })?;
+        // XTypes v1.3 §7.3.4.5 R11: CompleteEnumeratedLiteralSeq must be
+        // emitted in ascending `value` order so that the EquivalenceHash
+        // is bitwise-identical across vendors.
+        encode_vec_sorted(
+            &self.literal_seq,
+            dst,
+            offset,
+            |l| l.common.value,
+            |literal, dst, offset| literal.encode_cdr2_le_at(dst, offset),
+        )?;
         Ok(())
     }
 }
@@ -266,9 +273,16 @@ impl Cdr2Encode for MinimalEnumeratedType {
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.header.encode_cdr2_le_at(dst, offset)?;
-        encode_vec(&self.literal_seq, dst, offset, |literal, dst, offset| {
-            literal.encode_cdr2_le_at(dst, offset)
-        })?;
+        // XTypes v1.3 §7.3.4.5 R12: MinimalEnumeratedLiteralSeq must be
+        // emitted in ascending `value` order so that the EquivalenceHash
+        // is bitwise-identical across vendors.
+        encode_vec_sorted(
+            &self.literal_seq,
+            dst,
+            offset,
+            |l| l.common.value,
+            |literal, dst, offset| literal.encode_cdr2_le_at(dst, offset),
+        )?;
         Ok(())
     }
 }
@@ -293,5 +307,136 @@ impl Cdr2Decode for MinimalEnumeratedType {
             header,
             literal_seq,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_minimal_literal(value: i32, name_hash: u32) -> MinimalEnumeratedLiteral {
+        MinimalEnumeratedLiteral {
+            common: CommonEnumeratedLiteral {
+                value,
+                flags: EnumeratedLiteralFlag(0),
+            },
+            detail: MinimalMemberDetail { name_hash },
+        }
+    }
+
+    fn make_complete_literal(value: i32, name: &str) -> CompleteEnumeratedLiteral {
+        CompleteEnumeratedLiteral {
+            common: CommonEnumeratedLiteral {
+                value,
+                flags: EnumeratedLiteralFlag(0),
+            },
+            detail: CompleteMemberDetail {
+                name: name.to_string(),
+                ann_builtin: None,
+                ann_custom: None,
+            },
+        }
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R12: MinimalEnumeratedLiteralSeq must be
+    /// serialized with literals in ascending `value` order so the
+    /// resulting bytes (and the derived EquivalenceHash) are stable
+    /// regardless of how the producer populates the source Vec.
+    #[test]
+    fn minimal_enum_literals_emit_sorted_by_value() {
+        let header = MinimalEnumeratedHeader {
+            bit_bound: 32,
+            detail: MinimalTypeDetail {},
+        };
+
+        let unsorted = MinimalEnumeratedType {
+            header: header.clone(),
+            literal_seq: vec![
+                make_minimal_literal(7, 0xAA00_AA00),
+                make_minimal_literal(-3, 0xBB00_BB00),
+                make_minimal_literal(0, 0xCC00_CC00),
+                make_minimal_literal(2, 0xDD00_DD00),
+            ],
+        };
+        let sorted = MinimalEnumeratedType {
+            header,
+            literal_seq: vec![
+                make_minimal_literal(-3, 0xBB00_BB00),
+                make_minimal_literal(0, 0xCC00_CC00),
+                make_minimal_literal(2, 0xDD00_DD00),
+                make_minimal_literal(7, 0xAA00_AA00),
+            ],
+        };
+
+        let mut buf_unsorted = vec![0u8; unsorted.max_cdr2_size()];
+        let len_unsorted = unsorted
+            .encode_cdr2_le(&mut buf_unsorted)
+            .expect("encode unsorted");
+        let mut buf_sorted = vec![0u8; sorted.max_cdr2_size()];
+        let len_sorted = sorted
+            .encode_cdr2_le(&mut buf_sorted)
+            .expect("encode sorted");
+
+        assert_eq!(
+            len_unsorted, len_sorted,
+            "unsorted and sorted inputs must produce equal-length wire output"
+        );
+        assert_eq!(
+            &buf_unsorted[..len_unsorted],
+            &buf_sorted[..len_sorted],
+            "unsorted input must produce bytes identical to sorted input \
+             (R12 enforcement)"
+        );
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R11: CompleteEnumeratedLiteralSeq, same
+    /// guarantee as R12 above, with the Complete variant.
+    #[test]
+    fn complete_enum_literals_emit_sorted_by_value() {
+        let header = CompleteEnumeratedHeader {
+            bit_bound: 32,
+            detail: CompleteTypeDetail {
+                type_name: "Color".to_string(),
+                ann_builtin: None,
+                ann_custom: None,
+            },
+        };
+
+        let unsorted = CompleteEnumeratedType {
+            header: header.clone(),
+            literal_seq: vec![
+                make_complete_literal(5, "ORANGE"),
+                make_complete_literal(-1, "BLACK"),
+                make_complete_literal(2, "RED"),
+            ],
+        };
+        let sorted = CompleteEnumeratedType {
+            header,
+            literal_seq: vec![
+                make_complete_literal(-1, "BLACK"),
+                make_complete_literal(2, "RED"),
+                make_complete_literal(5, "ORANGE"),
+            ],
+        };
+
+        let mut buf_unsorted = vec![0u8; unsorted.max_cdr2_size()];
+        let len_unsorted = unsorted
+            .encode_cdr2_le(&mut buf_unsorted)
+            .expect("encode unsorted");
+        let mut buf_sorted = vec![0u8; sorted.max_cdr2_size()];
+        let len_sorted = sorted
+            .encode_cdr2_le(&mut buf_sorted)
+            .expect("encode sorted");
+
+        assert_eq!(
+            len_unsorted, len_sorted,
+            "unsorted and sorted inputs must produce equal-length wire output"
+        );
+        assert_eq!(
+            &buf_unsorted[..len_unsorted],
+            &buf_sorted[..len_sorted],
+            "unsorted input must produce bytes identical to sorted input \
+             (R11 enforcement)"
+        );
     }
 }

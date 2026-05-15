@@ -175,6 +175,48 @@ where
     Ok(())
 }
 
+/// Encode Vec<T> with elements emitted in ascending key order.
+///
+/// Used by TypeObject sub-records that XTypes v1.3 §7.3.4.5 requires to
+/// serialize in a specific order (member_id, value, position, name_hash,
+/// ...) for the resulting EquivalenceHash to be bitwise-identical across
+/// vendors. Wire format is identical to [`encode_vec`]; only the element
+/// order is normalized.
+///
+/// The source `vec` is not mutated — sorting is done on an index buffer.
+/// Stable sort by `Ord` of the extracted key.
+pub(super) fn encode_vec_sorted<T, K, E, F>(
+    vec: &[T],
+    dst: &mut [u8],
+    offset: &mut usize,
+    key_fn: K,
+    encode_fn: F,
+) -> Result<(), CdrError>
+where
+    K: Fn(&T) -> E,
+    E: Ord,
+    F: Fn(&T, &mut [u8], &mut usize) -> Result<(), CdrError>,
+{
+    let len = u32::try_from(vec.len())
+        .map_err(|_| CdrError::Other("Vector too long for CDR2 encoding".into()))?;
+
+    encode_u32(len, dst, offset)?;
+
+    let mut indices: Vec<usize> = (0..vec.len()).collect();
+    indices.sort_by(|&a, &b| key_fn(&vec[a]).cmp(&key_fn(&vec[b])));
+
+    for i in indices {
+        let aligned = align_offset(*offset, 4);
+        if aligned > dst.len() {
+            return Err(CdrError::BufferTooSmall);
+        }
+        dst[*offset..aligned].fill(0);
+        *offset = aligned;
+        encode_fn(&vec[i], dst, offset)?;
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Primitive Decoding Helpers
 // ============================================================================
