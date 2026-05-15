@@ -7,8 +7,6 @@ pub mod cursor;
 pub mod pl_cdr2;
 pub mod traits;
 
-// Re-export from protocol module for backwards compatibility
-pub use crate::protocol::cdr::{DecoderLE, EncoderLE};
 pub use cursor::{Cursor, CursorMut};
 
 // Re-export CDR2 traits for public API (hdds_gen integration)
@@ -17,10 +15,6 @@ pub use pl_cdr2::{
     padding_for_alignment as pl_padding_for_alignment, PlMemberEncoder,
 };
 pub use traits::{Cdr2Decode, Cdr2Encode, CdrError};
-
-// encode_message/decode_message stubs removed in v0.3.0 cleanup.
-// v0.3.0 uses #[derive(hdds::DDS)] for automatic serialization.
-// Manual encoding/decoding via EncoderLE/DecoderLE directly if needed.
 
 use std::fmt;
 

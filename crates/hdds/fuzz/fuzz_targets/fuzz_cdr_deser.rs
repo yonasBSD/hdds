@@ -3,8 +3,9 @@
 
 //! Fuzz target for CDR2 deserialization
 //!
-//! Feeds arbitrary bytes to the CDR2 decoder and Cdr2Decode trait
-//! implementations. None of these operations should panic on any input.
+//! Feeds arbitrary bytes to the Cursor primitives, Cdr2Decode trait
+//! implementations, and PL_CDR2 struct decoder. None of these operations
+//! should panic on any input.
 
 #![no_main]
 
@@ -12,12 +13,7 @@ use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
     // ----------------------------------------------------------------
-    // 1. Fuzz DecoderLE header validation - must not panic
-    // ----------------------------------------------------------------
-    let _ = hdds::core::ser::DecoderLE::new(data);
-
-    // ----------------------------------------------------------------
-    // 2. Fuzz low-level Cursor reads - must not panic
+    // 1. Fuzz low-level Cursor reads - must not panic
     // ----------------------------------------------------------------
     {
         let mut cursor = hdds::core::ser::Cursor::new(data);
@@ -41,7 +37,7 @@ fuzz_target!(|data: &[u8]| {
     }
 
     // ----------------------------------------------------------------
-    // 3. Fuzz Cdr2Decode trait impls for primitive types - must not panic
+    // 2. Fuzz Cdr2Decode trait impls for primitive types - must not panic
     // ----------------------------------------------------------------
     let _ = <u8 as hdds::Cdr2Decode>::decode_cdr2_le(data);
     let _ = <i8 as hdds::Cdr2Decode>::decode_cdr2_le(data);
@@ -55,12 +51,12 @@ fuzz_target!(|data: &[u8]| {
     let _ = <f64 as hdds::Cdr2Decode>::decode_cdr2_le(data);
 
     // ----------------------------------------------------------------
-    // 4. Fuzz String decoding - must not panic (may return InvalidEncoding)
+    // 3. Fuzz String decoding - must not panic (may return InvalidEncoding)
     // ----------------------------------------------------------------
     let _ = <String as hdds::Cdr2Decode>::decode_cdr2_le(data);
 
     // ----------------------------------------------------------------
-    // 5. Fuzz Vec<T> decoding for various element types - must not panic
+    // 4. Fuzz Vec<T> decoding for various element types - must not panic
     //    Note: large length fields could cause OOM; Vec::with_capacity
     //    is bounded by available data, so this is generally safe for
     //    short fuzz inputs.
@@ -71,7 +67,7 @@ fuzz_target!(|data: &[u8]| {
     let _ = <Vec<f64> as hdds::Cdr2Decode>::decode_cdr2_le(data);
 
     // ----------------------------------------------------------------
-    // 6. Fuzz PL_CDR2 struct decoding - must not panic
+    // 5. Fuzz PL_CDR2 struct decoding - must not panic
     // ----------------------------------------------------------------
     let _ = hdds::core::ser::decode_pl_cdr2_struct(data, |_member_id, _src, _offset, _end| {
         Ok(())

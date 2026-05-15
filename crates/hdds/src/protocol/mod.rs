@@ -5,14 +5,12 @@
 //!
 //! This module contains the core RTPS protocol components:
 //! - Constants: PIDs, entity IDs, vendor IDs
-//! - CDR encoding/decoding
 //! - Packet builders for RTPS messages
 //! - Discovery protocol parsers (SPDP/SEDP)
 //! - Dialect encoders for vendor-specific interoperability
 //! - RTPS standard submessage encoders (vendor-neutral)
 
 pub mod builder;
-pub mod cdr;
 pub mod constants;
 pub mod dialect;
 pub mod discovery;
