@@ -378,25 +378,30 @@ impl CompleteMemberDetail {
     }
 }
 
-impl MinimalMemberDetail {
-    /// Create from member name (computes hash)
-    pub fn from_name(name: &str) -> Self {
-        // Compute MD5 hash of name, truncate to 32 bits
-        #[cfg(feature = "xtypes")]
-        {
-            use md5::{Digest, Md5};
-            let mut hasher = Md5::new();
-            hasher.update(name.as_bytes());
-            let result = hasher.finalize();
-            let name_hash = u32::from_le_bytes([result[0], result[1], result[2], result[3]]);
-            Self { name_hash }
-        }
+/// Compute the 32-bit NameHash for a member/parameter name per
+/// XTypes v1.3 §7.3.4.6: `u32::from_le_bytes(MD5(name)[0..4])`.
+///
+/// Returns `0` when the `xtypes` feature is disabled so callers can
+/// still build without the `md5` dependency in degraded mode.
+#[cfg(feature = "xtypes")]
+pub(crate) fn compute_name_hash(name: &str) -> u32 {
+    use md5::{Digest, Md5};
+    let mut hasher = Md5::new();
+    hasher.update(name.as_bytes());
+    let result = hasher.finalize();
+    u32::from_le_bytes([result[0], result[1], result[2], result[3]])
+}
 
-        #[cfg(not(feature = "xtypes"))]
-        {
-            // Fallback: use simple hash
-            let _ = name;
-            Self { name_hash: 0 }
+#[cfg(not(feature = "xtypes"))]
+pub(crate) fn compute_name_hash(_name: &str) -> u32 {
+    0
+}
+
+impl MinimalMemberDetail {
+    /// Create from member name (computes hash per XTypes v1.3 §7.3.4.6).
+    pub fn from_name(name: &str) -> Self {
+        Self {
+            name_hash: compute_name_hash(name),
         }
     }
 }

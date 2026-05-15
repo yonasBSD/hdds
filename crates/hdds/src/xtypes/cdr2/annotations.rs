@@ -11,12 +11,16 @@
 
 use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
+#[cfg(not(feature = "xtypes"))]
+use super::primitives::encode_vec;
 use super::primitives::{
     align_offset, decode_bool, decode_i32, decode_option, decode_string, decode_u16, decode_u32,
     decode_u8, encode_bool, encode_i32, encode_option, encode_string, encode_u16, encode_u32,
-    encode_u8, encode_vec,
+    encode_u8, encode_vec_sorted,
 };
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
+#[cfg(feature = "xtypes")]
+use crate::xtypes::type_object::compute_name_hash;
 use crate::xtypes::{TypeIdentifier, TypeKind};
 
 #[allow(clippy::wildcard_imports)]
@@ -279,6 +283,27 @@ impl Cdr2Encode for CompleteAnnotationType {
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.header.encode_cdr2_le_at(dst, offset)?;
+        // XTypes v1.3 §7.3.4.5 R3: AnnotationParameterSeq must be emitted
+        // in ascending paramname_hash order. Complete keeps the human
+        // name but the wire-position invariant still applies, so sort by
+        // the same hash function used to build MinimalAnnotationParameter
+        // — this keeps Complete[i] and Minimal[i] referring to the same
+        // parameter for any consumer that decodes both representations.
+        //
+        // Sort is gated on the `xtypes` feature because compute_name_hash
+        // depends on the md-5 dependency that ships with that feature.
+        // Without xtypes, the canonical TypeObject path is unreachable
+        // in practice; fall back to source-order encoding to match the
+        // pre-1.7e-5 behavior for that degenerate configuration.
+        #[cfg(feature = "xtypes")]
+        encode_vec_sorted(
+            &self.member_seq,
+            dst,
+            offset,
+            |param: &CompleteAnnotationParameter| compute_name_hash(&param.name),
+            |param: &CompleteAnnotationParameter, dst, offset| param.encode_cdr2_le_at(dst, offset),
+        )?;
+        #[cfg(not(feature = "xtypes"))]
         encode_vec(
             &self.member_seq,
             dst,
@@ -323,6 +348,24 @@ impl Cdr2Encode for MinimalAnnotationType {
 
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         self.header.encode_cdr2_le_at(dst, offset)?;
+        // XTypes v1.3 §7.3.4.5 R10: MinimalAnnotationParameterSeq must
+        // be emitted in ascending name_hash order so the resulting
+        // MinimalEquivalenceHash is stable across vendors.
+        //
+        // Sort is gated on `xtypes` for the same reason as Complete
+        // above: under no-xtypes, all name_hash values are 0 (per the
+        // MinimalMemberDetail::from_name fallback) so the sort would
+        // degenerate to source order anyway. Fall back to encode_vec to
+        // make this explicit.
+        #[cfg(feature = "xtypes")]
+        encode_vec_sorted(
+            &self.member_seq,
+            dst,
+            offset,
+            |param: &MinimalAnnotationParameter| param.name_hash,
+            |param: &MinimalAnnotationParameter, dst, offset| param.encode_cdr2_le_at(dst, offset),
+        )?;
+        #[cfg(not(feature = "xtypes"))]
         encode_vec(
             &self.member_seq,
             dst,
@@ -476,5 +519,140 @@ mod tests {
                 ),
             }
         }
+    }
+
+    #[cfg(feature = "xtypes")]
+    fn make_minimal_param(name: &str) -> MinimalAnnotationParameter {
+        MinimalAnnotationParameter {
+            common: CommonAnnotationParameter {
+                member_flags: AnnotationParameterFlag(0),
+                member_type_id: TypeIdentifier::primitive(TypeKind::TK_INT32),
+            },
+            name_hash: compute_name_hash(name),
+            default_value: None,
+        }
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R10: MinimalAnnotationParameterSeq must be
+    /// emitted in ascending name_hash order. The MD5-derived hash makes
+    /// the sort key opaque, so the test seeds names whose hashes happen
+    /// to differ and asserts that byte output is invariant under input
+    /// permutations.
+    ///
+    /// Gated on the `xtypes` feature because canonical wire output for
+    /// annotation parameters depends on the md-5 hash that the feature
+    /// pulls in.
+    #[cfg(feature = "xtypes")]
+    #[test]
+    fn minimal_annotation_params_emit_sorted_by_name_hash() {
+        let header = MinimalAnnotationHeader {
+            detail: MinimalTypeDetail::new(),
+        };
+
+        let names = ["zeta", "alpha", "mu", "kappa"];
+        let mut perm_a: Vec<MinimalAnnotationParameter> =
+            names.iter().map(|n| make_minimal_param(n)).collect();
+        let mut perm_b = perm_a.clone();
+        perm_b.reverse(); // different source order, same set
+
+        let type_a = MinimalAnnotationType {
+            header: header.clone(),
+            member_seq: perm_a.clone(),
+        };
+        let type_b = MinimalAnnotationType {
+            header,
+            member_seq: perm_b.clone(),
+        };
+
+        let mut buf_a = vec![0u8; type_a.max_cdr2_size()];
+        let len_a = type_a.encode_cdr2_le(&mut buf_a).expect("encode perm_a");
+        let mut buf_b = vec![0u8; type_b.max_cdr2_size()];
+        let len_b = type_b.encode_cdr2_le(&mut buf_b).expect("encode perm_b");
+
+        assert_eq!(len_a, len_b, "wire length must match across permutations");
+        assert_eq!(
+            &buf_a[..len_a],
+            &buf_b[..len_b],
+            "two source permutations must produce identical bytes \
+             (R10 enforcement)"
+        );
+
+        // Round-trip: the decoded member_seq must be in ascending
+        // name_hash order.
+        let (decoded, used) =
+            MinimalAnnotationType::decode_cdr2_le(&buf_a[..len_a]).expect("decode round-trip");
+        assert_eq!(used, len_a, "decoder consumes full input");
+        let hashes: Vec<u32> = decoded.member_seq.iter().map(|p| p.name_hash).collect();
+        let mut sorted_hashes = hashes.clone();
+        sorted_hashes.sort();
+        assert_eq!(
+            hashes, sorted_hashes,
+            "decoded name_hashes are in ascending order"
+        );
+
+        // Sanity: with 4 distinct names whose hashes are unlikely to
+        // collide, all 4 should be present.
+        assert_eq!(decoded.member_seq.len(), 4);
+
+        // Also sort both perm Vecs locally by name_hash and confirm
+        // the in-memory order would match the wire after sort. Drops
+        // the unused mut warnings.
+        perm_a.sort_by_key(|p| p.name_hash);
+        perm_b.sort_by_key(|p| p.name_hash);
+        assert_eq!(perm_a, perm_b);
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R3/R9 applied to Complete: sort by
+    /// compute_name_hash(name) so Complete[i] corresponds to
+    /// Minimal[i] for the same parameter regardless of how the
+    /// producer populated the Vec. Gated on the `xtypes` feature.
+    #[cfg(feature = "xtypes")]
+    #[test]
+    fn complete_annotation_params_emit_sorted_by_name_hash() {
+        let header = CompleteAnnotationHeader {
+            detail: CompleteTypeDetail {
+                type_name: "MyAnnot".to_string(),
+                ann_builtin: None,
+                ann_custom: None,
+            },
+        };
+
+        fn make_complete(name: &str) -> CompleteAnnotationParameter {
+            CompleteAnnotationParameter {
+                common: CommonAnnotationParameter {
+                    member_flags: AnnotationParameterFlag(0),
+                    member_type_id: TypeIdentifier::primitive(TypeKind::TK_INT32),
+                },
+                name: name.to_string(),
+                default_value: None,
+            }
+        }
+
+        let names = ["sigma", "delta", "omega"];
+        let perm_a: Vec<_> = names.iter().map(|n| make_complete(n)).collect();
+        let mut perm_b = perm_a.clone();
+        perm_b.reverse();
+
+        let type_a = CompleteAnnotationType {
+            header: header.clone(),
+            member_seq: perm_a,
+        };
+        let type_b = CompleteAnnotationType {
+            header,
+            member_seq: perm_b,
+        };
+
+        let mut buf_a = vec![0u8; type_a.max_cdr2_size()];
+        let len_a = type_a.encode_cdr2_le(&mut buf_a).expect("encode perm_a");
+        let mut buf_b = vec![0u8; type_b.max_cdr2_size()];
+        let len_b = type_b.encode_cdr2_le(&mut buf_b).expect("encode perm_b");
+
+        assert_eq!(len_a, len_b, "wire length must match across permutations");
+        assert_eq!(
+            &buf_a[..len_a],
+            &buf_b[..len_b],
+            "two source permutations must produce identical Complete bytes \
+             (R3/R9 enforcement)"
+        );
     }
 }

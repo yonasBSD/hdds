@@ -184,7 +184,12 @@ where
 /// order is normalized.
 ///
 /// The source `vec` is not mutated — sorting is done on an index buffer.
-/// Stable sort by `Ord` of the extracted key.
+/// Uses [`slice::sort_by`], which Rust guarantees is **stable**: when two
+/// elements compare equal under `key_fn`, their relative order from
+/// the source slice is preserved. The spec forbids duplicate keys
+/// within an ordered TypeObject sub-record, but stability matters as a
+/// defence-in-depth against malformed or adversarial inputs — equal
+/// keys still produce deterministic wire bytes.
 pub(super) fn encode_vec_sorted<T, K, E, F>(
     vec: &[T],
     dst: &mut [u8],
@@ -321,5 +326,45 @@ where
         Ok(Some(decode_fn(src, offset)?))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `encode_vec_sorted` must use a stable sort: when two elements
+    /// compare equal under the key function, their wire emission order
+    /// must follow their source-Vec order. The spec forbids duplicate
+    /// keys in XTypes §7.3.4.5 ordered sequences, but stability matters
+    /// as a defence-in-depth — duplicate keys must still produce
+    /// deterministic wire bytes.
+    #[test]
+    fn encode_vec_sorted_is_stable_on_duplicate_keys() {
+        // Three elements share key=2; the encoder should emit them in
+        // source order (tag 'a', 'b', 'c'). Element with key=1 sorts
+        // before; element with key=3 sorts after.
+        let entries: Vec<(u8, u8)> = vec![(2, b'a'), (3, b'z'), (2, b'b'), (1, b'x'), (2, b'c')];
+
+        let mut buf = vec![0u8; 64];
+        let mut offset = 0;
+        encode_vec_sorted(
+            &entries,
+            &mut buf,
+            &mut offset,
+            |(key, _)| *key,
+            |(_, tag), dst, offset| encode_u8(*tag, dst, offset),
+        )
+        .expect("encode succeeds");
+
+        // Wire layout: u32 length (5) + 5 aligned bytes (one per element)
+        // Each element pads to 4-byte alignment per encode_vec(_sorted)
+        // semantics, so tag bytes land at offsets 4, 8, 12, 16, 20.
+        assert_eq!(buf[0..4], [5, 0, 0, 0], "length prefix is 5");
+        assert_eq!(buf[4], b'x', "key=1 first");
+        assert_eq!(buf[8], b'a', "key=2 source-first tag preserved");
+        assert_eq!(buf[12], b'b', "key=2 source-second tag preserved");
+        assert_eq!(buf[16], b'c', "key=2 source-third tag preserved");
+        assert_eq!(buf[20], b'z', "key=3 last");
     }
 }
