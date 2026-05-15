@@ -15,7 +15,7 @@
 //!
 //! # Features
 //!
-//! - Multi-format CDR support (CDR_LE, CDR_BE, CDR2_LE, CDR2_BE, vendor variants)
+//! - Multi-format CDR support (CDR_LE, CDR_BE, PL_CDR2_LE, PL_CDR2_BE, vendor variants)
 //! - RTI Connext compatibility (non-standard padding, fragmented messages)
 //! - FastDDS compatibility (vendor-specific encapsulation)
 //! - Complete parameter list handling (20+ PIDs)

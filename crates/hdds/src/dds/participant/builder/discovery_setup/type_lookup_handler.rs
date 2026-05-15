@@ -12,7 +12,7 @@ use std::sync::Arc;
 #[cfg(feature = "type-lookup")]
 use crate::core::types::TypeObjectHandle;
 #[cfg(feature = "type-lookup")]
-use crate::protocol::discovery::constants::CDR2_LE;
+use crate::protocol::discovery::constants::PL_CDR2_LE;
 #[cfg(feature = "type-lookup")]
 use crate::xtypes::CompleteTypeObject;
 #[cfg(feature = "type-lookup")]
@@ -369,7 +369,7 @@ fn decode_type_lookup_message(payload: &[u8]) -> Result<TypeLookupMessage, TypeL
     }
 
     let encapsulation = u16::from_be_bytes([payload[0], payload[1]]);
-    if encapsulation != CDR2_LE {
+    if encapsulation != PL_CDR2_LE {
         return Err(TypeLookupError::InvalidMagic);
     }
 
@@ -462,7 +462,7 @@ fn encode_type_lookup_message(
     }
 
     let mut buf = Vec::with_capacity(4 + 4 + name_len + object_len + 16);
-    buf.extend_from_slice(&CDR2_LE.to_be_bytes());
+    buf.extend_from_slice(&PL_CDR2_LE.to_be_bytes());
     buf.extend_from_slice(&[0u8; 2]); // options
     buf.extend_from_slice(&TYPE_LOOKUP_MAGIC);
     buf.push(TYPE_LOOKUP_VERSION);

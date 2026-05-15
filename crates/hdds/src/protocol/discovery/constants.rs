@@ -139,13 +139,39 @@ pub const CDR_BE: u16 = 0x0002;
 /// Used by HDDS and FastDDS for discovery (SPDP/SEDP) packets
 pub const CDR_LE: u16 = 0x0003;
 
-/// PL_CDR2_BE (0x0102): CDR2 Parameter List with Big-Endian data encoding
-/// Future XTypes support
-pub const CDR2_BE: u16 = 0x0102;
+// CDR2 encapsulation identifiers per OMG DDS-XTypes v1.3 §7.6.3.1.2 Table 60.
+//
+// PLAIN_CDR2 (`@final`), DELIMITED_CDR (`@appendable` with DHEADER), and
+// PL_CDR2 (`@mutable` with DHEADER + EMHEADER) each have BE + LE variants.
+//
+// Spec note: Table 60 contains a typo on the PL_CDR2_LE row, printed
+// as `PL_CDR_LE` instead of `PL_CDR2_LE`. The value 0x000B is
+// unambiguous from the column context (XCDR MUTABLE encoding version 2
+// little-endian) and matches Fast DDS / RTI Connext wire output.
 
-/// PL_CDR2_LE (0x0103): CDR2 Parameter List with Little-Endian data encoding
-/// Future XTypes support
-pub const CDR2_LE: u16 = 0x0103;
+/// PLAIN_CDR2_BE (0x0006): Plain CDR2 with Big-Endian encoding;
+/// used for `@final` extensibility under XCDR2.
+pub const PLAIN_CDR2_BE: u16 = 0x0006;
+
+/// PLAIN_CDR2_LE (0x0007): Plain CDR2 with Little-Endian encoding;
+/// used for `@final` extensibility under XCDR2.
+pub const PLAIN_CDR2_LE: u16 = 0x0007;
+
+/// D_CDR2_BE (0x0008): Delimited CDR2 with Big-Endian encoding (DHEADER);
+/// used for `@appendable` extensibility under XCDR2.
+pub const D_CDR2_BE: u16 = 0x0008;
+
+/// D_CDR2_LE (0x0009): Delimited CDR2 with Little-Endian encoding (DHEADER);
+/// used for `@appendable` extensibility under XCDR2.
+pub const D_CDR2_LE: u16 = 0x0009;
+
+/// PL_CDR2_BE (0x000A): Parameter List CDR2 with Big-Endian encoding
+/// (DHEADER + EMHEADER); used for `@mutable` extensibility under XCDR2.
+pub const PL_CDR2_BE: u16 = 0x000A;
+
+/// PL_CDR2_LE (0x000B): Parameter List CDR2 with Little-Endian encoding
+/// (DHEADER + EMHEADER); used for `@mutable` extensibility under XCDR2.
+pub const PL_CDR2_LE: u16 = 0x000B;
 
 // v97: FastDDS vendor-specific encapsulation variants (0x8000 = vendor flag)
 
@@ -186,16 +212,35 @@ mod tests {
 
     #[test]
     fn test_cdr_encapsulation_ordering() {
-        // Verify CDR variant ordering per RTPS spec
-        // Plain CDR: 0x0000-0x0001
-        // PL_CDR: 0x0002-0x0003
-        // PL_CDR2: 0x0102-0x0103
-        // Vendor: 0x8001-0x8002
+        // Encapsulation ID layout per OMG DDS-XTypes v1.3 §7.6.3.1.2 Table 60:
+        //   PLAIN_CDR     0x0000-0x0001  (CDR_BE/LE)
+        //   PL_CDR        0x0002-0x0003  (PL_CDR_BE/LE — XCDR1 MUTABLE)
+        //   XML           0x0004         (not used here)
+        //   PLAIN_CDR2    0x0006-0x0007  (XCDR2 FINAL)
+        //   D_CDR2        0x0008-0x0009  (XCDR2 APPENDABLE)
+        //   PL_CDR2       0x000A-0x000B  (XCDR2 MUTABLE)
+        //   Vendor        0x8001-0x8002
         const _: () = assert!(PLAIN_CDR_BE < PLAIN_CDR_LE);
         const _: () = assert!(PLAIN_CDR_LE < CDR_BE);
         const _: () = assert!(CDR_BE < CDR_LE);
-        const _: () = assert!(CDR_LE < CDR2_BE);
-        const _: () = assert!(CDR2_BE < CDR2_LE);
-        const _: () = assert!(CDR2_LE < CDR_LE_VENDOR);
+        const _: () = assert!(CDR_LE < PLAIN_CDR2_BE);
+        const _: () = assert!(PLAIN_CDR2_BE < PLAIN_CDR2_LE);
+        const _: () = assert!(PLAIN_CDR2_LE < D_CDR2_BE);
+        const _: () = assert!(D_CDR2_BE < D_CDR2_LE);
+        const _: () = assert!(D_CDR2_LE < PL_CDR2_BE);
+        const _: () = assert!(PL_CDR2_BE < PL_CDR2_LE);
+        const _: () = assert!(PL_CDR2_LE < CDR_LE_VENDOR);
+    }
+
+    #[test]
+    fn test_xcdr2_encapsulation_spec_values() {
+        // OMG DDS-XTypes v1.3 §7.6.3.1.2 Table 60 — exact wire values
+        // cross-validated against Fast DDS / RTI Connext captures.
+        assert_eq!(PLAIN_CDR2_BE, 0x0006);
+        assert_eq!(PLAIN_CDR2_LE, 0x0007);
+        assert_eq!(D_CDR2_BE, 0x0008);
+        assert_eq!(D_CDR2_LE, 0x0009);
+        assert_eq!(PL_CDR2_BE, 0x000A);
+        assert_eq!(PL_CDR2_LE, 0x000B);
     }
 }

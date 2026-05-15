@@ -162,9 +162,9 @@ pub fn encap_kind_for_version(canonical: u16, version: CdrVersion) -> u16 {
 ///
 /// * `0x0000` CDR_BE, `0x0001` CDR_LE, `0x0002` PL_CDR_BE,
 ///   `0x0003` PL_CDR_LE → XCDR v1
-/// * `0x0006` CDR2_BE, `0x0007` CDR2_LE, `0x0008` D_CDR2_BE,
+/// * `0x0006` PLAIN_CDR2_BE, `0x0007` PLAIN_CDR2_LE, `0x0008` D_CDR2_BE,
 ///   `0x0009` D_CDR2_LE, `0x000A` PL_CDR2_BE, `0x000B` PL_CDR2_LE
-///   → XCDR v2
+///   → XCDR v2 (per OMG DDS-XTypes v1.3 §7.6.3.1.2 Table 60)
 ///
 /// Any other value indicates a malformed payload and is reported as
 /// `CdrError::InvalidEncoding`.

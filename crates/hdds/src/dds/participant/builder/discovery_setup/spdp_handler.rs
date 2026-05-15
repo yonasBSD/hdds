@@ -23,7 +23,7 @@ use crate::core::discovery::{
     spdp_announcer::SPDP_SENT_COUNT,
 };
 use crate::protocol::dialect::{get_encoder, Dialect};
-use crate::protocol::discovery::constants::{CDR2_LE, CDR_LE, PID_METATRAFFIC_UNICAST_LOCATOR};
+use crate::protocol::discovery::constants::{CDR_LE, PID_METATRAFFIC_UNICAST_LOCATOR, PL_CDR2_LE};
 use crate::protocol::discovery::{parse_spdp, parse_spdp_partial, ParseError, SedpData, SpdpData};
 use crate::transport::UdpTransport;
 use std::collections::{HashMap, HashSet};
@@ -1220,7 +1220,7 @@ fn extract_metatraffic_unicast_from_cdr(buf: &[u8]) -> Option<SocketAddr> {
 
     // FastDDS and most stacks use PL_CDR_LE (0x0003) here for SPDP.
     // We treat this as little-endian ParameterList for this recovery path.
-    let is_le = matches!(encapsulation, CDR_LE | CDR2_LE);
+    let is_le = matches!(encapsulation, CDR_LE | PL_CDR2_LE);
 
     // Detect padding: standard CDR uses 2-byte padding after encapsulation.
     let mut offset = if buf.len() > 3 && buf[2] == 0x00 && buf[3] == 0x00 {

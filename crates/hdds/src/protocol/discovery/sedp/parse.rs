@@ -14,12 +14,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use crate::core::discovery::GUID;
 use crate::protocol::discovery::constants::{
-    CDR2_BE, CDR2_LE, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PID_BUILTIN_ENDPOINT_SET,
+    CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PID_BUILTIN_ENDPOINT_SET,
     PID_DATA_REPRESENTATION, PID_DEADLINE, PID_DURABILITY, PID_DURABILITY_SERVICE,
     PID_ENDPOINT_GUID, PID_HISTORY, PID_LIFESPAN, PID_METATRAFFIC_UNICAST_LOCATOR, PID_OWNERSHIP,
     PID_OWNERSHIP_STRENGTH, PID_PARTICIPANT_GUID, PID_PARTICIPANT_LEASE_DURATION, PID_PARTITION,
     PID_PRESENTATION, PID_RELIABILITY, PID_SENTINEL, PID_TOPIC_NAME, PID_TYPE_INFORMATION,
     PID_TYPE_NAME, PID_TYPE_OBJECT, PID_TYPE_OBJECT_LB, PID_UNICAST_LOCATOR, PID_USER_DATA,
+    PL_CDR2_BE, PL_CDR2_LE,
 };
 use crate::protocol::discovery::hash::simple_hash;
 use crate::protocol::discovery::types::{
@@ -334,8 +335,8 @@ pub(crate) fn parse_type_information(buf: &[u8]) -> Option<TypeInformation> {
 /// Accepts multiple CDR encapsulation formats for DDS interoperability:
 /// - CDR_LE (0x0003): HDDS standard, little-endian
 /// - CDR_BE (0x0002): RTI Connext (non-standard big-endian header)
-/// - CDR2_LE (0x0103): CDR2 little-endian
-/// - CDR2_BE (0x0102): CDR2 big-endian
+/// - PL_CDR2_LE (0x000B): CDR2 little-endian
+/// - PL_CDR2_BE (0x000A): CDR2 big-endian
 pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
     if buf.len() < 2 {
         return Err(ParseError::TruncatedData);
@@ -361,12 +362,12 @@ pub fn parse_sedp(buf: &[u8]) -> Result<SedpData, ParseError> {
             );
             (false, false)
         }
-        CDR2_LE => {
-            log::debug!("[sedp] [OK] CDR2_LE (0x0103) detected");
+        PL_CDR2_LE => {
+            log::debug!("[sedp] [OK] PL_CDR2_LE (0x000B) detected");
             (true, true)
         }
-        CDR2_BE => {
-            log::debug!("[sedp] [!]  CDR2_BE (0x0102) detected");
+        PL_CDR2_BE => {
+            log::debug!("[sedp] [!]  PL_CDR2_BE (0x000A) detected");
             (false, true)
         }
         // v97: FastDDS vendor-specific encapsulations

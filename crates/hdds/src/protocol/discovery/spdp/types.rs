@@ -11,7 +11,7 @@ use std::net::SocketAddr;
 
 // v111: Import CDR constants from canonical location
 pub(super) use super::super::constants::{
-    CDR2_BE, CDR2_LE, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR,
+    CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PL_CDR2_BE, PL_CDR2_LE,
 };
 
 /// SPDP (Simple Participant Discovery Protocol) parsed data.

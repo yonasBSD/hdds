@@ -47,8 +47,8 @@ pub const RTPS_VERSION_MINOR: u8 = 0x04;
 //
 // Known vendor IDs:
 // - 0x0101: RTI Connext DDS
-// - 0x0102: OpenSplice DDS (ADLink)
-// - 0x0103: OpenDDS (OCI)
+// - 0x000A: OpenSplice DDS (ADLink)
+// - 0x000B: OpenDDS (OCI)
 // - 0x010F: FastDDS/FastRTPS (eProsima)
 // - 0x0110: Cyclone DDS (Eclipse)
 // - 0x0112: RustDDS (Atostek)
@@ -183,7 +183,8 @@ pub const RTPS_SUBMSG_HEADER_MIN_SIZE: usize = 4;
 // The canonical definitions are in protocol/discovery/constants.rs
 
 pub use super::discovery::constants::{
-    CDR2_BE, CDR2_LE, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PLAIN_CDR_BE, PLAIN_CDR_LE,
+    CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PLAIN_CDR_BE, PLAIN_CDR_LE, PL_CDR2_BE,
+    PL_CDR2_LE,
 };
 
 #[cfg(test)]

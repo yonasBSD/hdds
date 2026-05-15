@@ -26,7 +26,7 @@ use crate::protocol::discovery::constants::{
     PID_PROPERTY_LIST, PID_PROTOCOL_VERSION, PID_SENTINEL, PID_VENDOR_ID,
 };
 use crate::protocol::discovery::spdp::types::{
-    SpdpData, CDR2_BE, CDR2_LE, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR,
+    SpdpData, CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PL_CDR2_BE, PL_CDR2_LE,
 };
 use crate::protocol::discovery::types::ParseError;
 
@@ -47,8 +47,8 @@ use crate::protocol::discovery::types::ParseError;
 /// Accepts multiple CDR encapsulation formats for DDS interoperability:
 /// - CDR_LE (0x0003): HDDS standard, little-endian
 /// - CDR_BE (0x0002): RTI Connext (violates spec by using big-endian header)
-/// - CDR2_LE (0x0103): CDR2 little-endian
-/// - CDR2_BE (0x0102): CDR2 big-endian
+/// - PL_CDR2_LE (0x000B): CDR2 little-endian
+/// - PL_CDR2_BE (0x000A): CDR2 big-endian
 pub fn parse_spdp(buf: &[u8]) -> Result<SpdpData, ParseError> {
     // Need at least 2 bytes for encapsulation, plus 4 bytes for first PID header
     if buf.len() < 2 {
@@ -71,12 +71,12 @@ pub fn parse_spdp(buf: &[u8]) -> Result<SpdpData, ParseError> {
             );
             (false, false)
         }
-        CDR2_LE => {
-            log::debug!("[spdp] [OK] CDR2_LE (0x0103) detected");
+        PL_CDR2_LE => {
+            log::debug!("[spdp] [OK] PL_CDR2_LE (0x000B) detected");
             (true, true)
         }
-        CDR2_BE => {
-            log::debug!("[spdp] [!]  CDR2_BE (0x0102) detected");
+        PL_CDR2_BE => {
+            log::debug!("[spdp] [!]  PL_CDR2_BE (0x000A) detected");
             (false, true)
         }
         // v97: FastDDS vendor-specific encapsulations
@@ -286,8 +286,8 @@ pub fn parse_spdp_partial(buf: &[u8]) -> Result<SpdpData, ParseError> {
             let encapsulation = u16::from_be_bytes([buf[0], buf[1]]);
 
             let is_little_endian = match encapsulation {
-                CDR_LE | CDR2_LE | CDR_LE_VENDOR => true,
-                CDR_BE | CDR2_BE | CDR_BE_VENDOR => false,
+                CDR_LE | PL_CDR2_LE | CDR_LE_VENDOR => true,
+                CDR_BE | PL_CDR2_BE | CDR_BE_VENDOR => false,
                 _ => {
                     log::debug!(
                         "[spdp-partial] [X] Invalid encapsulation in fragment: 0x{:04x}",

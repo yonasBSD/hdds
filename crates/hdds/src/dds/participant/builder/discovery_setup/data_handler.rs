@@ -13,6 +13,9 @@
 
 use crate::core::discovery::multicast::{DiscoveryFsm, EndpointKind};
 use crate::engine::TopicRegistry;
+use crate::protocol::discovery::constants::{
+    CDR_BE, CDR_BE_VENDOR, CDR_LE, CDR_LE_VENDOR, PLAIN_CDR_LE, PL_CDR2_BE, PL_CDR2_LE,
+};
 use crate::protocol::discovery::{parse_sedp, parse_spdp_partial};
 use std::sync::Arc;
 
@@ -53,21 +56,21 @@ pub(super) fn handle_data_packet(
         payload
     };
 
-    // Fast-path: drop DATA that clearly isn't CDR (encapsulation=0x0000).
-    // v135: Include all valid CDR encapsulations from parse_sedp():
-    //   CDR_LE (0x0003), CDR_BE (0x0002), CDR2_LE (0x0103), CDR2_BE (0x0102)
-    //   CDR_LE_VENDOR (0x8001), CDR_BE_VENDOR (0x8002), PLAIN_CDR_LE (0x0001)
+    // Fast-path: drop DATA whose encapsulation kind cannot be parsed as
+    // SPDP / SEDP / PLAIN_CDR. The accepted set must stay in sync with
+    // the dispatcher arms in `spdp/parse/mod.rs` and `sedp/parse.rs`.
     if cdr_payload.len() >= 2 {
         let enc = u16::from_be_bytes([cdr_payload[0], cdr_payload[1]]);
-        if !(enc == 0x0001  // PLAIN_CDR_LE
-            || enc == 0x0002  // CDR_BE (RTI)
-            || enc == 0x0003  // CDR_LE
-            || enc == 0x0102  // CDR2_BE
-            || enc == 0x0103  // CDR2_LE
-            || enc == 0x8001  // CDR_LE_VENDOR (FastDDS)
-            || enc == 0x8002)
-        // CDR_BE_VENDOR (FastDDS)
-        {
+        if !matches!(
+            enc,
+            PLAIN_CDR_LE
+                | CDR_BE
+                | CDR_LE
+                | PL_CDR2_BE
+                | PL_CDR2_LE
+                | CDR_LE_VENDOR
+                | CDR_BE_VENDOR
+        ) {
             log::debug!(
                 "[data-handler] Skip non-CDR payload encap=0x{:04x} len={} head={:02x?}",
                 enc,
