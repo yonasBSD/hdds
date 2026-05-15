@@ -33,15 +33,17 @@
 //! data type, not a TypeObject, so the spec framing required for
 //! cross-vendor `EquivalenceHash` matching is out of scope here.
 //!
-//! ## Self-contained design
+//! ## Canonical-trait design (post-1.7c)
 //!
-//! The test fixture defines its own `Probe` struct + `encode_xcdr2_le_at`
-//! / `encode_xcdr1_le_at` inherent methods so it does NOT depend on any
-//! type pulled from the `hdds` crate's broken-during-migration lib build.
-//! Now that the migration is complete, a follow-up may rewire the
-//! assertions through the canonical `hdds::Cdr2Encode` trait.
+//! `Probe` implements `hdds::Cdr2Encode` directly. The XCDR2 path
+//! (`encode_cdr2_le_at` / `encode_xcdr2_le_at`) delegates to the
+//! primitive impls in `core::ser::traits`, so the spec-compliant
+//! 8-byte-cap-4 alignment is gated end-to-end here: a regression in
+//! `impl_cdr2_primitive!` will surface as failures across the 9 XCDR2
+//! goldens. The XCDR1 path overrides `encode_xcdr1_le_at` to emit the
+//! strict 8-byte alignment that vendors use on the XCDR1 wire.
 
-#![allow(dead_code)] // ad-hoc fixture; helpers may not all be reached every run
+use hdds::{Cdr2Encode, CdrError};
 
 #[derive(Debug, Clone, PartialEq)]
 struct Probe {
@@ -49,60 +51,31 @@ struct Probe {
     b: f64,
 }
 
-#[derive(Debug)]
-enum LocalCdrError {
-    BufferTooSmall,
-}
+impl Cdr2Encode for Probe {
+    fn max_cdr2_size(&self) -> usize {
+        1 + 3 + 8
+    }
 
-impl Probe {
-    /// Spec-compliant XCDR2 encoder for the Probe IDL type.
-    /// 8-byte primitive (`f64`) aligns to `min(8, 4) = 4` per
-    /// DDS-XTypes v1.3 §7.4.3.4.1 Tab.15 (XCDR2 cap).
-    fn encode_xcdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), LocalCdrError> {
-        // octet a — alignment 1
-        if *offset + 1 > dst.len() {
-            return Err(LocalCdrError::BufferTooSmall);
-        }
-        dst[*offset] = self.a;
-        *offset += 1;
-
-        // pad to align(4) for double in XCDR2
-        let pad = (4 - (*offset % 4)) % 4;
-        if *offset + pad + 8 > dst.len() {
-            return Err(LocalCdrError::BufferTooSmall);
-        }
-        for _ in 0..pad {
-            dst[*offset] = 0;
-            *offset += 1;
-        }
-
-        // double b
-        dst[*offset..*offset + 8].copy_from_slice(&self.b.to_le_bytes());
-        *offset += 8;
+    fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
+        self.a.encode_cdr2_le_at(dst, offset)?;
+        self.b.encode_cdr2_le_at(dst, offset)?;
         Ok(())
     }
 
-    /// Spec-compliant XCDR1 encoder for the Probe IDL type.
-    /// 8-byte primitive (`f64`) aligns to 8 in XCDR1 (no cap).
-    fn encode_xcdr1_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), LocalCdrError> {
-        // octet a — alignment 1
+    fn encode_xcdr1_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         if *offset + 1 > dst.len() {
-            return Err(LocalCdrError::BufferTooSmall);
+            return Err(CdrError::BufferTooSmall);
         }
         dst[*offset] = self.a;
         *offset += 1;
 
-        // pad to align(8) for double in XCDR1
         let pad = (8 - (*offset % 8)) % 8;
         if *offset + pad + 8 > dst.len() {
-            return Err(LocalCdrError::BufferTooSmall);
+            return Err(CdrError::BufferTooSmall);
         }
-        for _ in 0..pad {
-            dst[*offset] = 0;
-            *offset += 1;
-        }
+        dst[*offset..*offset + pad].fill(0);
+        *offset += pad;
 
-        // double b
         dst[*offset..*offset + 8].copy_from_slice(&self.b.to_le_bytes());
         *offset += 8;
         Ok(())
