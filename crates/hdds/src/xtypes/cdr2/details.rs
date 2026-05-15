@@ -36,6 +36,17 @@ impl Cdr2Encode for CompleteTypeDetail {
             })
         })?;
         encode_option(&self.ann_custom, dst, offset, |vec, dst, offset| {
+            // R4 deferred: AppliedAnnotation encode/decode is structurally
+            // unimplemented today (this branch writes only the u32 length;
+            // the matching decoder discards `_len` and returns vec![]).
+            // When the AppliedAnnotation payload encoder lands, the
+            // emission MUST also enforce XTypes v1.3 §7.3.4.5 R4:
+            // "AppliedAnnotationSeq shall be ordered in increasing
+            // values of their annotation_typeid" — i.e. route through
+            // `super::primitives::encode_vec_sorted` keyed on
+            // `entry.annotation_typeid`. Failing to do so will silently
+            // produce non-canonical EquivalenceHash bytes for any type
+            // that carries custom annotations.
             let len = u32::try_from(vec.len())
                 .map_err(|_| CdrError::Other("Annotation list exceeds u32::MAX entries".into()))?;
             encode_u32(len, dst, offset)?;
@@ -107,6 +118,11 @@ impl Cdr2Encode for CompleteMemberDetail {
             })
         })?;
         encode_option(&self.ann_custom, dst, offset, |vec, dst, offset| {
+            // R4 deferred: see CompleteTypeDetail::encode_cdr2_le_at
+            // above. When this stub is hydrated to emit the
+            // AppliedAnnotation payload, route through
+            // `super::primitives::encode_vec_sorted` keyed on
+            // `entry.annotation_typeid` per XTypes v1.3 §7.3.4.5 R4.
             let len = u32::try_from(vec.len()).map_err(|_| {
                 CdrError::Other("Member annotation list exceeds u32::MAX entries".into())
             })?;

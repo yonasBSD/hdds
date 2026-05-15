@@ -184,12 +184,18 @@ where
 /// order is normalized.
 ///
 /// The source `vec` is not mutated — sorting is done on an index buffer.
-/// Uses [`slice::sort_by`], which Rust guarantees is **stable**: when two
-/// elements compare equal under `key_fn`, their relative order from
-/// the source slice is preserved. The spec forbids duplicate keys
-/// within an ordered TypeObject sub-record, but stability matters as a
-/// defence-in-depth against malformed or adversarial inputs — equal
-/// keys still produce deterministic wire bytes.
+/// Uses [`slice::sort_by_cached_key`], which Rust guarantees is **stable**
+/// AND evaluates `key_fn` exactly **once per element** (the keys are
+/// cached, the sort runs on the cache). This matters for non-trivial
+/// keys such as MD5-derived name hashes: `sort_by` would call `key_fn`
+/// twice per comparison (`O(N log N)` evaluations); the cached variant
+/// brings that down to `O(N)`.
+///
+/// Stability means duplicate keys preserve their source-Vec order in
+/// the wire output. The spec forbids duplicate keys within an ordered
+/// TypeObject sub-record, but stability still matters as a defence in
+/// depth against malformed or adversarial inputs — equal keys still
+/// produce deterministic wire bytes.
 pub(super) fn encode_vec_sorted<T, K, E, F>(
     vec: &[T],
     dst: &mut [u8],
@@ -208,7 +214,7 @@ where
     encode_u32(len, dst, offset)?;
 
     let mut indices: Vec<usize> = (0..vec.len()).collect();
-    indices.sort_by(|&a, &b| key_fn(&vec[a]).cmp(&key_fn(&vec[b])));
+    indices.sort_by_cached_key(|&i| key_fn(&vec[i]));
 
     for i in indices {
         let aligned = align_offset(*offset, 4);

@@ -387,6 +387,58 @@ mod tests {
             "unsorted input must produce bytes identical to sorted input \
              (R12 enforcement)"
         );
+
+        // Round-trip: decode the unsorted-input bytes and confirm we
+        // recover the literals in ascending `value` order with their
+        // associated `name_hash` riding the sort.
+        let (decoded, used) = MinimalEnumeratedType::decode_cdr2_le(&buf_unsorted[..len_unsorted])
+            .expect("decode round-trip");
+        assert_eq!(used, len_unsorted, "decoder consumes full input");
+        let values: Vec<i32> = decoded.literal_seq.iter().map(|l| l.common.value).collect();
+        assert_eq!(values, vec![-3, 0, 2, 7], "decoded values are sorted");
+        let hashes: Vec<u32> = decoded
+            .literal_seq
+            .iter()
+            .map(|l| l.detail.name_hash)
+            .collect();
+        assert_eq!(
+            hashes,
+            vec![0xBB00_BB00, 0xCC00_CC00, 0xDD00_DD00, 0xAA00_AA00],
+            "name_hash follows its owning literal after sort"
+        );
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R12 with negative `value`: i32 ordering
+    /// must place negative values before non-negative ones
+    /// (`-10 < -1 < 0 < 5`). Locks the i32 (signed) sort key so a
+    /// future refactor to u32 surface would surface as a test failure.
+    #[test]
+    fn minimal_enum_literals_with_negative_values_sort_correctly() {
+        let header = MinimalEnumeratedHeader {
+            bit_bound: 32,
+            detail: MinimalTypeDetail {},
+        };
+
+        let unsorted = MinimalEnumeratedType {
+            header,
+            literal_seq: vec![
+                make_minimal_literal(5, 0x05),
+                make_minimal_literal(-10, 0xF6),
+                make_minimal_literal(0, 0x00),
+                make_minimal_literal(-1, 0xFF),
+            ],
+        };
+
+        let mut buf = vec![0u8; unsorted.max_cdr2_size()];
+        let len = unsorted.encode_cdr2_le(&mut buf).expect("encode");
+        let (decoded, _used) =
+            MinimalEnumeratedType::decode_cdr2_le(&buf[..len]).expect("round-trip");
+        let values: Vec<i32> = decoded.literal_seq.iter().map(|l| l.common.value).collect();
+        assert_eq!(
+            values,
+            vec![-10, -1, 0, 5],
+            "negative i32 values precede positives in ascending order"
+        );
     }
 
     /// XTypes v1.3 §7.3.4.5 R11: CompleteEnumeratedLiteralSeq, same

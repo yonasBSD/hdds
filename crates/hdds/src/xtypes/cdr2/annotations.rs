@@ -11,15 +11,12 @@
 
 use super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::helpers::checked_usize;
-#[cfg(not(feature = "xtypes"))]
-use super::primitives::encode_vec;
 use super::primitives::{
     align_offset, decode_bool, decode_i32, decode_option, decode_string, decode_u16, decode_u32,
     decode_u8, encode_bool, encode_i32, encode_option, encode_string, encode_u16, encode_u32,
     encode_u8, encode_vec_sorted,
 };
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
-#[cfg(feature = "xtypes")]
 use crate::xtypes::type_object::compute_name_hash;
 use crate::xtypes::{TypeIdentifier, TypeKind};
 
@@ -290,24 +287,15 @@ impl Cdr2Encode for CompleteAnnotationType {
         // — this keeps Complete[i] and Minimal[i] referring to the same
         // parameter for any consumer that decodes both representations.
         //
-        // Sort is gated on the `xtypes` feature because compute_name_hash
-        // depends on the md-5 dependency that ships with that feature.
-        // Without xtypes, the canonical TypeObject path is unreachable
-        // in practice; fall back to source-order encoding to match the
-        // pre-1.7e-5 behavior for that degenerate configuration.
-        #[cfg(feature = "xtypes")]
+        // `compute_name_hash` returns 0 under `--no-default-features`
+        // (md-5 dep is xtypes-only), which makes the sort degenerate to
+        // source order — same wire output as the pre-1.7e baseline. No
+        // cfg branch needed: stable sort with constant key is a no-op.
         encode_vec_sorted(
             &self.member_seq,
             dst,
             offset,
             |param: &CompleteAnnotationParameter| compute_name_hash(&param.name),
-            |param: &CompleteAnnotationParameter, dst, offset| param.encode_cdr2_le_at(dst, offset),
-        )?;
-        #[cfg(not(feature = "xtypes"))]
-        encode_vec(
-            &self.member_seq,
-            dst,
-            offset,
             |param: &CompleteAnnotationParameter, dst, offset| param.encode_cdr2_le_at(dst, offset),
         )?;
         Ok(())
@@ -350,26 +338,16 @@ impl Cdr2Encode for MinimalAnnotationType {
         self.header.encode_cdr2_le_at(dst, offset)?;
         // XTypes v1.3 §7.3.4.5 R10: MinimalAnnotationParameterSeq must
         // be emitted in ascending name_hash order so the resulting
-        // MinimalEquivalenceHash is stable across vendors.
-        //
-        // Sort is gated on `xtypes` for the same reason as Complete
-        // above: under no-xtypes, all name_hash values are 0 (per the
-        // MinimalMemberDetail::from_name fallback) so the sort would
-        // degenerate to source order anyway. Fall back to encode_vec to
-        // make this explicit.
-        #[cfg(feature = "xtypes")]
+        // MinimalEquivalenceHash is stable across vendors. The
+        // `param.name_hash` field is populated at construction time;
+        // under `--no-default-features` all values are 0, the stable
+        // sort degenerates to source order, and the wire bytes match
+        // the pre-1.7e baseline.
         encode_vec_sorted(
             &self.member_seq,
             dst,
             offset,
             |param: &MinimalAnnotationParameter| param.name_hash,
-            |param: &MinimalAnnotationParameter, dst, offset| param.encode_cdr2_le_at(dst, offset),
-        )?;
-        #[cfg(not(feature = "xtypes"))]
-        encode_vec(
-            &self.member_seq,
-            dst,
-            offset,
             |param: &MinimalAnnotationParameter, dst, offset| param.encode_cdr2_le_at(dst, offset),
         )?;
         Ok(())
@@ -539,9 +517,13 @@ mod tests {
     /// to differ and asserts that byte output is invariant under input
     /// permutations.
     ///
-    /// Gated on the `xtypes` feature because canonical wire output for
-    /// annotation parameters depends on the md-5 hash that the feature
-    /// pulls in.
+    /// Gated on `xtypes` because the assertion (two permutations of the
+    /// same set yield identical bytes) depends on distinct non-zero
+    /// hashes. Under `--no-default-features` all `compute_name_hash`
+    /// values collapse to 0, the stable sort preserves source order,
+    /// and the two permutations encode to different bytes — a correct
+    /// outcome for that degenerate configuration, but not what this
+    /// test is meant to lock.
     #[cfg(feature = "xtypes")]
     #[test]
     fn minimal_annotation_params_emit_sorted_by_name_hash() {
@@ -605,7 +587,8 @@ mod tests {
     /// XTypes v1.3 §7.3.4.5 R3/R9 applied to Complete: sort by
     /// compute_name_hash(name) so Complete[i] corresponds to
     /// Minimal[i] for the same parameter regardless of how the
-    /// producer populated the Vec. Gated on the `xtypes` feature.
+    /// producer populated the Vec. Gated on `xtypes` for the same
+    /// reason as the Minimal sibling above.
     #[cfg(feature = "xtypes")]
     #[test]
     fn complete_annotation_params_emit_sorted_by_name_hash() {
