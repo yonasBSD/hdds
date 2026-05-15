@@ -43,9 +43,22 @@ impl EquivalenceKind {
 /// StronglyConnectedComponentId - for types with cyclic dependencies
 ///
 /// Per DDS-XTypes v1.3 spec section 7.3.4.11:
-/// Used when types reference each other (e.g., `Node { next: Option<Node> }`)
+/// Used when types reference each other (e.g., `Node { next: Option<Node> }`).
+///
+/// The `sc_component_id` carries a `TypeObjectHashId` value: per OMG
+/// DDS-XTypes v1.3 §7.3.4.6.5 / §7.3.4.6.6 (Minimal / Complete Hash
+/// `TypeIdentifier`s) and the IDL annex, `TypeObjectHashId` is an
+/// `@extensibility(FINAL) @nested union switch(octet)` whose
+/// discriminator is `EK_MINIMAL = 0xF1` or `EK_COMPLETE = 0xF2`. The
+/// 1-byte discriminator precedes the 14-byte hash on the wire; the
+/// `kind` field below carries it so the encoder / decoder round-trip
+/// it correctly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct StronglyConnectedComponentId {
+    /// TypeObjectHashId union tag — selects between Minimal and Complete
+    /// equivalence hashes per XTypes v1.3 §7.3.4.5 line 12307.
+    pub kind: EquivalenceKind,
+
     /// Hash of the strongly connected component
     pub sc_component_id: EquivalenceHash,
 
@@ -419,6 +432,7 @@ mod tests {
     fn test_typeid_strongly_connected() {
         let hash = EquivalenceHash::from_bytes([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
         let sc = StronglyConnectedComponentId {
+            kind: EquivalenceKind::Minimal,
             sc_component_id: hash,
             scc_length: 3,
             scc_index: 1,

@@ -76,12 +76,17 @@ impl Cdr2Encode for TypeIdentifier {
                 encode_u8(TI_STRONGLY_CONNECTED_COMPONENT, dst, offset)?;
                 // `StronglyConnectedComponentId` is `@extensibility(APPENDABLE) @nested`
                 // per XTypes v1.3 spec line 12466 -> rule (30) requires DHEADER.
-                // NOTE: the inner `TypeObjectHashId` union discriminator (1 byte)
-                // is still missing here per the documented HDDS<->spec divergence
-                // (see decoder note around line 145). F29 fix on the outer
-                // DHEADER lands here; the inner discriminator divergence is
-                // tracked separately.
+                // Inside the DHEADER body the `sc_component_id` field is a
+                // `TypeObjectHashId` union (XTypes v1.3 §7.3.4.6.5 /
+                // §7.3.4.6.6 + IDL annex): 1-byte octet discriminator
+                // (EK_MINIMAL = 0xF1, EK_COMPLETE = 0xF2) followed by the
+                // 14-byte EquivalenceHash.
                 encode_dheader_at(dst, offset, |dst, offset| {
+                    let inner_disc = match sc.kind {
+                        crate::xtypes::EquivalenceKind::Minimal => EK_MINIMAL,
+                        crate::xtypes::EquivalenceKind::Complete => EK_COMPLETE,
+                    };
+                    encode_u8(inner_disc, dst, offset)?;
                     if *offset + 14 > dst.len() {
                         return Err(CdrError::BufferTooSmall);
                     }
@@ -155,13 +160,27 @@ pub(super) fn decode_type_identifier_internal(
         }
         // §7.3.4.4: `case TI_STRONGLY_CONNECTED_COMPONENT:
         //               StronglyConnectedComponentId sc_component_id;`
-        // Symmetric with the encoder: 14-byte hash + two `i32` fields.
-        // The outer DHEADER per XTypes v1.3 rule (30) is now emitted/read
-        // (added in 1.6.10i). The inner `TypeObjectHashId` union
-        // discriminator (per spec line 12307 a 1-byte octet discriminator
-        // before the 14-byte EquivalenceHash) is still NOT emitted/read --
-        // HDDS<->spec divergence tracked separately, orthogonal to F29.
+        // Symmetric with the encoder: outer DHEADER (per XTypes v1.3 rule
+        // (30), added in 1.6.10i) wraps the body, and the inner
+        // `TypeObjectHashId` union (XTypes v1.3 §7.3.4.6.5 / §7.3.4.6.6
+        // + IDL annex) prefixes the 14-byte hash with a 1-byte octet
+        // discriminator (EK_MINIMAL = 0xF1, EK_COMPLETE = 0xF2). The
+        // inner discriminator was added in 1.7g to close the
+        // HDDS<->spec divergence noted in
+        // ADR-CHANTIER-1.6-AUDIT-RESPONSE §10.24 item #4.
         TI_STRONGLY_CONNECTED_COMPONENT => decode_dheader_at(src, offset, |src, offset| {
+            let inner_disc = decode_u8(src, offset)?;
+            let kind = match inner_disc {
+                EK_MINIMAL => crate::xtypes::EquivalenceKind::Minimal,
+                EK_COMPLETE => crate::xtypes::EquivalenceKind::Complete,
+                other => {
+                    return Err(CdrError::Other(format!(
+                        "TypeObjectHashId inner discriminator must be EK_MINIMAL (0xF1) \
+                         or EK_COMPLETE (0xF2), got 0x{:02X}",
+                        other
+                    )));
+                }
+            };
             if *offset + 14 > src.len() {
                 return Err(CdrError::UnexpectedEof);
             }
@@ -175,6 +194,7 @@ pub(super) fn decode_type_identifier_internal(
 
             Ok(TypeIdentifier::StronglyConnected(
                 crate::xtypes::type_id::StronglyConnectedComponentId {
+                    kind,
                     sc_component_id: hash_bytes.into(),
                     scc_length,
                     scc_index,
@@ -285,24 +305,30 @@ mod tests {
     }
 
     /// `TypeIdentifier::StronglyConnected` -> TI_STRONGLY_CONNECTED_COMPONENT
-    /// (0xB0) per §7.3.4.4. Wire size locked at **32 bytes** post-1.6.10i:
-    /// - offset 0: 1 octet discriminator (0xB0)
+    /// (0xB0) per §7.3.4.4. Wire size locked at **32 bytes** post-1.7g:
+    /// - offset 0: 1 octet outer discriminator (0xB0)
     /// - offset 1..4: 3 padding bytes for 4-byte alignment of DHEADER (UInt32)
     /// - offset 4..8: 4-byte DHEADER (payload size = 24)
-    /// - offset 8..22: 14-byte hash
-    /// - offset 22..24: 2 padding bytes for 4-byte alignment of i32 `scc_length`
+    /// - offset 8: 1 octet inner `TypeObjectHashId` discriminator
+    ///   (`EK_MINIMAL = 0xF1` or `EK_COMPLETE = 0xF2`) per XTypes v1.3
+    ///   §7.3.4.6.5 / §7.3.4.6.6 + IDL annex
+    /// - offset 9..23: 14-byte EquivalenceHash
+    /// - offset 23..24: 1 padding byte for 4-byte alignment of i32 `scc_length`
     /// - offset 24..28: 4-byte `scc_length`
     /// - offset 28..32: 4-byte `scc_index`
     ///
     /// DHEADER added per F29 fix (1.6.10i) since `StronglyConnectedComponentId`
-    /// is `@extensibility(APPENDABLE)` per XTypes v1.3 spec line 12466.
-    /// The inner `TypeObjectHashId` union discriminator (1 octet before the
-    /// 14-byte hash per spec line 12307) is still NOT emitted — pre-existing
-    /// HDDS<->spec divergence orthogonal to F29.
+    /// is `@extensibility(APPENDABLE)` per XTypes v1.3 spec line 12466. The
+    /// inner `TypeObjectHashId` union discriminator was added in 1.7g to
+    /// close the HDDS<->spec divergence documented in
+    /// ADR-CHANTIER-1.6-AUDIT-RESPONSE §10.24 item #4. The total wire size
+    /// is preserved: one byte previously spent as i32-alignment padding is
+    /// now the inner discriminator.
     #[test]
     fn typeid_strongly_connected_writes_ti_scc_discriminator() {
         let id = TypeIdentifier::StronglyConnected(
             crate::xtypes::type_id::StronglyConnectedComponentId {
+                kind: crate::xtypes::EquivalenceKind::Minimal,
                 sc_component_id: EquivalenceHash::from_bytes([0xCC; 14]),
                 scc_length: 3,
                 scc_index: 1,
@@ -313,10 +339,15 @@ mod tests {
         assert_eq!(buf[0], 0xB0);
         assert_eq!(
             written, 32,
-            "SCC wire size must be exactly 32 bytes post-1.6.10i (1 disc + 3 pad + 4 DHEADER + 14 hash + 2 pad + 2*4 i32)"
+            "SCC wire size must be exactly 32 bytes (1 outer disc + 3 pad + 4 DHEADER + 1 inner disc + 14 hash + 1 pad + 2*4 i32)"
         );
-        // DHEADER value = payload bytes (14 hash + 2 pad + 8 i32 = 24)
+        // DHEADER value = payload bytes (1 inner disc + 14 hash + 1 pad + 8 i32 = 24)
         assert_eq!(u32::from_le_bytes(buf[4..8].try_into().unwrap()), 24);
+        assert_eq!(
+            buf[8], 0xF1,
+            "inner TypeObjectHashId discriminator = EK_MINIMAL"
+        );
+        assert_eq!(&buf[9..23], &[0xCC; 14], "14-byte hash follows inner disc");
     }
 
     /// Sanity: every spec discriminator that the encoder emits is a valid
@@ -440,27 +471,64 @@ mod tests {
     }
 
     /// Symmetric round-trip for `TI_STRONGLY_CONNECTED_COMPONENT` (0xB0):
-    /// encoder writes 14-byte hash + 1 padding byte + two `i32`s (24 bytes
-    /// total), decoder consumes the same bytes and reconstructs the same
-    /// `StronglyConnectedComponentId`. Guards against asymmetric drift on
-    /// the SCC payload alignment between the two halves.
+    /// encoder writes the inner `TypeObjectHashId` discriminator + 14-byte
+    /// hash + 1 padding byte + two `i32`s (24 bytes body inside the
+    /// DHEADER). Decoder consumes the same bytes and reconstructs the same
+    /// `StronglyConnectedComponentId`, including the `kind` field that
+    /// carries the inner discriminator. Guards against asymmetric drift on
+    /// the SCC payload between the two halves.
     #[test]
     fn typeid_strongly_connected_round_trip() {
+        for kind in [
+            crate::xtypes::EquivalenceKind::Minimal,
+            crate::xtypes::EquivalenceKind::Complete,
+        ] {
+            let original = TypeIdentifier::StronglyConnected(
+                crate::xtypes::type_id::StronglyConnectedComponentId {
+                    kind,
+                    sc_component_id: EquivalenceHash::from_bytes([0xCC; 14]),
+                    scc_length: 7,
+                    scc_index: 3,
+                },
+            );
+            let mut buf = [0u8; 32];
+            let written = original.encode_cdr2_le(&mut buf).expect("encode succeeds");
+            assert_eq!(buf[0], 0xB0);
+
+            let (decoded, consumed) =
+                TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode succeeds");
+            assert_eq!(consumed, written);
+            assert_eq!(decoded, original, "round-trip preserves kind = {:?}", kind);
+        }
+    }
+
+    /// The decoder must reject inner `TypeObjectHashId` discriminator values
+    /// that are not `EK_MINIMAL` (0xF1) or `EK_COMPLETE` (0xF2). Locks the
+    /// behaviour added in 1.7g against silent acceptance of stray bytes.
+    #[test]
+    fn typeid_strongly_connected_rejects_invalid_inner_discriminator() {
+        // Build a valid SCC frame then corrupt the inner discriminator byte.
         let original = TypeIdentifier::StronglyConnected(
             crate::xtypes::type_id::StronglyConnectedComponentId {
+                kind: crate::xtypes::EquivalenceKind::Minimal,
                 sc_component_id: EquivalenceHash::from_bytes([0xCC; 14]),
-                scc_length: 7,
-                scc_index: 3,
+                scc_length: 1,
+                scc_index: 0,
             },
         );
         let mut buf = [0u8; 32];
         let written = original.encode_cdr2_le(&mut buf).expect("encode succeeds");
-        assert_eq!(buf[0], 0xB0);
-
-        let (decoded, consumed) =
-            TypeIdentifier::decode_cdr2_le(&buf[..written]).expect("decode succeeds");
-        assert_eq!(consumed, written);
-        assert_eq!(decoded, original);
+        buf[8] = 0xAB; // stray byte where the inner discriminator lives
+        match TypeIdentifier::decode_cdr2_le(&buf[..written]) {
+            Err(CdrError::Other(msg)) => assert!(
+                msg.contains("0xAB"),
+                "error should mention the bad inner discriminator byte 0xAB, got: {msg}"
+            ),
+            other => panic!(
+                "expected CdrError::Other for stray inner discriminator, got {:?}",
+                other
+            ),
+        }
     }
 
     /// Per OMG DDS-XTypes v1.3 §7.3.4 IDL TypeKinds block, the
