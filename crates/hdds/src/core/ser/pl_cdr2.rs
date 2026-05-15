@@ -15,7 +15,26 @@
 
 use super::traits::CdrError;
 
-/// Length code for EMHEADER1 (XTypes v1.3 Sec.7.4.3.4.3)
+/// Length code for EMHEADER1 (OMG DDS-XTypes v1.3 §7.4.3.4.3 Table 39).
+///
+/// The 3-bit `LC` field at the top of the EMHEADER1 word tells the reader
+/// how to determine the member length:
+///   - `LC=0..3` (Lc1/Lc2/Lc4/Lc8): the member is exactly 1/2/4/8 bytes,
+///     length is implicit.
+///   - `LC=4` (NextInt): the next 4 bytes after the EMHEADER1 are a u32
+///     `NEXTINT` carrying the member byte length explicitly.
+///   - `LC=5` (DHeader): no NEXTINT is emitted; the length is recovered
+///     by reading the nested type's own DHEADER (the first 4 bytes of
+///     the member payload).
+///   - `LC=6` / `LC=7` are reserved.
+///
+/// HDDS uses `LC=4` (NextInt) for every member: it writes an explicit
+/// 4-byte NEXTINT between the EMHEADER1 and the member payload. That
+/// gives a uniform layout regardless of whether the member type happens
+/// to emit a DHEADER of its own, at the cost of 4 bytes per member.
+/// Reading an `LC=5`-encoded member from another vendor is out of scope
+/// of this helper (the fallback branch in `decode_pl_cdr2_struct` would
+/// underflow the length).
 #[derive(Copy, Clone, Debug)]
 #[allow(dead_code)] // Part of XTypes PL_CDR2 spec, variants used based on member sizes
 enum LengthCode {
@@ -23,7 +42,7 @@ enum LengthCode {
     Lc2 = 1,
     Lc4 = 2,
     Lc8 = 3,
-    NextInt = 5, // NEXTINT reused as length
+    NextInt = 4,
 }
 
 impl LengthCode {

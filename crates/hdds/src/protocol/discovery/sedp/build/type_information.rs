@@ -25,8 +25,8 @@
 //! PID 0x0075, PARAM_LEN = 92
 //! ├ DHEADER          u32 LE  = 88   (TypeInformation @mutable content size)
 //! ├ Member 0x1001 (minimal)
-//! │ ├ EMHEADER1      u32 LE  = 0x50001001  (M=0, LC=5, MID=0x1001)
-//! │ ├ NEXTINT        u32 LE  = 36          (member content length)
+//! │ ├ EMHEADER1      u32 LE  = 0x40001001  (M=0, LC=4, MID=0x1001)
+//! │ ├ NEXTINT        u32 LE  = 36          (member content length, per LC=4)
 //! │ ├ INNER_LEN      u32 LE  = 20          (TypeIdentifierWithSize content)
 //! │ ├ EK_MINIMAL     u8      = 0xF1        (TypeIdentifier discriminator)
 //! │ ├ hash           [u8;14]               (MD5(MinimalTypeObject)[..14])
@@ -150,8 +150,12 @@ fn write_member(
         return Err(ParseError::BufferTooSmall);
     }
 
-    // EMHEADER1: M=0, LC=5, MID=member_id  -> (5 << 28) | member_id
-    let emheader: u32 = (5u32 << 28) | (member_id & 0x0FFF_FFFF);
+    // EMHEADER1: M=0, LC=4 (NEXTINT carries member length), MID=member_id
+    //   -> (4 << 28) | member_id
+    // Per OMG DDS-XTypes v1.3 §7.4.3.4.3 Table 39: LC=4 advertises a
+    // following 4-byte NEXTINT u32 with the member content length, which
+    // is exactly what this encoder writes at line 159.
+    let emheader: u32 = (4u32 << 28) | (member_id & 0x0FFF_FFFF);
     buf[*offset..*offset + 4].copy_from_slice(&emheader.to_le_bytes());
     *offset += 4;
 
@@ -347,15 +351,15 @@ mod tests {
         // Member 0x1001 EMHEADER1 starts at offset 8 (after PID header + DHEADER).
         let emheader_minimal = u32::from_le_bytes([buf[8], buf[9], buf[10], buf[11]]);
         assert_eq!(
-            emheader_minimal, 0x5000_1001,
-            "minimal EMHEADER must be 0x50001001 (M=0, LC=5, MID=0x1001)"
+            emheader_minimal, 0x4000_1001,
+            "minimal EMHEADER must be 0x40001001 (M=0, LC=4, MID=0x1001)"
         );
 
         // Member 0x1002 EMHEADER1 starts at offset 8 + 44.
         let emheader_complete = u32::from_le_bytes([buf[52], buf[53], buf[54], buf[55]]);
         assert_eq!(
-            emheader_complete, 0x5000_1002,
-            "complete EMHEADER must be 0x50001002 (M=0, LC=5, MID=0x1002)"
+            emheader_complete, 0x4000_1002,
+            "complete EMHEADER must be 0x40001002 (M=0, LC=4, MID=0x1002)"
         );
     }
 

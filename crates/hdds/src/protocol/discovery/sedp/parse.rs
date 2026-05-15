@@ -219,7 +219,7 @@ fn parse_presentation(
 /// PARAM_LEN = 92
 /// ├ DHEADER          u32 LE  = 88
 /// ├ Member 0x1001 (minimal)  — 44 bytes
-/// │ ├ EMHEADER1      u32 LE  (M=0, LC=5, MID=0x1001)
+/// │ ├ EMHEADER1      u32 LE  (M=0, LC=4, MID=0x1001)
 /// │ ├ NEXTINT        u32 LE  = 36
 /// │ ├ INNER_LEN      u32 LE  = 20
 /// │ ├ EK_*           u8      = 0xF1 (minimal) or 0xF2 (complete)
@@ -269,7 +269,11 @@ pub(crate) fn parse_type_information(buf: &[u8]) -> Option<TypeInformation> {
             break;
         }
 
-        // EMHEADER1: M=0, LC=5, MID=member_id (lower 28 bits).
+        // EMHEADER1: M=0, LC=4, MID=member_id (lower 28 bits). The parser
+        // doesn't validate the LC field — `mid` is extracted from the low
+        // 28 bits and the next 8 bytes (NEXTINT + INNER_LEN) are skipped
+        // unconditionally, which tolerates both LC=4 (HDDS canonical) and
+        // LC=5 wire forms a peer might send.
         let emheader = u32::from_le_bytes([
             buf[member_offset],
             buf[member_offset + 1],
