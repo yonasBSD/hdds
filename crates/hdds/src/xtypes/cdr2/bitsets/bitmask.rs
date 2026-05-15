@@ -6,7 +6,9 @@
 
 use super::super::dheader::{decode_dheader_at, encode_dheader_at};
 use super::super::helpers::checked_usize;
-use super::super::primitives::{align_offset, decode_i16, decode_u32, encode_i16, encode_vec};
+use super::super::primitives::{
+    align_offset, decode_i16, decode_u32, encode_i16, encode_vec_sorted,
+};
 use crate::core::ser::traits::{Cdr2Decode, Cdr2Encode, CdrError};
 use crate::xtypes::type_object::{
     CompleteBitmaskHeader, CompleteBitmaskType, CompleteTypeDetail, MinimalBitmaskHeader,
@@ -101,9 +103,16 @@ impl Cdr2Encode for CompleteBitmaskType {
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_dheader_at(dst, offset, |dst, offset| {
             self.header.encode_cdr2_le_at(dst, offset)?;
-            encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
-                flag.encode_cdr2_le_at(dst, offset)
-            })?;
+            // XTypes v1.3 §7.3.4.5 R13: CompleteBitflagSeq must be emitted
+            // in ascending `position` order so the EquivalenceHash is
+            // bitwise-identical across vendors.
+            encode_vec_sorted(
+                &self.flag_seq,
+                dst,
+                offset,
+                |f| f.common.position,
+                |flag, dst, offset| flag.encode_cdr2_le_at(dst, offset),
+            )?;
             Ok(())
         })
     }
@@ -145,9 +154,16 @@ impl Cdr2Encode for MinimalBitmaskType {
     fn encode_cdr2_le_at(&self, dst: &mut [u8], offset: &mut usize) -> Result<(), CdrError> {
         encode_dheader_at(dst, offset, |dst, offset| {
             self.header.encode_cdr2_le_at(dst, offset)?;
-            encode_vec(&self.flag_seq, dst, offset, |flag, dst, offset| {
-                flag.encode_cdr2_le_at(dst, offset)
-            })?;
+            // XTypes v1.3 §7.3.4.5 R14: MinimalBitflagSeq ordering — same
+            // `position` key as R13 above, drives the
+            // MinimalEquivalenceHash for bitmask types.
+            encode_vec_sorted(
+                &self.flag_seq,
+                dst,
+                offset,
+                |f| f.common.position,
+                |flag, dst, offset| flag.encode_cdr2_le_at(dst, offset),
+            )?;
             Ok(())
         })
     }
@@ -168,5 +184,133 @@ impl Cdr2Decode for MinimalBitmaskType {
             }
             Ok(MinimalBitmaskType { header, flag_seq })
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::xtypes::type_object::{
+        BitflagFlag, CommonBitflag, CompleteBitflag, CompleteMemberDetail, MinimalBitflag,
+        MinimalMemberDetail,
+    };
+
+    fn make_minimal_flag(position: u16, name_hash: u32) -> MinimalBitflag {
+        MinimalBitflag {
+            common: CommonBitflag {
+                position,
+                flags: BitflagFlag(0),
+            },
+            detail: MinimalMemberDetail { name_hash },
+        }
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R14: MinimalBitflagSeq must be emitted in
+    /// ascending `position` order. Two source Vecs that differ only in
+    /// element order must produce byte-identical wire output, and the
+    /// decoded positions must come back sorted.
+    #[test]
+    fn minimal_bitmask_flags_emit_sorted_by_position() {
+        let header = MinimalBitmaskHeader {
+            bit_bound: 32,
+            detail: MinimalTypeDetail::new(),
+        };
+
+        let unsorted = MinimalBitmaskType {
+            header: header.clone(),
+            flag_seq: vec![
+                make_minimal_flag(31, 0xFF),
+                make_minimal_flag(0, 0x01),
+                make_minimal_flag(15, 0x0F),
+                make_minimal_flag(7, 0x07),
+            ],
+        };
+        let sorted = MinimalBitmaskType {
+            header,
+            flag_seq: vec![
+                make_minimal_flag(0, 0x01),
+                make_minimal_flag(7, 0x07),
+                make_minimal_flag(15, 0x0F),
+                make_minimal_flag(31, 0xFF),
+            ],
+        };
+
+        let mut buf_unsorted = vec![0u8; unsorted.max_cdr2_size()];
+        let len_unsorted = unsorted
+            .encode_cdr2_le(&mut buf_unsorted)
+            .expect("encode unsorted");
+        let mut buf_sorted = vec![0u8; sorted.max_cdr2_size()];
+        let len_sorted = sorted
+            .encode_cdr2_le(&mut buf_sorted)
+            .expect("encode sorted");
+
+        assert_eq!(len_unsorted, len_sorted, "wire length must match");
+        assert_eq!(
+            &buf_unsorted[..len_unsorted],
+            &buf_sorted[..len_sorted],
+            "unsorted input must produce bytes identical to sorted input \
+             (R14 enforcement)"
+        );
+
+        let (decoded, used) = MinimalBitmaskType::decode_cdr2_le(&buf_unsorted[..len_unsorted])
+            .expect("decode round-trip");
+        assert_eq!(used, len_unsorted, "decoder consumes full input");
+        let positions: Vec<u16> = decoded.flag_seq.iter().map(|f| f.common.position).collect();
+        assert_eq!(
+            positions,
+            vec![0, 7, 15, 31],
+            "decoded positions are sorted"
+        );
+    }
+
+    /// XTypes v1.3 §7.3.4.5 R13: same guarantee for CompleteBitmaskType.
+    #[test]
+    fn complete_bitmask_flags_emit_sorted_by_position() {
+        let header = CompleteBitmaskHeader {
+            bit_bound: 16,
+            detail: CompleteTypeDetail {
+                type_name: "Flags".to_string(),
+                ann_builtin: None,
+                ann_custom: None,
+            },
+        };
+
+        let make = |position: u16, name: &str| CompleteBitflag {
+            common: CommonBitflag {
+                position,
+                flags: BitflagFlag(0),
+            },
+            detail: CompleteMemberDetail {
+                name: name.to_string(),
+                ann_builtin: None,
+                ann_custom: None,
+            },
+        };
+
+        let unsorted = CompleteBitmaskType {
+            header: header.clone(),
+            flag_seq: vec![make(10, "j"), make(2, "c"), make(5, "f")],
+        };
+        let sorted = CompleteBitmaskType {
+            header,
+            flag_seq: vec![make(2, "c"), make(5, "f"), make(10, "j")],
+        };
+
+        let mut buf_unsorted = vec![0u8; unsorted.max_cdr2_size()];
+        let len_unsorted = unsorted
+            .encode_cdr2_le(&mut buf_unsorted)
+            .expect("encode unsorted");
+        let mut buf_sorted = vec![0u8; sorted.max_cdr2_size()];
+        let len_sorted = sorted
+            .encode_cdr2_le(&mut buf_sorted)
+            .expect("encode sorted");
+
+        assert_eq!(len_unsorted, len_sorted, "wire length must match");
+        assert_eq!(
+            &buf_unsorted[..len_unsorted],
+            &buf_sorted[..len_sorted],
+            "unsorted input must produce bytes identical to sorted input \
+             (R13 enforcement)"
+        );
     }
 }
